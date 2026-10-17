@@ -211,6 +211,20 @@ func (s *Store) Revisions(ctx context.Context, app string) ([]Revision, error) {
 	return out, rows.Err()
 }
 
+// FirstRevisionCreatedAt returns the earliest recorded revision timestamp for
+// an app, across all statuses. It returns ErrNotFound when the app has no
+// revisions; a recorded zero timestamp is returned without an error.
+func (s *Store) FirstRevisionCreatedAt(ctx context.Context, app string) (time.Time, error) {
+	var created sql.NullInt64
+	if err := s.db.QueryRowContext(ctx, `SELECT MIN(created_at) FROM revisions WHERE app = ?`, app).Scan(&created); err != nil {
+		return time.Time{}, err
+	}
+	if !created.Valid {
+		return time.Time{}, ErrNotFound
+	}
+	return fromUnix(created.Int64), nil
+}
+
 // RevisionWithStatus returns an app's revision in a status, or nil.
 func (s *Store) RevisionWithStatus(ctx context.Context, app string, status RevisionStatus) (*Revision, error) {
 	row := s.db.QueryRowContext(ctx, `SELECT app, id, status, manifest, images, containers, source, secrets_version, created_at FROM revisions WHERE app = ? AND status = ? ORDER BY created_at DESC LIMIT 1`, app, string(status))
@@ -259,9 +273,12 @@ func (s *Store) AppNames(ctx context.Context) ([]string, error) {
 	return out, rows.Err()
 }
 
-// ActiveRevisions returns every app's active revision.
+// ActiveRevisions returns every app's active revision, ordered by app and id.
 func (s *Store) ActiveRevisions(ctx context.Context) ([]Revision, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT app, id, status, manifest, images, containers, source, secrets_version, created_at FROM revisions WHERE status = ? ORDER BY app`, string(RevisionActive))
+	// Unary + keeps SQLite from traversing the (app, id) index and looking up
+	// every historical row just to preserve app order. Scan the table once and
+	// sort only the active rows. A future index on status can still be used.
+	rows, err := s.db.QueryContext(ctx, `SELECT app, id, status, manifest, images, containers, source, secrets_version, created_at FROM revisions WHERE status = ? ORDER BY +app, id`, string(RevisionActive))
 	if err != nil {
 		return nil, err
 	}

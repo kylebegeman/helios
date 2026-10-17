@@ -376,11 +376,10 @@ func (p *Prober) backupProblem(ctx context.Context, appName string, now time.Tim
 		}
 		return ""
 	}
-	revs, err := p.Store.Revisions(ctx, appName)
-	if err != nil || len(revs) == 0 {
+	first, err := p.Store.FirstRevisionCreatedAt(ctx, appName)
+	if err != nil {
 		return ""
 	}
-	first := revs[len(revs)-1].CreatedAt
 	if now.Sub(first) > BackupStale {
 		return fmt.Sprintf("never backed up, deployed %s ago", ago(first, now))
 	}
