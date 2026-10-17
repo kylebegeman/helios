@@ -1,0 +1,1010 @@
+goos: darwin
+goarch: arm64
+pkg: github.com/kylebegeman/helios/internal/signals
+cpu: Apple M5 Pro
+BenchmarkParseMetrics/Hosts1         	    3702	    108510 ns/op	 148.40 MB/s	       141.0 series/op	   69872 B/op	     409 allocs/op
+BenchmarkParseMetrics/Hosts10        	     345	    870026 ns/op	 171.10 MB/s	      1095 series/op	  640752 B/op	    3302 allocs/op
+BenchmarkParseMetrics/Hosts100       	      37	  13577794 ns/op	 108.74 MB/s	     10635 series/op	 6600432 B/op	   32199 allocs/op
+BenchmarkTrafficUnchanged/Hosts1     	    8269	     76409 ns/op	       141.0 series/op	   14760 B/op	      70 allocs/op
+BenchmarkTrafficUnchanged/Hosts10    	     168	   1571603 ns/op	      1095 series/op	  134792 B/op	     625 allocs/op
+BenchmarkTrafficUnchanged/Hosts100   	      21	  23607365 ns/op	     10635 series/op	 1242808 B/op	    6146 allocs/op
+BenchmarkTrafficRollups/Hosts1       	      63	   4003350 ns/op	        12.00 rollups/op	       141.0 series/op	   23298 B/op	     294 allocs/op
+BenchmarkTrafficRollups/Hosts10      	      16	  24855391 ns/op	       120.0 rollups/op	      1095 series/op	  220614 B/op	    2868 allocs/op
+BenchmarkSummarize/Hours24           	   10000	     83079 ns/op	       816.0 rows/op	    1096 B/op	       9 allocs/op
+BenchmarkSummarize/Hours168          	     889	    288524 ns/op	      5712 rows/op	    9512 B/op	      15 allocs/op
+BenchmarkSummarize/Hours2160         	     100	   6194893 ns/op	     73440 rows/op	  148312 B/op	      33 allocs/op
+PASS
+goos: darwin
+goarch: arm64
+pkg: github.com/kylebegeman/helios/internal/signals
+cpu: Apple M5 Pro
+BenchmarkParseMetrics/Hosts1         	    2197	    201280 ns/op	  80.00 MB/s	       141.0 series/op	   69872 B/op	     409 allocs/op
+BenchmarkParseMetrics/Hosts10        	     230	   1324989 ns/op	 112.35 MB/s	      1095 series/op	  640752 B/op	    3302 allocs/op
+BenchmarkParseMetrics/Hosts100       	      36	  34242859 ns/op	  43.12 MB/s	     10635 series/op	 6600432 B/op	   32199 allocs/op
+BenchmarkTrafficUnchanged/Hosts1     	    5959	    162238 ns/op	       141.0 series/op	   14760 B/op	      70 allocs/op
+BenchmarkTrafficUnchanged/Hosts10    	     100	   2547091 ns/op	      1095 series/op	  134792 B/op	     625 allocs/op
+BenchmarkTrafficUnchanged/Hosts100   	      21	  34675020 ns/op	     10635 series/op	 1242808 B/op	    6146 allocs/op
+BenchmarkTrafficRollups/Hosts1       	      97	   2972912 ns/op	        12.00 rollups/op	       141.0 series/op	   23298 B/op	     294 allocs/op
+BenchmarkTrafficRollups/Hosts10      	      46	  21639489 ns/op	       120.0 rollups/op	      1095 series/op	  220614 B/op	    2868 allocs/op
+BenchmarkSummarize/Hours24           	    9152	     73206 ns/op	       816.0 rows/op	    1096 B/op	       9 allocs/op
+BenchmarkSummarize/Hours168          	    1564	    476892 ns/op	      5712 rows/op	    9512 B/op	      15 allocs/op
+BenchmarkSummarize/Hours2160         	     100	   8019095 ns/op	     73440 rows/op	  148312 B/op	      33 allocs/op
+PASS
+goos: darwin
+goarch: arm64
+pkg: github.com/kylebegeman/helios/internal/signals
+cpu: Apple M5 Pro
+BenchmarkParseMetrics/Hosts1         	    3529	     85468 ns/op	 188.41 MB/s	       141.0 series/op	   69872 B/op	     409 allocs/op
+BenchmarkParseMetrics/Hosts10        	     352	    806000 ns/op	 184.69 MB/s	      1095 series/op	  640752 B/op	    3302 allocs/op
+BenchmarkParseMetrics/Hosts100       	      30	  13622532 ns/op	 108.38 MB/s	     10635 series/op	 6600432 B/op	   32199 allocs/op
+BenchmarkTrafficUnchanged/Hosts1     	    9348	     90469 ns/op	       141.0 series/op	   14760 B/op	      70 allocs/op
+BenchmarkTrafficUnchanged/Hosts10    	     590	   1302773 ns/op	      1095 series/op	  134792 B/op	     625 allocs/op
+BenchmarkTrafficUnchanged/Hosts100   	      73	   9289685 ns/op	     10635 series/op	 1242808 B/op	    6146 allocs/op
+BenchmarkTrafficRollups/Hosts1       	     643	    453972 ns/op	        12.00 rollups/op	       141.0 series/op	   23296 B/op	     294 allocs/op
+BenchmarkTrafficRollups/Hosts10      	      55	   6588258 ns/op	       120.0 rollups/op	      1095 series/op	  220608 B/op	    2868 allocs/op
+BenchmarkSummarize/Hours24           	   17239	     19177 ns/op	       816.0 rows/op	    1096 B/op	       9 allocs/op
+BenchmarkSummarize/Hours168          	    2238	    215410 ns/op	      5712 rows/op	    9512 B/op	      15 allocs/op
+BenchmarkSummarize/Hours2160         	     164	   1771791 ns/op	     73440 rows/op	  148312 B/op	      33 allocs/op
+PASS
+goos: darwin
+goarch: arm64
+pkg: github.com/kylebegeman/helios/internal/signals
+cpu: Apple M5 Pro
+BenchmarkParseMetrics/Hosts1         	    3907	     87499 ns/op	 184.04 MB/s	       141.0 series/op	   69872 B/op	     409 allocs/op
+BenchmarkParseMetrics/Hosts10        	     357	    861227 ns/op	 172.85 MB/s	      1095 series/op	  640752 B/op	    3302 allocs/op
+BenchmarkParseMetrics/Hosts100       	      19	  14897971 ns/op	  99.10 MB/s	     10635 series/op	 6600432 B/op	   32199 allocs/op
+BenchmarkTrafficUnchanged/Hosts1     	    9157	     65596 ns/op	       141.0 series/op	   14760 B/op	      70 allocs/op
+BenchmarkTrafficUnchanged/Hosts10    	     717	    403865 ns/op	      1095 series/op	  134792 B/op	     625 allocs/op
+BenchmarkTrafficUnchanged/Hosts100   	      57	   4938892 ns/op	     10635 series/op	 1242808 B/op	    6146 allocs/op
+BenchmarkTrafficRollups/Hosts1       	     424	    904964 ns/op	        12.00 rollups/op	       141.0 series/op	   23297 B/op	     294 allocs/op
+BenchmarkTrafficRollups/Hosts10      	      49	   5799811 ns/op	       120.0 rollups/op	      1095 series/op	  220608 B/op	    2868 allocs/op
+BenchmarkSummarize/Hours24           	   10000	     66177 ns/op	       816.0 rows/op	    1096 B/op	       9 allocs/op
+BenchmarkSummarize/Hours168          	     598	    425911 ns/op	      5712 rows/op	    9512 B/op	      15 allocs/op
+BenchmarkSummarize/Hours2160         	     120	   2396305 ns/op	     73440 rows/op	  148312 B/op	      33 allocs/op
+PASS
+goos: darwin
+goarch: arm64
+pkg: github.com/kylebegeman/helios/internal/signals
+cpu: Apple M5 Pro
+BenchmarkParseMetrics/Hosts1         	    3681	    331331 ns/op	  48.60 MB/s	       141.0 series/op	   69872 B/op	     409 allocs/op
+BenchmarkParseMetrics/Hosts10        	     100	   3907264 ns/op	  38.10 MB/s	      1095 series/op	  640752 B/op	    3302 allocs/op
+BenchmarkParseMetrics/Hosts100       	      10	  45740850 ns/op	  32.28 MB/s	     10635 series/op	 6600432 B/op	   32199 allocs/op
+BenchmarkTrafficUnchanged/Hosts1     	   10000	    168408 ns/op	       141.0 series/op	   14760 B/op	      70 allocs/op
+BenchmarkTrafficUnchanged/Hosts10    	     235	   2068000 ns/op	      1095 series/op	  134792 B/op	     625 allocs/op
+BenchmarkTrafficUnchanged/Hosts100   	      14	  29986155 ns/op	     10635 series/op	 1242808 B/op	    6146 allocs/op
+BenchmarkTrafficRollups/Hosts1       	     556	    586213 ns/op	        12.00 rollups/op	       141.0 series/op	   23296 B/op	     294 allocs/op
+BenchmarkTrafficRollups/Hosts10      	      66	   4750307 ns/op	       120.0 rollups/op	      1095 series/op	  220610 B/op	    2868 allocs/op
+BenchmarkSummarize/Hours24           	   10000	     67620 ns/op	       816.0 rows/op	    1096 B/op	       9 allocs/op
+BenchmarkSummarize/Hours168          	    2642	    188045 ns/op	      5712 rows/op	    9512 B/op	      15 allocs/op
+BenchmarkSummarize/Hours2160         	     148	   2015340 ns/op	     73440 rows/op	  148312 B/op	      33 allocs/op
+PASS
+goos: darwin
+goarch: arm64
+pkg: github.com/kylebegeman/helios/internal/signals
+cpu: Apple M5 Pro
+BenchmarkParseMetrics/Hosts1         	    3636	     94778 ns/op	 169.90 MB/s	       141.0 series/op	   69872 B/op	     409 allocs/op
+BenchmarkParseMetrics/Hosts10        	     390	    746072 ns/op	 199.53 MB/s	      1095 series/op	  640752 B/op	    3302 allocs/op
+BenchmarkParseMetrics/Hosts100       	      39	   7322279 ns/op	 201.64 MB/s	     10635 series/op	 6600432 B/op	   32199 allocs/op
+BenchmarkTrafficUnchanged/Hosts1     	   10000	     44179 ns/op	       141.0 series/op	   14760 B/op	      70 allocs/op
+BenchmarkTrafficUnchanged/Hosts10    	     540	    516443 ns/op	      1095 series/op	  134792 B/op	     625 allocs/op
+BenchmarkTrafficUnchanged/Hosts100   	      79	   9707396 ns/op	     10635 series/op	 1242808 B/op	    6146 allocs/op
+BenchmarkTrafficRollups/Hosts1       	     100	   4809921 ns/op	        12.00 rollups/op	       141.0 series/op	   23298 B/op	     294 allocs/op
+BenchmarkTrafficRollups/Hosts10      	      38	   8422317 ns/op	       120.0 rollups/op	      1095 series/op	  220610 B/op	    2868 allocs/op
+BenchmarkSummarize/Hours24           	   12694	     34309 ns/op	       816.0 rows/op	    1096 B/op	       9 allocs/op
+BenchmarkSummarize/Hours168          	    2368	    331035 ns/op	      5712 rows/op	    9512 B/op	      15 allocs/op
+BenchmarkSummarize/Hours2160         	      67	   3990238 ns/op	     73440 rows/op	  148312 B/op	      33 allocs/op
+PASS
+goos: darwin
+goarch: arm64
+pkg: github.com/kylebegeman/helios/internal/signals
+cpu: Apple M5 Pro
+BenchmarkParseMetrics/Hosts1         	    3132	     90625 ns/op	 177.69 MB/s	       141.0 series/op	   69872 B/op	     409 allocs/op
+BenchmarkParseMetrics/Hosts10        	     397	    758602 ns/op	 196.23 MB/s	      1095 series/op	  640752 B/op	    3302 allocs/op
+BenchmarkParseMetrics/Hosts100       	      36	   7231956 ns/op	 204.16 MB/s	     10635 series/op	 6600432 B/op	   32199 allocs/op
+BenchmarkTrafficUnchanged/Hosts1     	   10000	     50111 ns/op	       141.0 series/op	   14760 B/op	      70 allocs/op
+BenchmarkTrafficUnchanged/Hosts10    	     762	    414841 ns/op	      1095 series/op	  134792 B/op	     625 allocs/op
+BenchmarkTrafficUnchanged/Hosts100   	      76	   9860784 ns/op	     10635 series/op	 1242808 B/op	    6146 allocs/op
+BenchmarkTrafficRollups/Hosts1       	     518	    661687 ns/op	        12.00 rollups/op	       141.0 series/op	   23296 B/op	     294 allocs/op
+BenchmarkTrafficRollups/Hosts10      	      49	   7264923 ns/op	       120.0 rollups/op	      1095 series/op	  220608 B/op	    2868 allocs/op
+BenchmarkSummarize/Hours24           	   10000	     80090 ns/op	       816.0 rows/op	    1096 B/op	       9 allocs/op
+BenchmarkSummarize/Hours168          	    2503	    449516 ns/op	      5712 rows/op	    9512 B/op	      15 allocs/op
+BenchmarkSummarize/Hours2160         	     100	   3797611 ns/op	     73440 rows/op	  148312 B/op	      33 allocs/op
+PASS
+goos: darwin
+goarch: arm64
+pkg: github.com/kylebegeman/helios/internal/signals
+cpu: Apple M5 Pro
+BenchmarkParseMetrics/Hosts1         	    3276	    189422 ns/op	  85.01 MB/s	       141.0 series/op	   69872 B/op	     409 allocs/op
+BenchmarkParseMetrics/Hosts10        	     405	   1507979 ns/op	  98.72 MB/s	      1095 series/op	  640752 B/op	    3302 allocs/op
+BenchmarkParseMetrics/Hosts100       	       9	  35698639 ns/op	  41.36 MB/s	     10635 series/op	 6600432 B/op	   32199 allocs/op
+BenchmarkTrafficUnchanged/Hosts1     	   10000	    105848 ns/op	       141.0 series/op	   14760 B/op	      70 allocs/op
+BenchmarkTrafficUnchanged/Hosts10    	     333	   1050124 ns/op	      1095 series/op	  134792 B/op	     625 allocs/op
+BenchmarkTrafficUnchanged/Hosts100   	      27	  21957580 ns/op	     10635 series/op	 1242808 B/op	    6146 allocs/op
+BenchmarkTrafficRollups/Hosts1       	     430	    598594 ns/op	        12.00 rollups/op	       141.0 series/op	   23296 B/op	     294 allocs/op
+BenchmarkTrafficRollups/Hosts10      	      50	   6359182 ns/op	       120.0 rollups/op	      1095 series/op	  220608 B/op	    2868 allocs/op
+BenchmarkSummarize/Hours24           	   10000	     48598 ns/op	       816.0 rows/op	    1096 B/op	       9 allocs/op
+BenchmarkSummarize/Hours168          	     584	    453773 ns/op	      5712 rows/op	    9512 B/op	      15 allocs/op
+BenchmarkSummarize/Hours2160         	     147	   2416207 ns/op	     73440 rows/op	  148312 B/op	      33 allocs/op
+PASS
+goos: darwin
+goarch: arm64
+pkg: github.com/kylebegeman/helios/internal/signals
+cpu: Apple M5 Pro
+BenchmarkParseMetrics/Hosts1         	    2562	    107764 ns/op	 149.43 MB/s	       141.0 series/op	   69872 B/op	     409 allocs/op
+BenchmarkParseMetrics/Hosts10        	     380	   1158917 ns/op	 128.45 MB/s	      1095 series/op	  640752 B/op	    3302 allocs/op
+BenchmarkParseMetrics/Hosts100       	      14	  19231676 ns/op	  76.77 MB/s	     10635 series/op	 6600432 B/op	   32199 allocs/op
+BenchmarkTrafficUnchanged/Hosts1     	    9355	     52088 ns/op	       141.0 series/op	   14760 B/op	      70 allocs/op
+BenchmarkTrafficUnchanged/Hosts10    	     777	    391903 ns/op	      1095 series/op	  134792 B/op	     625 allocs/op
+BenchmarkTrafficUnchanged/Hosts100   	      82	   4497838 ns/op	     10635 series/op	 1242808 B/op	    6146 allocs/op
+BenchmarkTrafficRollups/Hosts1       	     345	    750523 ns/op	        12.00 rollups/op	       141.0 series/op	   23298 B/op	     294 allocs/op
+BenchmarkTrafficRollups/Hosts10      	      37	   6950117 ns/op	       120.0 rollups/op	      1095 series/op	  220608 B/op	    2868 allocs/op
+BenchmarkSummarize/Hours24           	   12336	     23277 ns/op	       816.0 rows/op	    1096 B/op	       9 allocs/op
+BenchmarkSummarize/Hours168          	    2265	    132727 ns/op	      5712 rows/op	    9512 B/op	      15 allocs/op
+BenchmarkSummarize/Hours2160         	     172	   1698993 ns/op	     73440 rows/op	  148312 B/op	      33 allocs/op
+PASS
+goos: darwin
+goarch: arm64
+pkg: github.com/kylebegeman/helios/internal/signals
+cpu: Apple M5 Pro
+BenchmarkParseMetrics/Hosts1         	    3577	     86464 ns/op	 186.24 MB/s	       141.0 series/op	   69872 B/op	     409 allocs/op
+BenchmarkParseMetrics/Hosts10        	     276	    981690 ns/op	 151.64 MB/s	      1095 series/op	  640752 B/op	    3302 allocs/op
+BenchmarkParseMetrics/Hosts100       	      32	   8114467 ns/op	 181.95 MB/s	     10635 series/op	 6600432 B/op	   32199 allocs/op
+BenchmarkTrafficUnchanged/Hosts1     	   10000	     60765 ns/op	       141.0 series/op	   14760 B/op	      70 allocs/op
+BenchmarkTrafficUnchanged/Hosts10    	     588	    467748 ns/op	      1095 series/op	  134792 B/op	     625 allocs/op
+BenchmarkTrafficUnchanged/Hosts100   	      64	   6813824 ns/op	     10635 series/op	 1242808 B/op	    6146 allocs/op
+BenchmarkTrafficRollups/Hosts1       	      76	   3719050 ns/op	        12.00 rollups/op	       141.0 series/op	   23299 B/op	     294 allocs/op
+BenchmarkTrafficRollups/Hosts10      	      42	   6095673 ns/op	       120.0 rollups/op	      1095 series/op	  220609 B/op	    2868 allocs/op
+BenchmarkSummarize/Hours24           	   10000	     26156 ns/op	       816.0 rows/op	    1096 B/op	       9 allocs/op
+BenchmarkSummarize/Hours168          	    2175	    130396 ns/op	      5712 rows/op	    9512 B/op	      15 allocs/op
+BenchmarkSummarize/Hours2160         	     169	   1743057 ns/op	     73440 rows/op	  148312 B/op	      33 allocs/op
+PASS
+goos: darwin
+goarch: arm64
+pkg: github.com/kylebegeman/helios/internal/edge
+cpu: Apple M5 Pro
+BenchmarkConfigBehind/apps=10         	    1431	    232607 ns/op	 389.96 MB/s	        11.00 hosts/op	        40.00 routes/op	  151728 B/op	     372 allocs/op
+BenchmarkConfigBehind/apps=100        	     136	   2280434 ns/op	 390.12 MB/s	       101.0 hosts/op	       400.0 routes/op	 1406300 B/op	    3532 allocs/op
+BenchmarkConfigBehind/apps=1000       	      15	  19794481 ns/op	 448.56 MB/s	      1001 hosts/op	      4000 routes/op	14013256 B/op	   35047 allocs/op
+PASS
+goos: darwin
+goarch: arm64
+pkg: github.com/kylebegeman/helios/internal/edge
+cpu: Apple M5 Pro
+BenchmarkConfigBehind/apps=10         	    1285	    233426 ns/op	 388.59 MB/s	        11.00 hosts/op	        40.00 routes/op	  151728 B/op	     372 allocs/op
+BenchmarkConfigBehind/apps=100        	     100	   2575499 ns/op	 345.42 MB/s	       101.0 hosts/op	       400.0 routes/op	 1406300 B/op	    3532 allocs/op
+BenchmarkConfigBehind/apps=1000       	      19	  28338186 ns/op	 313.32 MB/s	      1001 hosts/op	      4000 routes/op	14013256 B/op	   35047 allocs/op
+PASS
+goos: darwin
+goarch: arm64
+pkg: github.com/kylebegeman/helios/internal/edge
+cpu: Apple M5 Pro
+BenchmarkConfigBehind/apps=10         	    1078	    266517 ns/op	 340.35 MB/s	        11.00 hosts/op	        40.00 routes/op	  151728 B/op	     372 allocs/op
+BenchmarkConfigBehind/apps=100        	     100	   7139287 ns/op	 124.61 MB/s	       101.0 hosts/op	       400.0 routes/op	 1406300 B/op	    3532 allocs/op
+BenchmarkConfigBehind/apps=1000       	       3	 134599833 ns/op	  65.97 MB/s	      1001 hosts/op	      4000 routes/op	14013256 B/op	   35047 allocs/op
+PASS
+goos: darwin
+goarch: arm64
+pkg: github.com/kylebegeman/helios/internal/edge
+cpu: Apple M5 Pro
+BenchmarkConfigBehind/apps=10         	    1122	   1184774 ns/op	  76.56 MB/s	        11.00 hosts/op	        40.00 routes/op	  151728 B/op	     372 allocs/op
+BenchmarkConfigBehind/apps=100        	     100	   3031271 ns/op	 293.49 MB/s	       101.0 hosts/op	       400.0 routes/op	 1406299 B/op	    3532 allocs/op
+BenchmarkConfigBehind/apps=1000       	      16	  15971974 ns/op	 555.91 MB/s	      1001 hosts/op	      4000 routes/op	14013256 B/op	   35047 allocs/op
+PASS
+goos: darwin
+goarch: arm64
+pkg: github.com/kylebegeman/helios/internal/edge
+cpu: Apple M5 Pro
+BenchmarkConfigBehind/apps=10         	     718	    468830 ns/op	 193.48 MB/s	        11.00 hosts/op	        40.00 routes/op	  151728 B/op	     372 allocs/op
+BenchmarkConfigBehind/apps=100        	      43	   7974987 ns/op	 111.55 MB/s	       101.0 hosts/op	       400.0 routes/op	 1406300 B/op	    3532 allocs/op
+BenchmarkConfigBehind/apps=1000       	      15	  18227464 ns/op	 487.12 MB/s	      1001 hosts/op	      4000 routes/op	14013237 B/op	   35046 allocs/op
+PASS
+goos: darwin
+goarch: arm64
+pkg: github.com/kylebegeman/helios/internal/edge
+cpu: Apple M5 Pro
+BenchmarkConfigBehind/apps=10         	     687	    486971 ns/op	 186.27 MB/s	        11.00 hosts/op	        40.00 routes/op	  151728 B/op	     372 allocs/op
+BenchmarkConfigBehind/apps=100        	     115	   3517268 ns/op	 252.93 MB/s	       101.0 hosts/op	       400.0 routes/op	 1406299 B/op	    3532 allocs/op
+BenchmarkConfigBehind/apps=1000       	       4	  73812500 ns/op	 120.29 MB/s	      1001 hosts/op	      4000 routes/op	14013222 B/op	   35046 allocs/op
+PASS
+goos: darwin
+goarch: arm64
+pkg: github.com/kylebegeman/helios/internal/edge
+cpu: Apple M5 Pro
+BenchmarkConfigBehind/apps=10         	    1428	    218923 ns/op	 414.34 MB/s	        11.00 hosts/op	        40.00 routes/op	  151728 B/op	     372 allocs/op
+BenchmarkConfigBehind/apps=100        	     100	   2792855 ns/op	 318.54 MB/s	       101.0 hosts/op	       400.0 routes/op	 1406302 B/op	    3532 allocs/op
+BenchmarkConfigBehind/apps=1000       	      18	  24242565 ns/op	 366.25 MB/s	      1001 hosts/op	      4000 routes/op	14013248 B/op	   35046 allocs/op
+PASS
+goos: darwin
+goarch: arm64
+pkg: github.com/kylebegeman/helios/internal/edge
+cpu: Apple M5 Pro
+BenchmarkConfigBehind/apps=10         	    1033	    245482 ns/op	 369.51 MB/s	        11.00 hosts/op	        40.00 routes/op	  151728 B/op	     372 allocs/op
+BenchmarkConfigBehind/apps=100        	     100	   4004844 ns/op	 222.14 MB/s	       101.0 hosts/op	       400.0 routes/op	 1406299 B/op	    3532 allocs/op
+BenchmarkConfigBehind/apps=1000       	      16	  29462318 ns/op	 301.37 MB/s	      1001 hosts/op	      4000 routes/op	14013256 B/op	   35047 allocs/op
+PASS
+goos: darwin
+goarch: arm64
+pkg: github.com/kylebegeman/helios/internal/edge
+cpu: Apple M5 Pro
+BenchmarkConfigBehind/apps=10         	    1248	    234643 ns/op	 386.58 MB/s	        11.00 hosts/op	        40.00 routes/op	  151728 B/op	     372 allocs/op
+BenchmarkConfigBehind/apps=100        	     128	   2319648 ns/op	 383.52 MB/s	       101.0 hosts/op	       400.0 routes/op	 1406301 B/op	    3532 allocs/op
+BenchmarkConfigBehind/apps=1000       	      18	  17328803 ns/op	 512.38 MB/s	      1001 hosts/op	      4000 routes/op	14013256 B/op	   35047 allocs/op
+PASS
+goos: darwin
+goarch: arm64
+pkg: github.com/kylebegeman/helios/internal/edge
+cpu: Apple M5 Pro
+BenchmarkConfigBehind/apps=10         	    1150	    250448 ns/op	 362.18 MB/s	        11.00 hosts/op	        40.00 routes/op	  151728 B/op	     372 allocs/op
+BenchmarkConfigBehind/apps=100        	     100	   2516595 ns/op	 353.51 MB/s	       101.0 hosts/op	       400.0 routes/op	 1406299 B/op	    3532 allocs/op
+BenchmarkConfigBehind/apps=1000       	      19	  19030572 ns/op	 466.56 MB/s	      1001 hosts/op	      4000 routes/op	14013256 B/op	   35047 allocs/op
+PASS
+goos: darwin
+goarch: arm64
+pkg: github.com/kylebegeman/helios/internal/state
+cpu: Apple M5 Pro
+BenchmarkStateRevisionReads/apps=1/history=32/ActiveRevisions         	   12466	     23095 ns/op	    4032 B/op	      69 allocs/op
+BenchmarkStateRevisionReads/apps=1/history=32/RevisionWithStatus/active         	    9152	     32392 ns/op	    3992 B/op	      72 allocs/op
+BenchmarkStateRevisionReads/apps=1/history=32/RevisionWithStatus/previous       	    9692	     27140 ns/op	    3992 B/op	      72 allocs/op
+BenchmarkStateRevisionReads/apps=1/history=32/Revisions                         	    1844	    161982 ns/op	  102012 B/op	    1222 allocs/op
+BenchmarkStateRevisionReads/apps=25/history=32/ActiveRevisions                  	    1432	    182492 ns/op	   81959 B/op	     962 allocs/op
+BenchmarkStateRevisionReads/apps=25/history=32/RevisionWithStatus/active        	   10000	     28002 ns/op	    3992 B/op	      72 allocs/op
+BenchmarkStateRevisionReads/apps=25/history=32/RevisionWithStatus/previous      	    9877	     27855 ns/op	    3992 B/op	      72 allocs/op
+BenchmarkStateRevisionReads/apps=25/history=32/Revisions                        	    2068	    152848 ns/op	  102012 B/op	    1222 allocs/op
+BenchmarkStateRevisionReads/apps=25/history=512/ActiveRevisions                 	      39	   9654778 ns/op	   82477 B/op	    1012 allocs/op
+BenchmarkStateRevisionReads/apps=25/history=512/RevisionWithStatus/active       	    2088	    124274 ns/op	    3992 B/op	      74 allocs/op
+BenchmarkStateRevisionReads/apps=25/history=512/RevisionWithStatus/previous     	    2844	    119017 ns/op	    3992 B/op	      74 allocs/op
+BenchmarkStateRevisionReads/apps=25/history=512/Revisions                       	     128	   2350952 ns/op	 1635388 B/op	   19696 allocs/op
+BenchmarkStateRevisionReads/apps=100/history=512/ActiveRevisions                	      15	  61531319 ns/op	  328926 B/op	    3939 allocs/op
+BenchmarkStateRevisionReads/apps=100/history=512/RevisionWithStatus/active      	    2414	    122049 ns/op	    3992 B/op	      74 allocs/op
+BenchmarkStateRevisionReads/apps=100/history=512/RevisionWithStatus/previous    	    2803	    114956 ns/op	    3992 B/op	      74 allocs/op
+BenchmarkStateRevisionReads/apps=100/history=512/Revisions                      	     124	   2359803 ns/op	 1635305 B/op	   19676 allocs/op
+BenchmarkStateBackupReads/apps=1/history=32/LatestForApp                        	    8036	     35980 ns/op	    2576 B/op	      63 allocs/op
+BenchmarkStateBackupReads/apps=1/history=32/AppHistory                          	    3620	     84414 ns/op	   22264 B/op	     370 allocs/op
+BenchmarkStateBackupReads/apps=1/history=32/FleetHistory                        	    3481	     84900 ns/op	   22056 B/op	     368 allocs/op
+BenchmarkStateBackupReads/apps=1/history=32/FleetBackupHistory                  	    3685	     80305 ns/op	   22312 B/op	     372 allocs/op
+BenchmarkStateBackupReads/apps=1/history=32/LastGoodBackupRun                   	   13738	     21542 ns/op	    1696 B/op	      55 allocs/op
+BenchmarkStateBackupReads/apps=25/history=32/LatestForApp                       	    6999	     37429 ns/op	    2592 B/op	      64 allocs/op
+BenchmarkStateBackupReads/apps=25/history=32/AppHistory                         	    3084	     86265 ns/op	   22424 B/op	     390 allocs/op
+BenchmarkStateBackupReads/apps=25/history=32/FleetHistory                       	    1053	    362473 ns/op	   23080 B/op	     423 allocs/op
+BenchmarkStateBackupReads/apps=25/history=32/FleetBackupHistory                 	    1222	    261275 ns/op	   23336 B/op	     427 allocs/op
+BenchmarkStateBackupReads/apps=25/history=32/LastGoodBackupRun                  	   13032	     22592 ns/op	    1712 B/op	      56 allocs/op
+BenchmarkStateBackupReads/apps=25/history=512/LatestForApp                      	    7754	     35139 ns/op	    2592 B/op	      64 allocs/op
+BenchmarkStateBackupReads/apps=25/history=512/AppHistory                        	    1492	    212986 ns/op	   22520 B/op	     394 allocs/op
+BenchmarkStateBackupReads/apps=25/history=512/FleetHistory                      	      97	   3107220 ns/op	   23080 B/op	     424 allocs/op
+BenchmarkStateBackupReads/apps=25/history=512/FleetBackupHistory                	     100	   3192596 ns/op	   23336 B/op	     428 allocs/op
+BenchmarkStateBackupReads/apps=25/history=512/LastGoodBackupRun                 	   14343	     20788 ns/op	    1712 B/op	      56 allocs/op
+BenchmarkStateBackupReads/apps=100/history=512/LatestForApp                     	    8091	     38687 ns/op	    2592 B/op	      64 allocs/op
+BenchmarkStateBackupReads/apps=100/history=512/AppHistory                       	    1512	    230267 ns/op	   22520 B/op	     394 allocs/op
+BenchmarkStateBackupReads/apps=100/history=512/FleetHistory                     	      22	  12727413 ns/op	   23080 B/op	     424 allocs/op
+BenchmarkStateBackupReads/apps=100/history=512/FleetBackupHistory               	      12	  38814812 ns/op	   23336 B/op	     428 allocs/op
+BenchmarkStateBackupReads/apps=100/history=512/LastGoodBackupRun                	   12361	     23703 ns/op	    1712 B/op	      56 allocs/op
+PASS
+goos: darwin
+goarch: arm64
+pkg: github.com/kylebegeman/helios/internal/state
+cpu: Apple M5 Pro
+BenchmarkStateRevisionReads/apps=1/history=32/ActiveRevisions         	   14313	     20484 ns/op	    4032 B/op	      69 allocs/op
+BenchmarkStateRevisionReads/apps=1/history=32/RevisionWithStatus/active         	   12096	     24826 ns/op	    3992 B/op	      72 allocs/op
+BenchmarkStateRevisionReads/apps=1/history=32/RevisionWithStatus/previous       	   13064	     23688 ns/op	    3992 B/op	      72 allocs/op
+BenchmarkStateRevisionReads/apps=1/history=32/Revisions                         	    2095	    138689 ns/op	  102012 B/op	    1222 allocs/op
+BenchmarkStateRevisionReads/apps=25/history=32/ActiveRevisions                  	    1609	    184481 ns/op	   81958 B/op	     962 allocs/op
+BenchmarkStateRevisionReads/apps=25/history=32/RevisionWithStatus/active        	   10000	     31401 ns/op	    3992 B/op	      72 allocs/op
+BenchmarkStateRevisionReads/apps=25/history=32/RevisionWithStatus/previous      	   10000	     27762 ns/op	    3992 B/op	      72 allocs/op
+BenchmarkStateRevisionReads/apps=25/history=32/Revisions                        	    1920	    165691 ns/op	  102012 B/op	    1222 allocs/op
+BenchmarkStateRevisionReads/apps=25/history=512/ActiveRevisions                 	      56	   5930385 ns/op	   82434 B/op	    1012 allocs/op
+BenchmarkStateRevisionReads/apps=25/history=512/RevisionWithStatus/active       	    2748	    111377 ns/op	    3992 B/op	      74 allocs/op
+BenchmarkStateRevisionReads/apps=25/history=512/RevisionWithStatus/previous     	    2780	    112502 ns/op	    3992 B/op	      74 allocs/op
+BenchmarkStateRevisionReads/apps=25/history=512/Revisions                       	     135	   2149525 ns/op	 1635386 B/op	   19696 allocs/op
+BenchmarkStateRevisionReads/apps=100/history=512/ActiveRevisions                	      18	  42153780 ns/op	  328864 B/op	    3939 allocs/op
+BenchmarkStateRevisionReads/apps=100/history=512/RevisionWithStatus/active      	    2834	    115321 ns/op	    3992 B/op	      74 allocs/op
+BenchmarkStateRevisionReads/apps=100/history=512/RevisionWithStatus/previous    	    2524	    120876 ns/op	    3992 B/op	      74 allocs/op
+BenchmarkStateRevisionReads/apps=100/history=512/Revisions                      	     145	   2049089 ns/op	 1635306 B/op	   19676 allocs/op
+BenchmarkStateBackupReads/apps=1/history=32/LatestForApp                        	    8434	     34680 ns/op	    2576 B/op	      63 allocs/op
+BenchmarkStateBackupReads/apps=1/history=32/AppHistory                          	    3806	     88444 ns/op	   22264 B/op	     370 allocs/op
+BenchmarkStateBackupReads/apps=1/history=32/FleetHistory                        	    3654	     83323 ns/op	   22056 B/op	     368 allocs/op
+BenchmarkStateBackupReads/apps=1/history=32/FleetBackupHistory                  	    4522	     83012 ns/op	   22312 B/op	     372 allocs/op
+BenchmarkStateBackupReads/apps=1/history=32/LastGoodBackupRun                   	   10000	     26708 ns/op	    1696 B/op	      55 allocs/op
+BenchmarkStateBackupReads/apps=25/history=32/LatestForApp                       	    7917	     37781 ns/op	    2592 B/op	      64 allocs/op
+BenchmarkStateBackupReads/apps=25/history=32/AppHistory                         	    4159	     90054 ns/op	   22424 B/op	     390 allocs/op
+BenchmarkStateBackupReads/apps=25/history=32/FleetHistory                       	    1236	    301504 ns/op	   23080 B/op	     423 allocs/op
+BenchmarkStateBackupReads/apps=25/history=32/FleetBackupHistory                 	    1194	    306499 ns/op	   23336 B/op	     427 allocs/op
+BenchmarkStateBackupReads/apps=25/history=32/LastGoodBackupRun                  	   12742	     23840 ns/op	    1712 B/op	      56 allocs/op
+BenchmarkStateBackupReads/apps=25/history=512/LatestForApp                      	    6320	     45417 ns/op	    2592 B/op	      64 allocs/op
+BenchmarkStateBackupReads/apps=25/history=512/AppHistory                        	    1492	    201682 ns/op	   22520 B/op	     394 allocs/op
+BenchmarkStateBackupReads/apps=25/history=512/FleetHistory                      	      81	   3963882 ns/op	   23080 B/op	     424 allocs/op
+BenchmarkStateBackupReads/apps=25/history=512/FleetBackupHistory                	      66	   5262966 ns/op	   23336 B/op	     428 allocs/op
+BenchmarkStateBackupReads/apps=25/history=512/LastGoodBackupRun                 	   13584	     22516 ns/op	    1712 B/op	      56 allocs/op
+BenchmarkStateBackupReads/apps=100/history=512/LatestForApp                     	    7804	     43231 ns/op	    2592 B/op	      64 allocs/op
+BenchmarkStateBackupReads/apps=100/history=512/AppHistory                       	    1462	    207231 ns/op	   22520 B/op	     394 allocs/op
+BenchmarkStateBackupReads/apps=100/history=512/FleetHistory                     	       6	  45067646 ns/op	   23080 B/op	     424 allocs/op
+BenchmarkStateBackupReads/apps=100/history=512/FleetBackupHistory               	       6	  49731451 ns/op	   23336 B/op	     428 allocs/op
+BenchmarkStateBackupReads/apps=100/history=512/LastGoodBackupRun                	   14989	     20420 ns/op	    1712 B/op	      56 allocs/op
+PASS
+goos: darwin
+goarch: arm64
+pkg: github.com/kylebegeman/helios/internal/state
+cpu: Apple M5 Pro
+BenchmarkStateRevisionReads/apps=1/history=32/ActiveRevisions         	   14331	     21445 ns/op	    4032 B/op	      69 allocs/op
+BenchmarkStateRevisionReads/apps=1/history=32/RevisionWithStatus/active         	    5640	     46526 ns/op	    3992 B/op	      72 allocs/op
+BenchmarkStateRevisionReads/apps=1/history=32/RevisionWithStatus/previous       	   10000	     31135 ns/op	    3992 B/op	      72 allocs/op
+BenchmarkStateRevisionReads/apps=1/history=32/Revisions                         	    1563	    184015 ns/op	  102012 B/op	    1222 allocs/op
+BenchmarkStateRevisionReads/apps=25/history=32/ActiveRevisions                  	    1244	    246487 ns/op	   81960 B/op	     962 allocs/op
+BenchmarkStateRevisionReads/apps=25/history=32/RevisionWithStatus/active        	    8892	     28962 ns/op	    3992 B/op	      72 allocs/op
+BenchmarkStateRevisionReads/apps=25/history=32/RevisionWithStatus/previous      	    9813	     28607 ns/op	    3992 B/op	      72 allocs/op
+BenchmarkStateRevisionReads/apps=25/history=32/Revisions                        	    1585	    189530 ns/op	  102012 B/op	    1222 allocs/op
+BenchmarkStateRevisionReads/apps=25/history=512/ActiveRevisions                 	      22	  11365284 ns/op	   82580 B/op	    1012 allocs/op
+BenchmarkStateRevisionReads/apps=25/history=512/RevisionWithStatus/active       	    2859	    122772 ns/op	    3992 B/op	      74 allocs/op
+BenchmarkStateRevisionReads/apps=25/history=512/RevisionWithStatus/previous     	    1933	    136455 ns/op	    3992 B/op	      74 allocs/op
+BenchmarkStateRevisionReads/apps=25/history=512/Revisions                       	     100	   2554644 ns/op	 1635389 B/op	   19696 allocs/op
+BenchmarkStateRevisionReads/apps=100/history=512/ActiveRevisions                	      18	  15746049 ns/op	  328864 B/op	    3939 allocs/op
+BenchmarkStateRevisionReads/apps=100/history=512/RevisionWithStatus/active      	    2292	    134675 ns/op	    3992 B/op	      74 allocs/op
+BenchmarkStateRevisionReads/apps=100/history=512/RevisionWithStatus/previous    	    2078	    127758 ns/op	    3992 B/op	      74 allocs/op
+BenchmarkStateRevisionReads/apps=100/history=512/Revisions                      	     100	   2613609 ns/op	 1635306 B/op	   19676 allocs/op
+BenchmarkStateBackupReads/apps=1/history=32/LatestForApp                        	    8938	     41014 ns/op	    2576 B/op	      63 allocs/op
+BenchmarkStateBackupReads/apps=1/history=32/AppHistory                          	    3175	     92524 ns/op	   22264 B/op	     370 allocs/op
+BenchmarkStateBackupReads/apps=1/history=32/FleetHistory                        	    3787	     90556 ns/op	   22056 B/op	     368 allocs/op
+BenchmarkStateBackupReads/apps=1/history=32/FleetBackupHistory                  	    3248	     88788 ns/op	   22312 B/op	     372 allocs/op
+BenchmarkStateBackupReads/apps=1/history=32/LastGoodBackupRun                   	   12854	     23150 ns/op	    1696 B/op	      55 allocs/op
+BenchmarkStateBackupReads/apps=25/history=32/LatestForApp                       	    8242	     40224 ns/op	    2592 B/op	      64 allocs/op
+BenchmarkStateBackupReads/apps=25/history=32/AppHistory                         	    2530	    100270 ns/op	   22424 B/op	     390 allocs/op
+BenchmarkStateBackupReads/apps=25/history=32/FleetHistory                       	    1150	    282784 ns/op	   23080 B/op	     423 allocs/op
+BenchmarkStateBackupReads/apps=25/history=32/FleetBackupHistory                 	    1056	    273824 ns/op	   23336 B/op	     427 allocs/op
+BenchmarkStateBackupReads/apps=25/history=32/LastGoodBackupRun                  	   13401	     22104 ns/op	    1712 B/op	      56 allocs/op
+BenchmarkStateBackupReads/apps=25/history=512/LatestForApp                      	    9092	     37593 ns/op	    2592 B/op	      64 allocs/op
+BenchmarkStateBackupReads/apps=25/history=512/AppHistory                        	    1420	    210916 ns/op	   22520 B/op	     394 allocs/op
+BenchmarkStateBackupReads/apps=25/history=512/FleetHistory                      	      67	   4035306 ns/op	   23080 B/op	     424 allocs/op
+BenchmarkStateBackupReads/apps=25/history=512/FleetBackupHistory                	      94	   6555820 ns/op	   23336 B/op	     428 allocs/op
+BenchmarkStateBackupReads/apps=25/history=512/LastGoodBackupRun                 	   12730	     22947 ns/op	    1712 B/op	      56 allocs/op
+BenchmarkStateBackupReads/apps=100/history=512/LatestForApp                     	    8246	     53804 ns/op	    2592 B/op	      64 allocs/op
+BenchmarkStateBackupReads/apps=100/history=512/AppHistory                       	    1360	    219202 ns/op	   22520 B/op	     394 allocs/op
+BenchmarkStateBackupReads/apps=100/history=512/FleetHistory                     	      14	  30557327 ns/op	   23080 B/op	     424 allocs/op
+BenchmarkStateBackupReads/apps=100/history=512/FleetBackupHistory               	      12	  23215646 ns/op	   23336 B/op	     428 allocs/op
+BenchmarkStateBackupReads/apps=100/history=512/LastGoodBackupRun                	   12235	     24672 ns/op	    1712 B/op	      56 allocs/op
+PASS
+goos: darwin
+goarch: arm64
+pkg: github.com/kylebegeman/helios/internal/state
+cpu: Apple M5 Pro
+BenchmarkStateRevisionReads/apps=1/history=32/ActiveRevisions         	   13515	     23207 ns/op	    4032 B/op	      69 allocs/op
+BenchmarkStateRevisionReads/apps=1/history=32/RevisionWithStatus/active         	   10245	     28953 ns/op	    3992 B/op	      72 allocs/op
+BenchmarkStateRevisionReads/apps=1/history=32/RevisionWithStatus/previous       	   10000	     30449 ns/op	    3992 B/op	      72 allocs/op
+BenchmarkStateRevisionReads/apps=1/history=32/Revisions                         	    1464	    213804 ns/op	  102012 B/op	    1222 allocs/op
+BenchmarkStateRevisionReads/apps=25/history=32/ActiveRevisions                  	    1014	    278248 ns/op	   81960 B/op	     962 allocs/op
+BenchmarkStateRevisionReads/apps=25/history=32/RevisionWithStatus/active        	    8294	     36757 ns/op	    3992 B/op	      72 allocs/op
+BenchmarkStateRevisionReads/apps=25/history=32/RevisionWithStatus/previous      	    8208	     41272 ns/op	    3992 B/op	      72 allocs/op
+BenchmarkStateRevisionReads/apps=25/history=32/Revisions                        	    1497	    202633 ns/op	  102012 B/op	    1222 allocs/op
+BenchmarkStateRevisionReads/apps=25/history=512/ActiveRevisions                 	      30	  10454750 ns/op	   82515 B/op	    1012 allocs/op
+BenchmarkStateRevisionReads/apps=25/history=512/RevisionWithStatus/active       	    1035	    416678 ns/op	    3992 B/op	      74 allocs/op
+BenchmarkStateRevisionReads/apps=25/history=512/RevisionWithStatus/previous     	    1998	    199104 ns/op	    3992 B/op	      74 allocs/op
+BenchmarkStateRevisionReads/apps=25/history=512/Revisions                       	     100	   6294095 ns/op	 1635393 B/op	   19696 allocs/op
+BenchmarkStateRevisionReads/apps=100/history=512/ActiveRevisions                	       8	  31848938 ns/op	  329238 B/op	    3940 allocs/op
+BenchmarkStateRevisionReads/apps=100/history=512/RevisionWithStatus/active      	    2719	    119486 ns/op	    3992 B/op	      74 allocs/op
+BenchmarkStateRevisionReads/apps=100/history=512/RevisionWithStatus/previous    	    1872	    239924 ns/op	    3992 B/op	      74 allocs/op
+BenchmarkStateRevisionReads/apps=100/history=512/Revisions                      	     100	   3099998 ns/op	 1635308 B/op	   19676 allocs/op
+BenchmarkStateBackupReads/apps=1/history=32/LatestForApp                        	    8068	     51796 ns/op	    2576 B/op	      63 allocs/op
+BenchmarkStateBackupReads/apps=1/history=32/AppHistory                          	    3415	     90347 ns/op	   22264 B/op	     370 allocs/op
+BenchmarkStateBackupReads/apps=1/history=32/FleetHistory                        	    2947	    132422 ns/op	   22056 B/op	     368 allocs/op
+BenchmarkStateBackupReads/apps=1/history=32/FleetBackupHistory                  	    1803	    209985 ns/op	   22312 B/op	     372 allocs/op
+BenchmarkStateBackupReads/apps=1/history=32/LastGoodBackupRun                   	   10000	     72722 ns/op	    1696 B/op	      55 allocs/op
+BenchmarkStateBackupReads/apps=25/history=32/LatestForApp                       	    9103	     54388 ns/op	    2592 B/op	      64 allocs/op
+BenchmarkStateBackupReads/apps=25/history=32/AppHistory                         	    3040	    178597 ns/op	   22424 B/op	     390 allocs/op
+BenchmarkStateBackupReads/apps=25/history=32/FleetHistory                       	    1177	    308447 ns/op	   23080 B/op	     423 allocs/op
+BenchmarkStateBackupReads/apps=25/history=32/FleetBackupHistory                 	    1078	    330346 ns/op	   23336 B/op	     427 allocs/op
+BenchmarkStateBackupReads/apps=25/history=32/LastGoodBackupRun                  	   12976	     22684 ns/op	    1712 B/op	      56 allocs/op
+BenchmarkStateBackupReads/apps=25/history=512/LatestForApp                      	    7785	     38215 ns/op	    2592 B/op	      64 allocs/op
+BenchmarkStateBackupReads/apps=25/history=512/AppHistory                        	    1473	    305662 ns/op	   22520 B/op	     394 allocs/op
+BenchmarkStateBackupReads/apps=25/history=512/FleetHistory                      	      31	  11193222 ns/op	   23080 B/op	     424 allocs/op
+BenchmarkStateBackupReads/apps=25/history=512/FleetBackupHistory                	      56	  10424938 ns/op	   23336 B/op	     428 allocs/op
+BenchmarkStateBackupReads/apps=25/history=512/LastGoodBackupRun                 	   10000	     27896 ns/op	    1712 B/op	      56 allocs/op
+BenchmarkStateBackupReads/apps=100/history=512/LatestForApp                     	    7814	     41949 ns/op	    2592 B/op	      64 allocs/op
+BenchmarkStateBackupReads/apps=100/history=512/AppHistory                       	    1351	    243921 ns/op	   22520 B/op	     394 allocs/op
+BenchmarkStateBackupReads/apps=100/history=512/FleetHistory                     	      15	  25907697 ns/op	   23080 B/op	     424 allocs/op
+BenchmarkStateBackupReads/apps=100/history=512/FleetBackupHistory               	      21	  14039425 ns/op	   23336 B/op	     428 allocs/op
+BenchmarkStateBackupReads/apps=100/history=512/LastGoodBackupRun                	   13771	     24854 ns/op	    1712 B/op	      56 allocs/op
+PASS
+goos: darwin
+goarch: arm64
+pkg: github.com/kylebegeman/helios/internal/state
+cpu: Apple M5 Pro
+BenchmarkStateRevisionReads/apps=1/history=32/ActiveRevisions         	   11761	     24155 ns/op	    4032 B/op	      69 allocs/op
+BenchmarkStateRevisionReads/apps=1/history=32/RevisionWithStatus/active         	    9388	     55089 ns/op	    3992 B/op	      72 allocs/op
+BenchmarkStateRevisionReads/apps=1/history=32/RevisionWithStatus/previous       	    7992	     38162 ns/op	    3992 B/op	      72 allocs/op
+BenchmarkStateRevisionReads/apps=1/history=32/Revisions                         	    1460	    195809 ns/op	  102012 B/op	    1222 allocs/op
+BenchmarkStateRevisionReads/apps=25/history=32/ActiveRevisions                  	    1513	    208615 ns/op	   81959 B/op	     962 allocs/op
+BenchmarkStateRevisionReads/apps=25/history=32/RevisionWithStatus/active        	   10000	     28985 ns/op	    3992 B/op	      72 allocs/op
+BenchmarkStateRevisionReads/apps=25/history=32/RevisionWithStatus/previous      	   10000	     29846 ns/op	    3992 B/op	      72 allocs/op
+BenchmarkStateRevisionReads/apps=25/history=32/Revisions                        	    1850	    231983 ns/op	  102012 B/op	    1222 allocs/op
+BenchmarkStateRevisionReads/apps=25/history=512/ActiveRevisions                 	      82	  17613295 ns/op	   82406 B/op	    1012 allocs/op
+BenchmarkStateRevisionReads/apps=25/history=512/RevisionWithStatus/active       	    2214	    123472 ns/op	    3992 B/op	      74 allocs/op
+BenchmarkStateRevisionReads/apps=25/history=512/RevisionWithStatus/previous     	    2437	    136112 ns/op	    3992 B/op	      74 allocs/op
+BenchmarkStateRevisionReads/apps=25/history=512/Revisions                       	      94	   2674769 ns/op	 1635388 B/op	   19696 allocs/op
+BenchmarkStateRevisionReads/apps=100/history=512/ActiveRevisions                	      16	  38493182 ns/op	  328903 B/op	    3939 allocs/op
+BenchmarkStateRevisionReads/apps=100/history=512/RevisionWithStatus/active      	    2094	    120175 ns/op	    3992 B/op	      74 allocs/op
+BenchmarkStateRevisionReads/apps=100/history=512/RevisionWithStatus/previous    	    2497	    201197 ns/op	    3992 B/op	      74 allocs/op
+BenchmarkStateRevisionReads/apps=100/history=512/Revisions                      	     100	   3086561 ns/op	 1635308 B/op	   19676 allocs/op
+BenchmarkStateBackupReads/apps=1/history=32/LatestForApp                        	    7788	     36106 ns/op	    2576 B/op	      63 allocs/op
+BenchmarkStateBackupReads/apps=1/history=32/AppHistory                          	    3121	     91591 ns/op	   22264 B/op	     370 allocs/op
+BenchmarkStateBackupReads/apps=1/history=32/FleetHistory                        	    3382	     94685 ns/op	   22056 B/op	     368 allocs/op
+BenchmarkStateBackupReads/apps=1/history=32/FleetBackupHistory                  	    3654	    133369 ns/op	   22312 B/op	     372 allocs/op
+BenchmarkStateBackupReads/apps=1/history=32/LastGoodBackupRun                   	   10000	     27980 ns/op	    1696 B/op	      55 allocs/op
+BenchmarkStateBackupReads/apps=25/history=32/LatestForApp                       	    8677	     48545 ns/op	    2592 B/op	      64 allocs/op
+BenchmarkStateBackupReads/apps=25/history=32/AppHistory                         	    3370	    100466 ns/op	   22424 B/op	     390 allocs/op
+BenchmarkStateBackupReads/apps=25/history=32/FleetHistory                       	    1161	    342193 ns/op	   23080 B/op	     423 allocs/op
+BenchmarkStateBackupReads/apps=25/history=32/FleetBackupHistory                 	     888	    395265 ns/op	   23336 B/op	     427 allocs/op
+BenchmarkStateBackupReads/apps=25/history=32/LastGoodBackupRun                  	   10000	     27760 ns/op	    1712 B/op	      56 allocs/op
+BenchmarkStateBackupReads/apps=25/history=512/LatestForApp                      	    8112	     44407 ns/op	    2592 B/op	      64 allocs/op
+BenchmarkStateBackupReads/apps=25/history=512/AppHistory                        	    1335	    224652 ns/op	   22520 B/op	     394 allocs/op
+BenchmarkStateBackupReads/apps=25/history=512/FleetHistory                      	      49	  14099866 ns/op	   23080 B/op	     424 allocs/op
+BenchmarkStateBackupReads/apps=25/history=512/FleetBackupHistory                	      38	   7000093 ns/op	   23336 B/op	     428 allocs/op
+BenchmarkStateBackupReads/apps=25/history=512/LastGoodBackupRun                 	   10000	     55305 ns/op	    1712 B/op	      56 allocs/op
+BenchmarkStateBackupReads/apps=100/history=512/LatestForApp                     	    8059	     37421 ns/op	    2592 B/op	      64 allocs/op
+BenchmarkStateBackupReads/apps=100/history=512/AppHistory                       	    1498	    212015 ns/op	   22520 B/op	     394 allocs/op
+BenchmarkStateBackupReads/apps=100/history=512/FleetHistory                     	      12	  27162153 ns/op	   23080 B/op	     424 allocs/op
+BenchmarkStateBackupReads/apps=100/history=512/FleetBackupHistory               	       9	  36314370 ns/op	   23336 B/op	     428 allocs/op
+BenchmarkStateBackupReads/apps=100/history=512/LastGoodBackupRun                	   12649	     24061 ns/op	    1712 B/op	      56 allocs/op
+PASS
+goos: darwin
+goarch: arm64
+pkg: github.com/kylebegeman/helios/internal/state
+cpu: Apple M5 Pro
+BenchmarkStateRevisionReads/apps=1/history=32/ActiveRevisions         	   10342	     28743 ns/op	    4032 B/op	      69 allocs/op
+BenchmarkStateRevisionReads/apps=1/history=32/RevisionWithStatus/active         	   10000	     29871 ns/op	    3992 B/op	      72 allocs/op
+BenchmarkStateRevisionReads/apps=1/history=32/RevisionWithStatus/previous       	   10000	     35669 ns/op	    3992 B/op	      72 allocs/op
+BenchmarkStateRevisionReads/apps=1/history=32/Revisions                         	    1450	    204455 ns/op	  102012 B/op	    1222 allocs/op
+BenchmarkStateRevisionReads/apps=25/history=32/ActiveRevisions                  	    1328	    246832 ns/op	   81959 B/op	     962 allocs/op
+BenchmarkStateRevisionReads/apps=25/history=32/RevisionWithStatus/active        	   10566	     29111 ns/op	    3992 B/op	      72 allocs/op
+BenchmarkStateRevisionReads/apps=25/history=32/RevisionWithStatus/previous      	   10000	     26897 ns/op	    3992 B/op	      72 allocs/op
+BenchmarkStateRevisionReads/apps=25/history=32/Revisions                        	    2030	    158764 ns/op	  102012 B/op	    1222 allocs/op
+BenchmarkStateRevisionReads/apps=25/history=512/ActiveRevisions                 	      46	   6166567 ns/op	   82456 B/op	    1012 allocs/op
+BenchmarkStateRevisionReads/apps=25/history=512/RevisionWithStatus/active       	    2230	    217682 ns/op	    3992 B/op	      74 allocs/op
+BenchmarkStateRevisionReads/apps=25/history=512/RevisionWithStatus/previous     	    1566	    236958 ns/op	    3992 B/op	      74 allocs/op
+BenchmarkStateRevisionReads/apps=25/history=512/Revisions                       	     100	   3567794 ns/op	 1635391 B/op	   19696 allocs/op
+BenchmarkStateRevisionReads/apps=100/history=512/ActiveRevisions                	       4	  62600417 ns/op	  329890 B/op	    3941 allocs/op
+BenchmarkStateRevisionReads/apps=100/history=512/RevisionWithStatus/active      	    2869	    137698 ns/op	    3992 B/op	      74 allocs/op
+BenchmarkStateRevisionReads/apps=100/history=512/RevisionWithStatus/previous    	    2404	    197326 ns/op	    3992 B/op	      74 allocs/op
+BenchmarkStateRevisionReads/apps=100/history=512/Revisions                      	     100	   2556011 ns/op	 1635306 B/op	   19676 allocs/op
+BenchmarkStateBackupReads/apps=1/history=32/LatestForApp                        	    8638	     39888 ns/op	    2576 B/op	      63 allocs/op
+BenchmarkStateBackupReads/apps=1/history=32/AppHistory                          	    3435	     87480 ns/op	   22264 B/op	     370 allocs/op
+BenchmarkStateBackupReads/apps=1/history=32/FleetHistory                        	    2977	     84563 ns/op	   22056 B/op	     368 allocs/op
+BenchmarkStateBackupReads/apps=1/history=32/FleetBackupHistory                  	    2964	     84431 ns/op	   22312 B/op	     372 allocs/op
+BenchmarkStateBackupReads/apps=1/history=32/LastGoodBackupRun                   	   12085	     27390 ns/op	    1696 B/op	      55 allocs/op
+BenchmarkStateBackupReads/apps=25/history=32/LatestForApp                       	    8146	     36664 ns/op	    2592 B/op	      64 allocs/op
+BenchmarkStateBackupReads/apps=25/history=32/AppHistory                         	    3794	     99444 ns/op	   22424 B/op	     390 allocs/op
+BenchmarkStateBackupReads/apps=25/history=32/FleetHistory                       	    1287	    303325 ns/op	   23080 B/op	     423 allocs/op
+BenchmarkStateBackupReads/apps=25/history=32/FleetBackupHistory                 	     889	    316413 ns/op	   23336 B/op	     427 allocs/op
+BenchmarkStateBackupReads/apps=25/history=32/LastGoodBackupRun                  	   12213	     23844 ns/op	    1712 B/op	      56 allocs/op
+BenchmarkStateBackupReads/apps=25/history=512/LatestForApp                      	    7791	     57006 ns/op	    2592 B/op	      64 allocs/op
+BenchmarkStateBackupReads/apps=25/history=512/AppHistory                        	    1578	    206113 ns/op	   22520 B/op	     394 allocs/op
+BenchmarkStateBackupReads/apps=25/history=512/FleetHistory                      	      70	   4471626 ns/op	   23080 B/op	     424 allocs/op
+BenchmarkStateBackupReads/apps=25/history=512/FleetBackupHistory                	      51	   6897659 ns/op	   23336 B/op	     428 allocs/op
+BenchmarkStateBackupReads/apps=25/history=512/LastGoodBackupRun                 	   13629	     22342 ns/op	    1712 B/op	      56 allocs/op
+BenchmarkStateBackupReads/apps=100/history=512/LatestForApp                     	    9000	     37646 ns/op	    2592 B/op	      64 allocs/op
+BenchmarkStateBackupReads/apps=100/history=512/AppHistory                       	    1533	    346333 ns/op	   22520 B/op	     394 allocs/op
+BenchmarkStateBackupReads/apps=100/history=512/FleetHistory                     	      12	  36278038 ns/op	   23080 B/op	     424 allocs/op
+BenchmarkStateBackupReads/apps=100/history=512/FleetBackupHistory               	      10	  29808754 ns/op	   23336 B/op	     428 allocs/op
+BenchmarkStateBackupReads/apps=100/history=512/LastGoodBackupRun                	   10000	     90559 ns/op	    1712 B/op	      56 allocs/op
+PASS
+goos: darwin
+goarch: arm64
+pkg: github.com/kylebegeman/helios/internal/state
+cpu: Apple M5 Pro
+BenchmarkStateRevisionReads/apps=1/history=32/ActiveRevisions         	   13082	     21691 ns/op	    4032 B/op	      69 allocs/op
+BenchmarkStateRevisionReads/apps=1/history=32/RevisionWithStatus/active         	   10000	     31512 ns/op	    3992 B/op	      72 allocs/op
+BenchmarkStateRevisionReads/apps=1/history=32/RevisionWithStatus/previous       	   10000	     37980 ns/op	    3992 B/op	      72 allocs/op
+BenchmarkStateRevisionReads/apps=1/history=32/Revisions                         	    2018	    220006 ns/op	  102012 B/op	    1222 allocs/op
+BenchmarkStateRevisionReads/apps=25/history=32/ActiveRevisions                  	     843	    327401 ns/op	   81961 B/op	     962 allocs/op
+BenchmarkStateRevisionReads/apps=25/history=32/RevisionWithStatus/active        	   10000	     35637 ns/op	    3992 B/op	      72 allocs/op
+BenchmarkStateRevisionReads/apps=25/history=32/RevisionWithStatus/previous      	   10000	     48221 ns/op	    3992 B/op	      72 allocs/op
+BenchmarkStateRevisionReads/apps=25/history=32/Revisions                        	    1884	    219908 ns/op	  102012 B/op	    1222 allocs/op
+BenchmarkStateRevisionReads/apps=25/history=512/ActiveRevisions                 	      69	   4784856 ns/op	   82418 B/op	    1012 allocs/op
+BenchmarkStateRevisionReads/apps=25/history=512/RevisionWithStatus/active       	    2714	    108937 ns/op	    3992 B/op	      74 allocs/op
+BenchmarkStateRevisionReads/apps=25/history=512/RevisionWithStatus/previous     	    2586	    116215 ns/op	    3992 B/op	      74 allocs/op
+BenchmarkStateRevisionReads/apps=25/history=512/Revisions                       	     100	   2568855 ns/op	 1635389 B/op	   19696 allocs/op
+BenchmarkStateRevisionReads/apps=100/history=512/ActiveRevisions                	      21	  14002835 ns/op	  328819 B/op	    3939 allocs/op
+BenchmarkStateRevisionReads/apps=100/history=512/RevisionWithStatus/active      	    2616	    115006 ns/op	    3992 B/op	      74 allocs/op
+BenchmarkStateRevisionReads/apps=100/history=512/RevisionWithStatus/previous    	    2680	    115620 ns/op	    3992 B/op	      74 allocs/op
+BenchmarkStateRevisionReads/apps=100/history=512/Revisions                      	     130	   2298378 ns/op	 1635306 B/op	   19676 allocs/op
+BenchmarkStateBackupReads/apps=1/history=32/LatestForApp                        	    7518	     37159 ns/op	    2576 B/op	      63 allocs/op
+BenchmarkStateBackupReads/apps=1/history=32/AppHistory                          	    3970	     77228 ns/op	   22264 B/op	     370 allocs/op
+BenchmarkStateBackupReads/apps=1/history=32/FleetHistory                        	    3884	     78075 ns/op	   22056 B/op	     368 allocs/op
+BenchmarkStateBackupReads/apps=1/history=32/FleetBackupHistory                  	    3918	     72859 ns/op	   22312 B/op	     372 allocs/op
+BenchmarkStateBackupReads/apps=1/history=32/LastGoodBackupRun                   	   15880	     19088 ns/op	    1696 B/op	      55 allocs/op
+BenchmarkStateBackupReads/apps=25/history=32/LatestForApp                       	   10000	     35404 ns/op	    2592 B/op	      64 allocs/op
+BenchmarkStateBackupReads/apps=25/history=32/AppHistory                         	    3556	     80335 ns/op	   22424 B/op	     390 allocs/op
+BenchmarkStateBackupReads/apps=25/history=32/FleetHistory                       	    1233	    298066 ns/op	   23080 B/op	     423 allocs/op
+BenchmarkStateBackupReads/apps=25/history=32/FleetBackupHistory                 	     868	    315556 ns/op	   23336 B/op	     427 allocs/op
+BenchmarkStateBackupReads/apps=25/history=32/LastGoodBackupRun                  	   13731	     21721 ns/op	    1712 B/op	      56 allocs/op
+BenchmarkStateBackupReads/apps=25/history=512/LatestForApp                      	    9386	     34296 ns/op	    2592 B/op	      64 allocs/op
+BenchmarkStateBackupReads/apps=25/history=512/AppHistory                        	    1479	    185095 ns/op	   22520 B/op	     394 allocs/op
+BenchmarkStateBackupReads/apps=25/history=512/FleetHistory                      	     100	   3295892 ns/op	   23080 B/op	     424 allocs/op
+BenchmarkStateBackupReads/apps=25/history=512/FleetBackupHistory                	     108	   2745700 ns/op	   23336 B/op	     428 allocs/op
+BenchmarkStateBackupReads/apps=25/history=512/LastGoodBackupRun                 	   14977	     20392 ns/op	    1712 B/op	      56 allocs/op
+BenchmarkStateBackupReads/apps=100/history=512/LatestForApp                     	    8176	     36512 ns/op	    2592 B/op	      64 allocs/op
+BenchmarkStateBackupReads/apps=100/history=512/AppHistory                       	    1327	    210045 ns/op	   22520 B/op	     394 allocs/op
+BenchmarkStateBackupReads/apps=100/history=512/FleetHistory                     	      26	  11496122 ns/op	   23080 B/op	     424 allocs/op
+BenchmarkStateBackupReads/apps=100/history=512/FleetBackupHistory               	      21	  27541454 ns/op	   23336 B/op	     428 allocs/op
+BenchmarkStateBackupReads/apps=100/history=512/LastGoodBackupRun                	   13918	     21085 ns/op	    1712 B/op	      56 allocs/op
+PASS
+goos: darwin
+goarch: arm64
+pkg: github.com/kylebegeman/helios/internal/state
+cpu: Apple M5 Pro
+BenchmarkStateRevisionReads/apps=1/history=32/ActiveRevisions         	   14607	     19933 ns/op	    4032 B/op	      69 allocs/op
+BenchmarkStateRevisionReads/apps=1/history=32/RevisionWithStatus/active         	   10000	     32547 ns/op	    3992 B/op	      72 allocs/op
+BenchmarkStateRevisionReads/apps=1/history=32/RevisionWithStatus/previous       	   10000	     33043 ns/op	    3992 B/op	      72 allocs/op
+BenchmarkStateRevisionReads/apps=1/history=32/Revisions                         	    2281	    206353 ns/op	  102012 B/op	    1222 allocs/op
+BenchmarkStateRevisionReads/apps=25/history=32/ActiveRevisions                  	    1453	    203755 ns/op	   81959 B/op	     962 allocs/op
+BenchmarkStateRevisionReads/apps=25/history=32/RevisionWithStatus/active        	   11739	     25498 ns/op	    3992 B/op	      72 allocs/op
+BenchmarkStateRevisionReads/apps=25/history=32/RevisionWithStatus/previous      	   10000	     25694 ns/op	    3992 B/op	      72 allocs/op
+BenchmarkStateRevisionReads/apps=25/history=32/Revisions                        	    1945	    139250 ns/op	  102012 B/op	    1222 allocs/op
+BenchmarkStateRevisionReads/apps=25/history=512/ActiveRevisions                 	      84	   4404384 ns/op	   82403 B/op	    1012 allocs/op
+BenchmarkStateRevisionReads/apps=25/history=512/RevisionWithStatus/active       	    2719	    119879 ns/op	    3992 B/op	      74 allocs/op
+BenchmarkStateRevisionReads/apps=25/history=512/RevisionWithStatus/previous     	    2427	    112095 ns/op	    3992 B/op	      74 allocs/op
+BenchmarkStateRevisionReads/apps=25/history=512/Revisions                       	     136	   2069484 ns/op	 1635387 B/op	   19696 allocs/op
+BenchmarkStateRevisionReads/apps=100/history=512/ActiveRevisions                	      24	  12909340 ns/op	  328792 B/op	    3939 allocs/op
+BenchmarkStateRevisionReads/apps=100/history=512/RevisionWithStatus/active      	    3044	     99625 ns/op	    3992 B/op	      74 allocs/op
+BenchmarkStateRevisionReads/apps=100/history=512/RevisionWithStatus/previous    	    2973	    104194 ns/op	    3992 B/op	      74 allocs/op
+BenchmarkStateRevisionReads/apps=100/history=512/Revisions                      	     178	   1657960 ns/op	 1635304 B/op	   19676 allocs/op
+BenchmarkStateBackupReads/apps=1/history=32/LatestForApp                        	   10000	     30377 ns/op	    2576 B/op	      63 allocs/op
+BenchmarkStateBackupReads/apps=1/history=32/AppHistory                          	    4179	     66281 ns/op	   22264 B/op	     370 allocs/op
+BenchmarkStateBackupReads/apps=1/history=32/FleetHistory                        	    4748	     63858 ns/op	   22056 B/op	     368 allocs/op
+BenchmarkStateBackupReads/apps=1/history=32/FleetBackupHistory                  	    4624	     63955 ns/op	   22312 B/op	     372 allocs/op
+BenchmarkStateBackupReads/apps=1/history=32/LastGoodBackupRun                   	   14128	     21676 ns/op	    1696 B/op	      55 allocs/op
+BenchmarkStateBackupReads/apps=25/history=32/LatestForApp                       	   10000	     29954 ns/op	    2592 B/op	      64 allocs/op
+BenchmarkStateBackupReads/apps=25/history=32/AppHistory                         	    4712	     67189 ns/op	   22424 B/op	     390 allocs/op
+BenchmarkStateBackupReads/apps=25/history=32/FleetHistory                       	    1407	    217310 ns/op	   23080 B/op	     423 allocs/op
+BenchmarkStateBackupReads/apps=25/history=32/FleetBackupHistory                 	    1468	    226990 ns/op	   23336 B/op	     427 allocs/op
+BenchmarkStateBackupReads/apps=25/history=32/LastGoodBackupRun                  	   17742	     18219 ns/op	    1712 B/op	      56 allocs/op
+BenchmarkStateBackupReads/apps=25/history=512/LatestForApp                      	    9146	     45267 ns/op	    2592 B/op	      64 allocs/op
+BenchmarkStateBackupReads/apps=25/history=512/AppHistory                        	    1764	    191461 ns/op	   22520 B/op	     394 allocs/op
+BenchmarkStateBackupReads/apps=25/history=512/FleetHistory                      	     100	   3186158 ns/op	   23080 B/op	     424 allocs/op
+BenchmarkStateBackupReads/apps=25/history=512/FleetBackupHistory                	     100	   2901484 ns/op	   23336 B/op	     428 allocs/op
+BenchmarkStateBackupReads/apps=25/history=512/LastGoodBackupRun                 	   15512	     19254 ns/op	    1712 B/op	      56 allocs/op
+BenchmarkStateBackupReads/apps=100/history=512/LatestForApp                     	    6638	     39271 ns/op	    2592 B/op	      64 allocs/op
+BenchmarkStateBackupReads/apps=100/history=512/AppHistory                       	    1544	    179987 ns/op	   22520 B/op	     394 allocs/op
+BenchmarkStateBackupReads/apps=100/history=512/FleetHistory                     	      30	  16309662 ns/op	   23080 B/op	     424 allocs/op
+BenchmarkStateBackupReads/apps=100/history=512/FleetBackupHistory               	      26	  22337556 ns/op	   23336 B/op	     428 allocs/op
+BenchmarkStateBackupReads/apps=100/history=512/LastGoodBackupRun                	   12234	     24106 ns/op	    1712 B/op	      56 allocs/op
+PASS
+goos: darwin
+goarch: arm64
+pkg: github.com/kylebegeman/helios/internal/state
+cpu: Apple M5 Pro
+BenchmarkStateRevisionReads/apps=1/history=32/ActiveRevisions         	   20829	     14873 ns/op	    4032 B/op	      69 allocs/op
+BenchmarkStateRevisionReads/apps=1/history=32/RevisionWithStatus/active         	   14166	     20722 ns/op	    3992 B/op	      72 allocs/op
+BenchmarkStateRevisionReads/apps=1/history=32/RevisionWithStatus/previous       	   13927	     20965 ns/op	    3992 B/op	      72 allocs/op
+BenchmarkStateRevisionReads/apps=1/history=32/Revisions                         	    2918	    100962 ns/op	  102012 B/op	    1222 allocs/op
+BenchmarkStateRevisionReads/apps=25/history=32/ActiveRevisions                  	    2122	    140246 ns/op	   81957 B/op	     962 allocs/op
+BenchmarkStateRevisionReads/apps=25/history=32/RevisionWithStatus/active        	   14023	     21592 ns/op	    3992 B/op	      72 allocs/op
+BenchmarkStateRevisionReads/apps=25/history=32/RevisionWithStatus/previous      	   12835	     22665 ns/op	    3992 B/op	      72 allocs/op
+BenchmarkStateRevisionReads/apps=25/history=32/Revisions                        	    2923	    104268 ns/op	  102012 B/op	    1222 allocs/op
+BenchmarkStateRevisionReads/apps=25/history=512/ActiveRevisions                 	     100	   3601774 ns/op	   82393 B/op	    1012 allocs/op
+BenchmarkStateRevisionReads/apps=25/history=512/RevisionWithStatus/active       	    2732	    117514 ns/op	    3992 B/op	      74 allocs/op
+BenchmarkStateRevisionReads/apps=25/history=512/RevisionWithStatus/previous     	    2643	     97386 ns/op	    3992 B/op	      74 allocs/op
+BenchmarkStateRevisionReads/apps=25/history=512/Revisions                       	     164	   2072050 ns/op	 1635388 B/op	   19696 allocs/op
+BenchmarkStateRevisionReads/apps=100/history=512/ActiveRevisions                	      24	  16504469 ns/op	  328786 B/op	    3939 allocs/op
+BenchmarkStateRevisionReads/apps=100/history=512/RevisionWithStatus/active      	    2985	    103558 ns/op	    3993 B/op	      74 allocs/op
+BenchmarkStateRevisionReads/apps=100/history=512/RevisionWithStatus/previous    	    3340	     96117 ns/op	    3992 B/op	      74 allocs/op
+BenchmarkStateRevisionReads/apps=100/history=512/Revisions                      	     206	   1609272 ns/op	 1635305 B/op	   19676 allocs/op
+BenchmarkStateBackupReads/apps=1/history=32/LatestForApp                        	   10000	     32699 ns/op	    2576 B/op	      63 allocs/op
+BenchmarkStateBackupReads/apps=1/history=32/AppHistory                          	    3409	     75454 ns/op	   22264 B/op	     370 allocs/op
+BenchmarkStateBackupReads/apps=1/history=32/FleetHistory                        	    5119	     67486 ns/op	   22056 B/op	     368 allocs/op
+BenchmarkStateBackupReads/apps=1/history=32/FleetBackupHistory                  	    4898	     69621 ns/op	   22312 B/op	     372 allocs/op
+BenchmarkStateBackupReads/apps=1/history=32/LastGoodBackupRun                   	   16874	     18812 ns/op	    1696 B/op	      55 allocs/op
+BenchmarkStateBackupReads/apps=25/history=32/LatestForApp                       	   10432	     28467 ns/op	    2592 B/op	      64 allocs/op
+BenchmarkStateBackupReads/apps=25/history=32/AppHistory                         	    4866	     63426 ns/op	   22424 B/op	     390 allocs/op
+BenchmarkStateBackupReads/apps=25/history=32/FleetHistory                       	    1452	    226706 ns/op	   23080 B/op	     423 allocs/op
+BenchmarkStateBackupReads/apps=25/history=32/FleetBackupHistory                 	    1230	    220719 ns/op	   23336 B/op	     427 allocs/op
+BenchmarkStateBackupReads/apps=25/history=32/LastGoodBackupRun                  	   16708	     17971 ns/op	    1712 B/op	      56 allocs/op
+BenchmarkStateBackupReads/apps=25/history=512/LatestForApp                      	    8380	     33270 ns/op	    2592 B/op	      64 allocs/op
+BenchmarkStateBackupReads/apps=25/history=512/AppHistory                        	    1891	    165353 ns/op	   22520 B/op	     394 allocs/op
+BenchmarkStateBackupReads/apps=25/history=512/FleetHistory                      	     100	   2598340 ns/op	   23080 B/op	     424 allocs/op
+BenchmarkStateBackupReads/apps=25/history=512/FleetBackupHistory                	     100	   2712502 ns/op	   23336 B/op	     428 allocs/op
+BenchmarkStateBackupReads/apps=25/history=512/LastGoodBackupRun                 	   16036	     19195 ns/op	    1712 B/op	      56 allocs/op
+BenchmarkStateBackupReads/apps=100/history=512/LatestForApp                     	    8616	     34158 ns/op	    2592 B/op	      64 allocs/op
+BenchmarkStateBackupReads/apps=100/history=512/AppHistory                       	    1702	    190013 ns/op	   22520 B/op	     394 allocs/op
+BenchmarkStateBackupReads/apps=100/history=512/FleetHistory                     	      34	   9166440 ns/op	   23080 B/op	     424 allocs/op
+BenchmarkStateBackupReads/apps=100/history=512/FleetBackupHistory               	      27	   9887864 ns/op	   23336 B/op	     428 allocs/op
+BenchmarkStateBackupReads/apps=100/history=512/LastGoodBackupRun                	   16406	     18274 ns/op	    1712 B/op	      56 allocs/op
+PASS
+goos: darwin
+goarch: arm64
+pkg: github.com/kylebegeman/helios/internal/state
+cpu: Apple M5 Pro
+BenchmarkStateRevisionReads/apps=1/history=32/ActiveRevisions         	   17448	     16669 ns/op	    4032 B/op	      69 allocs/op
+BenchmarkStateRevisionReads/apps=1/history=32/RevisionWithStatus/active         	   13244	     23717 ns/op	    3992 B/op	      72 allocs/op
+BenchmarkStateRevisionReads/apps=1/history=32/RevisionWithStatus/previous       	   13066	     22276 ns/op	    3992 B/op	      72 allocs/op
+BenchmarkStateRevisionReads/apps=1/history=32/Revisions                         	    2266	    139333 ns/op	  102012 B/op	    1222 allocs/op
+BenchmarkStateRevisionReads/apps=25/history=32/ActiveRevisions                  	    1692	    188343 ns/op	   81958 B/op	     962 allocs/op
+BenchmarkStateRevisionReads/apps=25/history=32/RevisionWithStatus/active        	   13207	     22531 ns/op	    3992 B/op	      72 allocs/op
+BenchmarkStateRevisionReads/apps=25/history=32/RevisionWithStatus/previous      	   13588	     23886 ns/op	    3992 B/op	      72 allocs/op
+BenchmarkStateRevisionReads/apps=25/history=32/Revisions                        	    2418	    117423 ns/op	  102012 B/op	    1222 allocs/op
+BenchmarkStateRevisionReads/apps=25/history=512/ActiveRevisions                 	      99	   3479981 ns/op	   82394 B/op	    1012 allocs/op
+BenchmarkStateRevisionReads/apps=25/history=512/RevisionWithStatus/active       	    3157	    100989 ns/op	    3992 B/op	      74 allocs/op
+BenchmarkStateRevisionReads/apps=25/history=512/RevisionWithStatus/previous     	    3168	     96439 ns/op	    3992 B/op	      74 allocs/op
+BenchmarkStateRevisionReads/apps=25/history=512/Revisions                       	     177	   1689706 ns/op	 1635387 B/op	   19696 allocs/op
+BenchmarkStateRevisionReads/apps=100/history=512/ActiveRevisions                	       7	  46770202 ns/op	  329336 B/op	    3940 allocs/op
+BenchmarkStateRevisionReads/apps=100/history=512/RevisionWithStatus/active      	    2592	    115171 ns/op	    3992 B/op	      74 allocs/op
+BenchmarkStateRevisionReads/apps=100/history=512/RevisionWithStatus/previous    	    2860	    122574 ns/op	    3992 B/op	      74 allocs/op
+BenchmarkStateRevisionReads/apps=100/history=512/Revisions                      	     140	   2129479 ns/op	 1635306 B/op	   19676 allocs/op
+BenchmarkStateBackupReads/apps=1/history=32/LatestForApp                        	    9615	     31543 ns/op	    2576 B/op	      63 allocs/op
+BenchmarkStateBackupReads/apps=1/history=32/AppHistory                          	    3762	     73900 ns/op	   22264 B/op	     370 allocs/op
+BenchmarkStateBackupReads/apps=1/history=32/FleetHistory                        	    4304	     73103 ns/op	   22056 B/op	     368 allocs/op
+BenchmarkStateBackupReads/apps=1/history=32/FleetBackupHistory                  	    3732	     72828 ns/op	   22312 B/op	     372 allocs/op
+BenchmarkStateBackupReads/apps=1/history=32/LastGoodBackupRun                   	   14340	     22523 ns/op	    1696 B/op	      55 allocs/op
+BenchmarkStateBackupReads/apps=25/history=32/LatestForApp                       	    9154	     37996 ns/op	    2592 B/op	      64 allocs/op
+BenchmarkStateBackupReads/apps=25/history=32/AppHistory                         	    3429	     87566 ns/op	   22424 B/op	     390 allocs/op
+BenchmarkStateBackupReads/apps=25/history=32/FleetHistory                       	    1118	    257322 ns/op	   23080 B/op	     423 allocs/op
+BenchmarkStateBackupReads/apps=25/history=32/FleetBackupHistory                 	    1375	    218682 ns/op	   23336 B/op	     427 allocs/op
+BenchmarkStateBackupReads/apps=25/history=32/LastGoodBackupRun                  	   17187	     17707 ns/op	    1712 B/op	      56 allocs/op
+BenchmarkStateBackupReads/apps=25/history=512/LatestForApp                      	    9087	     31170 ns/op	    2592 B/op	      64 allocs/op
+BenchmarkStateBackupReads/apps=25/history=512/AppHistory                        	    1783	    184099 ns/op	   22520 B/op	     394 allocs/op
+BenchmarkStateBackupReads/apps=25/history=512/FleetHistory                      	     100	   2552638 ns/op	   23080 B/op	     424 allocs/op
+BenchmarkStateBackupReads/apps=25/history=512/FleetBackupHistory                	      93	   3672436 ns/op	   23336 B/op	     428 allocs/op
+BenchmarkStateBackupReads/apps=25/history=512/LastGoodBackupRun                 	   14593	     20285 ns/op	    1712 B/op	      56 allocs/op
+BenchmarkStateBackupReads/apps=100/history=512/LatestForApp                     	    8188	     35508 ns/op	    2592 B/op	      64 allocs/op
+BenchmarkStateBackupReads/apps=100/history=512/AppHistory                       	    1692	    179623 ns/op	   22520 B/op	     394 allocs/op
+BenchmarkStateBackupReads/apps=100/history=512/FleetHistory                     	      27	  11084321 ns/op	   23080 B/op	     424 allocs/op
+BenchmarkStateBackupReads/apps=100/history=512/FleetBackupHistory               	      28	  16322783 ns/op	   23336 B/op	     428 allocs/op
+BenchmarkStateBackupReads/apps=100/history=512/LastGoodBackupRun                	   16232	     18936 ns/op	    1712 B/op	      56 allocs/op
+PASS
+goos: darwin
+goarch: arm64
+pkg: github.com/kylebegeman/helios/internal/manifest
+cpu: Apple M5 Pro
+BenchmarkParse/Workloads1         	    3556	     96357 ns/op	  17.14 MB/s	   50129 B/op	     942 allocs/op
+BenchmarkParse/Workloads8         	     801	    408077 ns/op	  18.43 MB/s	  187802 B/op	    3849 allocs/op
+BenchmarkParse/Workloads32        	     196	   1477237 ns/op	  18.83 MB/s	  673822 B/op	   13939 allocs/op
+BenchmarkValidate/Workloads1      	   43875	      6763 ns/op	    2184 B/op	      79 allocs/op
+BenchmarkValidate/Workloads8      	   10000	     28964 ns/op	    7513 B/op	     214 allocs/op
+BenchmarkValidate/Workloads32     	    2390	    106633 ns/op	   33005 B/op	     716 allocs/op
+BenchmarkRouteFor/Workloads1/Hit  	 3009312	        95.76 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRouteFor/Workloads1/MissHost         	 5637044	        54.63 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRouteFor/Workloads1/MissPath         	 3794124	        79.30 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRouteFor/Workloads8/Hit              	 1494367	       196.3 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRouteFor/Workloads8/MissHost         	 3429261	        88.09 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRouteFor/Workloads8/MissPath         	 2017075	       158.3 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRouteFor/Workloads32/Hit             	  509787	       585.8 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRouteFor/Workloads32/MissHost        	  987274	       289.8 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRouteFor/Workloads32/MissPath        	  571804	       533.0 ns/op	       0 B/op	       0 allocs/op
+PASS
+goos: darwin
+goarch: arm64
+pkg: github.com/kylebegeman/helios/internal/manifest
+cpu: Apple M5 Pro
+BenchmarkParse/Workloads1         	    2672	    107882 ns/op	  15.31 MB/s	   50129 B/op	     942 allocs/op
+BenchmarkParse/Workloads8         	     734	    378924 ns/op	  19.85 MB/s	  187804 B/op	    3849 allocs/op
+BenchmarkParse/Workloads32        	     192	   1551683 ns/op	  17.93 MB/s	  673826 B/op	   13939 allocs/op
+BenchmarkValidate/Workloads1      	   46522	      9626 ns/op	    2184 B/op	      79 allocs/op
+BenchmarkValidate/Workloads8      	   10000	     25736 ns/op	    7513 B/op	     214 allocs/op
+BenchmarkValidate/Workloads32     	    2721	    100793 ns/op	   33005 B/op	     716 allocs/op
+BenchmarkRouteFor/Workloads1/Hit  	 3136251	        96.66 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRouteFor/Workloads1/MissHost         	 5601312	        52.99 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRouteFor/Workloads1/MissPath         	 3799329	        77.84 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRouteFor/Workloads8/Hit              	 1597176	       186.5 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRouteFor/Workloads8/MissHost         	 3444374	        87.28 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRouteFor/Workloads8/MissPath         	 1854660	       159.0 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRouteFor/Workloads32/Hit             	  515776	       589.9 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRouteFor/Workloads32/MissHost        	 1000000	       299.2 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRouteFor/Workloads32/MissPath        	  493603	       578.3 ns/op	       0 B/op	       0 allocs/op
+PASS
+goos: darwin
+goarch: arm64
+pkg: github.com/kylebegeman/helios/internal/manifest
+cpu: Apple M5 Pro
+BenchmarkParse/Workloads1         	    3865	     90131 ns/op	  18.33 MB/s	   50129 B/op	     942 allocs/op
+BenchmarkParse/Workloads8         	     835	    377409 ns/op	  19.93 MB/s	  187804 B/op	    3849 allocs/op
+BenchmarkParse/Workloads32        	     198	   1459346 ns/op	  19.06 MB/s	  673820 B/op	   13939 allocs/op
+BenchmarkValidate/Workloads1      	   45795	      6516 ns/op	    2184 B/op	      79 allocs/op
+BenchmarkValidate/Workloads8      	   10000	     27555 ns/op	    7513 B/op	     214 allocs/op
+BenchmarkValidate/Workloads32     	    2589	    114164 ns/op	   33004 B/op	     716 allocs/op
+BenchmarkRouteFor/Workloads1/Hit  	 3034662	        99.01 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRouteFor/Workloads1/MissHost         	 5586127	        54.03 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRouteFor/Workloads1/MissPath         	 3699666	        77.55 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRouteFor/Workloads8/Hit              	 1641262	       184.9 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRouteFor/Workloads8/MissHost         	 3371270	        89.69 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRouteFor/Workloads8/MissPath         	 1757911	       169.1 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRouteFor/Workloads32/Hit             	  446852	       627.9 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRouteFor/Workloads32/MissHost        	 1000000	       304.8 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRouteFor/Workloads32/MissPath        	  484922	       565.0 ns/op	       0 B/op	       0 allocs/op
+PASS
+goos: darwin
+goarch: arm64
+pkg: github.com/kylebegeman/helios/internal/manifest
+cpu: Apple M5 Pro
+BenchmarkParse/Workloads1         	    4016	     85597 ns/op	  19.30 MB/s	   50129 B/op	     942 allocs/op
+BenchmarkParse/Workloads8         	     807	    392777 ns/op	  19.15 MB/s	  187805 B/op	    3849 allocs/op
+BenchmarkParse/Workloads32        	     180	   1522013 ns/op	  18.28 MB/s	  673820 B/op	   13939 allocs/op
+BenchmarkValidate/Workloads1      	   50642	      6039 ns/op	    2184 B/op	      79 allocs/op
+BenchmarkValidate/Workloads8      	   12850	     23517 ns/op	    7513 B/op	     214 allocs/op
+BenchmarkValidate/Workloads32     	    2978	     95139 ns/op	   33005 B/op	     716 allocs/op
+BenchmarkRouteFor/Workloads1/Hit  	 3201338	        93.73 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRouteFor/Workloads1/MissHost         	 5788827	        53.51 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRouteFor/Workloads1/MissPath         	 3549049	        80.83 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRouteFor/Workloads8/Hit              	 1623013	       190.1 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRouteFor/Workloads8/MissHost         	 3158695	        88.95 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRouteFor/Workloads8/MissPath         	 1860735	       159.2 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRouteFor/Workloads32/Hit             	  481778	       577.8 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRouteFor/Workloads32/MissHost        	 1000000	       359.6 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRouteFor/Workloads32/MissPath        	  539220	       752.6 ns/op	       0 B/op	       0 allocs/op
+PASS
+goos: darwin
+goarch: arm64
+pkg: github.com/kylebegeman/helios/internal/manifest
+cpu: Apple M5 Pro
+BenchmarkParse/Workloads1         	    4142	     84885 ns/op	  19.46 MB/s	   50129 B/op	     942 allocs/op
+BenchmarkParse/Workloads8         	     874	    336813 ns/op	  22.33 MB/s	  187802 B/op	    3849 allocs/op
+BenchmarkParse/Workloads32        	     224	   1285913 ns/op	  21.63 MB/s	  673822 B/op	   13939 allocs/op
+BenchmarkValidate/Workloads1      	   51244	      6018 ns/op	    2184 B/op	      79 allocs/op
+BenchmarkValidate/Workloads8      	   10000	     25539 ns/op	    7513 B/op	     214 allocs/op
+BenchmarkValidate/Workloads32     	    2766	    100409 ns/op	   33005 B/op	     716 allocs/op
+BenchmarkRouteFor/Workloads1/Hit  	 3289364	        94.34 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRouteFor/Workloads1/MissHost         	 5579344	        56.94 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRouteFor/Workloads1/MissPath         	 2449060	       114.5 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRouteFor/Workloads8/Hit              	 1353024	       218.4 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRouteFor/Workloads8/MissHost         	 3364596	        89.97 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRouteFor/Workloads8/MissPath         	 1852692	       158.6 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRouteFor/Workloads32/Hit             	  499632	       719.8 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRouteFor/Workloads32/MissHost        	 1000000	       318.9 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRouteFor/Workloads32/MissPath        	  506154	       625.4 ns/op	       0 B/op	       0 allocs/op
+PASS
+goos: darwin
+goarch: arm64
+pkg: github.com/kylebegeman/helios/internal/manifest
+cpu: Apple M5 Pro
+BenchmarkParse/Workloads1         	    2746	    116084 ns/op	  14.23 MB/s	   50130 B/op	     942 allocs/op
+BenchmarkParse/Workloads8         	     756	    417719 ns/op	  18.01 MB/s	  187802 B/op	    3849 allocs/op
+BenchmarkParse/Workloads32        	     187	   1567789 ns/op	  17.74 MB/s	  673817 B/op	   13939 allocs/op
+BenchmarkValidate/Workloads1      	   39570	      7204 ns/op	    2184 B/op	      79 allocs/op
+BenchmarkValidate/Workloads8      	   10000	     29808 ns/op	    7513 B/op	     214 allocs/op
+BenchmarkValidate/Workloads32     	    2252	    126185 ns/op	   33005 B/op	     716 allocs/op
+BenchmarkRouteFor/Workloads1/Hit  	 2352538	       120.9 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRouteFor/Workloads1/MissHost         	 5391840	        55.39 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRouteFor/Workloads1/MissPath         	 3846093	        79.70 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRouteFor/Workloads8/Hit              	 1534336	       192.8 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRouteFor/Workloads8/MissHost         	 3217676	        90.73 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRouteFor/Workloads8/MissPath         	 1836996	       166.1 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRouteFor/Workloads32/Hit             	  461346	       664.0 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRouteFor/Workloads32/MissHost        	 1000000	       296.2 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRouteFor/Workloads32/MissPath        	  521685	       603.5 ns/op	       0 B/op	       0 allocs/op
+PASS
+goos: darwin
+goarch: arm64
+pkg: github.com/kylebegeman/helios/internal/manifest
+cpu: Apple M5 Pro
+BenchmarkParse/Workloads1         	    2491	    111811 ns/op	  14.77 MB/s	   50129 B/op	     942 allocs/op
+BenchmarkParse/Workloads8         	     686	    419516 ns/op	  17.93 MB/s	  187801 B/op	    3849 allocs/op
+BenchmarkParse/Workloads32        	     148	   1829197 ns/op	  15.21 MB/s	  673823 B/op	   13939 allocs/op
+BenchmarkValidate/Workloads1      	   36466	      8567 ns/op	    2184 B/op	      79 allocs/op
+BenchmarkValidate/Workloads8      	   10000	     34086 ns/op	    7513 B/op	     214 allocs/op
+BenchmarkValidate/Workloads32     	    2168	    121787 ns/op	   33005 B/op	     716 allocs/op
+BenchmarkRouteFor/Workloads1/Hit  	 1955460	       170.4 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRouteFor/Workloads1/MissHost         	 5504506	        54.63 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRouteFor/Workloads1/MissPath         	 3407442	        87.61 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRouteFor/Workloads8/Hit              	 1611822	       187.3 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRouteFor/Workloads8/MissHost         	 3229638	        93.34 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRouteFor/Workloads8/MissPath         	 1729268	       175.2 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRouteFor/Workloads32/Hit             	  442722	       670.4 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRouteFor/Workloads32/MissHost        	  777252	       323.5 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRouteFor/Workloads32/MissPath        	  492828	       591.6 ns/op	       0 B/op	       0 allocs/op
+PASS
+goos: darwin
+goarch: arm64
+pkg: github.com/kylebegeman/helios/internal/manifest
+cpu: Apple M5 Pro
+BenchmarkParse/Workloads1         	    3547	    150603 ns/op	  10.97 MB/s	   50129 B/op	     942 allocs/op
+BenchmarkParse/Workloads8         	     591	    473193 ns/op	  15.90 MB/s	  187802 B/op	    3849 allocs/op
+BenchmarkParse/Workloads32        	     144	   1944622 ns/op	  14.31 MB/s	  673825 B/op	   13939 allocs/op
+BenchmarkValidate/Workloads1      	   30819	     10958 ns/op	    2184 B/op	      79 allocs/op
+BenchmarkValidate/Workloads8      	   10000	     46556 ns/op	    7513 B/op	     214 allocs/op
+BenchmarkValidate/Workloads32     	    2715	    121280 ns/op	   33005 B/op	     716 allocs/op
+BenchmarkRouteFor/Workloads1/Hit  	 2665020	       108.1 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRouteFor/Workloads1/MissHost         	 4690335	        63.58 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRouteFor/Workloads1/MissPath         	 3359372	        85.87 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRouteFor/Workloads8/Hit              	 1437979	       207.0 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRouteFor/Workloads8/MissHost         	 2984716	        98.03 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRouteFor/Workloads8/MissPath         	 1817733	       171.1 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRouteFor/Workloads32/Hit             	  433171	       683.2 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRouteFor/Workloads32/MissHost        	  862760	       349.2 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRouteFor/Workloads32/MissPath        	  494950	       618.1 ns/op	       0 B/op	       0 allocs/op
+PASS
+goos: darwin
+goarch: arm64
+pkg: github.com/kylebegeman/helios/internal/manifest
+cpu: Apple M5 Pro
+BenchmarkParse/Workloads1         	    3230	    101792 ns/op	  16.23 MB/s	   50130 B/op	     942 allocs/op
+BenchmarkParse/Workloads8         	     560	    464932 ns/op	  16.18 MB/s	  187803 B/op	    3849 allocs/op
+BenchmarkParse/Workloads32        	     180	   1745805 ns/op	  15.93 MB/s	  673823 B/op	   13939 allocs/op
+BenchmarkValidate/Workloads1      	   36506	      8213 ns/op	    2184 B/op	      79 allocs/op
+BenchmarkValidate/Workloads8      	   10000	     31289 ns/op	    7513 B/op	     214 allocs/op
+BenchmarkValidate/Workloads32     	    2352	    129612 ns/op	   33005 B/op	     716 allocs/op
+BenchmarkRouteFor/Workloads1/Hit  	 2806567	       109.7 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRouteFor/Workloads1/MissHost         	 5008635	        59.88 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRouteFor/Workloads1/MissPath         	 3462987	        82.66 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRouteFor/Workloads8/Hit              	 1556469	       198.1 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRouteFor/Workloads8/MissHost         	 3072324	        94.26 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRouteFor/Workloads8/MissPath         	 1847982	       161.4 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRouteFor/Workloads32/Hit             	  494586	       716.1 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRouteFor/Workloads32/MissHost        	  953402	       317.3 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRouteFor/Workloads32/MissPath        	  531969	       606.1 ns/op	       0 B/op	       0 allocs/op
+PASS
+goos: darwin
+goarch: arm64
+pkg: github.com/kylebegeman/helios/internal/manifest
+cpu: Apple M5 Pro
+BenchmarkParse/Workloads1         	    2992	    105689 ns/op	  15.63 MB/s	   50130 B/op	     942 allocs/op
+BenchmarkParse/Workloads8         	     729	    463105 ns/op	  16.24 MB/s	  187804 B/op	    3849 allocs/op
+BenchmarkParse/Workloads32        	     186	   1580175 ns/op	  17.60 MB/s	  673827 B/op	   13939 allocs/op
+BenchmarkValidate/Workloads1      	   40587	      8122 ns/op	    2184 B/op	      79 allocs/op
+BenchmarkValidate/Workloads8      	   10000	     31635 ns/op	    7513 B/op	     214 allocs/op
+BenchmarkValidate/Workloads32     	    2391	    117364 ns/op	   33005 B/op	     716 allocs/op
+BenchmarkRouteFor/Workloads1/Hit  	 2725224	       104.9 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRouteFor/Workloads1/MissHost         	 5007405	        59.64 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRouteFor/Workloads1/MissPath         	 1995088	       144.1 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRouteFor/Workloads8/Hit              	 1290139	       224.9 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRouteFor/Workloads8/MissHost         	 3125424	       103.2 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRouteFor/Workloads8/MissPath         	 1658709	       182.9 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRouteFor/Workloads32/Hit             	  388416	       722.5 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRouteFor/Workloads32/MissHost        	  793362	       352.3 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRouteFor/Workloads32/MissPath        	  519460	       638.9 ns/op	       0 B/op	       0 allocs/op
+PASS
+goos: darwin
+goarch: arm64
+pkg: github.com/kylebegeman/helios/internal/app
+cpu: Apple M5 Pro
+BenchmarkCheckRouteConflicts/Apps1/Workloads2         	    7981	     36741 ns/op	   12696 B/op	     125 allocs/op
+BenchmarkCheckRouteConflicts/Apps25/Workloads8        	     752	    415426 ns/op	  272222 B/op	    2013 allocs/op
+BenchmarkCheckRouteConflicts/Apps100/Workloads32      	     158	   1812330 ns/op	 1087366 B/op	    7929 allocs/op
+PASS
+goos: darwin
+goarch: arm64
+pkg: github.com/kylebegeman/helios/internal/app
+cpu: Apple M5 Pro
+BenchmarkCheckRouteConflicts/Apps1/Workloads2         	    8684	     33473 ns/op	   12647 B/op	     125 allocs/op
+BenchmarkCheckRouteConflicts/Apps25/Workloads8        	     675	    433860 ns/op	  272221 B/op	    2012 allocs/op
+BenchmarkCheckRouteConflicts/Apps100/Workloads32      	     170	   1738382 ns/op	 1087366 B/op	    7929 allocs/op
+PASS
+goos: darwin
+goarch: arm64
+pkg: github.com/kylebegeman/helios/internal/app
+cpu: Apple M5 Pro
+BenchmarkCheckRouteConflicts/Apps1/Workloads2         	   10000	     30387 ns/op	   12648 B/op	     125 allocs/op
+BenchmarkCheckRouteConflicts/Apps25/Workloads8        	     810	    409873 ns/op	  272223 B/op	    2013 allocs/op
+BenchmarkCheckRouteConflicts/Apps100/Workloads32      	     144	   1996542 ns/op	 1087368 B/op	    7929 allocs/op
+PASS
+goos: darwin
+goarch: arm64
+pkg: github.com/kylebegeman/helios/internal/app
+cpu: Apple M5 Pro
+BenchmarkCheckRouteConflicts/Apps1/Workloads2         	    9508	     34367 ns/op	   12628 B/op	     125 allocs/op
+BenchmarkCheckRouteConflicts/Apps25/Workloads8        	     698	    454997 ns/op	  272222 B/op	    2013 allocs/op
+BenchmarkCheckRouteConflicts/Apps100/Workloads32      	     159	   1911693 ns/op	 1087367 B/op	    7929 allocs/op
+PASS
+goos: darwin
+goarch: arm64
+pkg: github.com/kylebegeman/helios/internal/app
+cpu: Apple M5 Pro
+BenchmarkCheckRouteConflicts/Apps1/Workloads2         	    8168	     43523 ns/op	   12637 B/op	     125 allocs/op
+BenchmarkCheckRouteConflicts/Apps25/Workloads8        	     640	    488064 ns/op	  272222 B/op	    2012 allocs/op
+BenchmarkCheckRouteConflicts/Apps100/Workloads32      	     150	   1977310 ns/op	 1087365 B/op	    7929 allocs/op
+PASS
+goos: darwin
+goarch: arm64
+pkg: github.com/kylebegeman/helios/internal/app
+cpu: Apple M5 Pro
+BenchmarkCheckRouteConflicts/Apps1/Workloads2         	   10000	     34007 ns/op	   12655 B/op	     125 allocs/op
+BenchmarkCheckRouteConflicts/Apps25/Workloads8        	     566	    489952 ns/op	  272224 B/op	    2013 allocs/op
+BenchmarkCheckRouteConflicts/Apps100/Workloads32      	     146	   1978708 ns/op	 1087366 B/op	    7929 allocs/op
+PASS
+goos: darwin
+goarch: arm64
+pkg: github.com/kylebegeman/helios/internal/app
+cpu: Apple M5 Pro
+BenchmarkCheckRouteConflicts/Apps1/Workloads2         	    8647	     39027 ns/op	   12644 B/op	     125 allocs/op
+BenchmarkCheckRouteConflicts/Apps25/Workloads8        	     651	    477759 ns/op	  272222 B/op	    2013 allocs/op
+BenchmarkCheckRouteConflicts/Apps100/Workloads32      	     150	   1946126 ns/op	 1087366 B/op	    7929 allocs/op
+PASS
+goos: darwin
+goarch: arm64
+pkg: github.com/kylebegeman/helios/internal/app
+cpu: Apple M5 Pro
+BenchmarkCheckRouteConflicts/Apps1/Workloads2         	    7440	     37853 ns/op	   12655 B/op	     125 allocs/op
+BenchmarkCheckRouteConflicts/Apps25/Workloads8        	     645	    454513 ns/op	  272223 B/op	    2013 allocs/op
+BenchmarkCheckRouteConflicts/Apps100/Workloads32      	     130	   2195891 ns/op	 1087366 B/op	    7929 allocs/op
+PASS
+goos: darwin
+goarch: arm64
+pkg: github.com/kylebegeman/helios/internal/app
+cpu: Apple M5 Pro
+BenchmarkCheckRouteConflicts/Apps1/Workloads2         	    8359	     34906 ns/op	   12673 B/op	     125 allocs/op
+BenchmarkCheckRouteConflicts/Apps25/Workloads8        	     693	    421523 ns/op	  272221 B/op	    2012 allocs/op
+BenchmarkCheckRouteConflicts/Apps100/Workloads32      	     180	   1669794 ns/op	 1087366 B/op	    7929 allocs/op
+PASS
+goos: darwin
+goarch: arm64
+pkg: github.com/kylebegeman/helios/internal/app
+cpu: Apple M5 Pro
+BenchmarkCheckRouteConflicts/Apps1/Workloads2         	   10000	     32309 ns/op	   12635 B/op	     125 allocs/op
+BenchmarkCheckRouteConflicts/Apps25/Workloads8        	     722	    429621 ns/op	  272224 B/op	    2013 allocs/op
+BenchmarkCheckRouteConflicts/Apps100/Workloads32      	     162	   1815864 ns/op	 1087365 B/op	    7929 allocs/op
+PASS
+goos: darwin
+goarch: arm64
+pkg: github.com/kylebegeman/helios/internal/daemon
+cpu: Apple M5 Pro
+BenchmarkSchedulerFirstDeploy/Revisions1         	   35050	     14267 ns/op	    1043 B/op	      25 allocs/op
+BenchmarkSchedulerFirstDeploy/Revisions100       	    9814	     38064 ns/op	     935 B/op	      24 allocs/op
+BenchmarkSchedulerFirstDeploy/Revisions1000      	    1604	    308244 ns/op	     934 B/op	      24 allocs/op
+PASS
+goos: darwin
+goarch: arm64
+pkg: github.com/kylebegeman/helios/internal/daemon
+cpu: Apple M5 Pro
+BenchmarkSchedulerFirstDeploy/Revisions1         	   29354	     10415 ns/op	    1031 B/op	      25 allocs/op
+BenchmarkSchedulerFirstDeploy/Revisions100       	    9690	     28141 ns/op	     935 B/op	      24 allocs/op
+BenchmarkSchedulerFirstDeploy/Revisions1000      	    1376	    236769 ns/op	     935 B/op	      24 allocs/op
+PASS
+goos: darwin
+goarch: arm64
+pkg: github.com/kylebegeman/helios/internal/daemon
+cpu: Apple M5 Pro
+BenchmarkSchedulerFirstDeploy/Revisions1         	   26816	      9813 ns/op	    1047 B/op	      25 allocs/op
+BenchmarkSchedulerFirstDeploy/Revisions100       	    9940	     30682 ns/op	     935 B/op	      24 allocs/op
+BenchmarkSchedulerFirstDeploy/Revisions1000      	    1443	    209964 ns/op	     935 B/op	      24 allocs/op
+PASS
+goos: darwin
+goarch: arm64
+pkg: github.com/kylebegeman/helios/internal/daemon
+cpu: Apple M5 Pro
+BenchmarkSchedulerFirstDeploy/Revisions1         	   27457	     10562 ns/op	    1058 B/op	      25 allocs/op
+BenchmarkSchedulerFirstDeploy/Revisions100       	   10000	     32182 ns/op	     935 B/op	      24 allocs/op
+BenchmarkSchedulerFirstDeploy/Revisions1000      	     878	    378467 ns/op	     935 B/op	      24 allocs/op
+PASS
+goos: darwin
+goarch: arm64
+pkg: github.com/kylebegeman/helios/internal/daemon
+cpu: Apple M5 Pro
+BenchmarkSchedulerFirstDeploy/Revisions1         	   30493	     11251 ns/op	    1067 B/op	      25 allocs/op
+BenchmarkSchedulerFirstDeploy/Revisions100       	   10000	     53562 ns/op	     935 B/op	      24 allocs/op
+BenchmarkSchedulerFirstDeploy/Revisions1000      	     966	    259999 ns/op	     933 B/op	      24 allocs/op
+PASS
+goos: darwin
+goarch: arm64
+pkg: github.com/kylebegeman/helios/internal/daemon
+cpu: Apple M5 Pro
+BenchmarkSchedulerFirstDeploy/Revisions1         	   29206	     10173 ns/op	    1029 B/op	      25 allocs/op
+BenchmarkSchedulerFirstDeploy/Revisions100       	    9324	     30706 ns/op	     935 B/op	      24 allocs/op
+BenchmarkSchedulerFirstDeploy/Revisions1000      	    1460	    219829 ns/op	     934 B/op	      24 allocs/op
+PASS
+goos: darwin
+goarch: arm64
+pkg: github.com/kylebegeman/helios/internal/daemon
+cpu: Apple M5 Pro
+BenchmarkSchedulerFirstDeploy/Revisions1         	   23283	     11288 ns/op	    1090 B/op	      25 allocs/op
+BenchmarkSchedulerFirstDeploy/Revisions100       	   10000	     27712 ns/op	     935 B/op	      24 allocs/op
+BenchmarkSchedulerFirstDeploy/Revisions1000      	    1447	    210659 ns/op	     934 B/op	      24 allocs/op
+PASS
+goos: darwin
+goarch: arm64
+pkg: github.com/kylebegeman/helios/internal/daemon
+cpu: Apple M5 Pro
+BenchmarkSchedulerFirstDeploy/Revisions1         	   35282	      8457 ns/op	    1040 B/op	      25 allocs/op
+BenchmarkSchedulerFirstDeploy/Revisions100       	   10000	     29279 ns/op	     935 B/op	      24 allocs/op
+BenchmarkSchedulerFirstDeploy/Revisions1000      	    1681	    207885 ns/op	     934 B/op	      24 allocs/op
+PASS
+goos: darwin
+goarch: arm64
+pkg: github.com/kylebegeman/helios/internal/daemon
+cpu: Apple M5 Pro
+BenchmarkSchedulerFirstDeploy/Revisions1         	   30230	      9811 ns/op	    1040 B/op	      25 allocs/op
+BenchmarkSchedulerFirstDeploy/Revisions100       	    9422	     31481 ns/op	     935 B/op	      24 allocs/op
+BenchmarkSchedulerFirstDeploy/Revisions1000      	    1422	    227342 ns/op	     935 B/op	      24 allocs/op
+PASS
+goos: darwin
+goarch: arm64
+pkg: github.com/kylebegeman/helios/internal/daemon
+cpu: Apple M5 Pro
+BenchmarkSchedulerFirstDeploy/Revisions1         	   32326	      8983 ns/op	    1054 B/op	      25 allocs/op
+BenchmarkSchedulerFirstDeploy/Revisions100       	    9686	     32034 ns/op	     935 B/op	      24 allocs/op
+BenchmarkSchedulerFirstDeploy/Revisions1000      	    1336	    220954 ns/op	     935 B/op	      24 allocs/op
+PASS

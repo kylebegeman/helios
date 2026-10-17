@@ -28,6 +28,26 @@ workload. Check smaller workloads and adjacent paths for regressions. A runtime
 regression above 5% requires investigation; do not assume a noisy timing difference
 is real. Require passing behavioral tests and unchanged external contracts.
 
+## Fixture inventory
+
+There are 71 leaf cases, each reporting `ns/op`, `B/op` and `allocs/op`.
+Fixture construction and correctness checks sit outside timed loops; durable
+rollup writes and counter advancement are deliberately included in their case.
+
+| Benchmark group | Cases | Workload |
+| --- | ---: | --- |
+| `ParseMetrics` | 3 | 1/10/100 hosts; 141/1,095/10,635 series including runtime noise, unknown hosts, GET/POST, 200/404/502 responses, duration/size histograms and escaped path labels; input MB/s |
+| `TrafficUnchanged` | 3 | Same parsed scrapes, already primed and unchanged; no database writes allowed |
+| `TrafficRollups` | 2 | 1/10 hosts, advancing counters, 12/120 durable hourly rollups per operation; summary totals checked |
+| `Summarize` | 3 | 24/168/2,160 hours, 34 rows/hour, two hosts, three workloads, seven latency buckets; expected summary checked |
+| `ConfigBehind` | 3 | 10/100/1,000 apps, 40/400/4,000 routes, one shared host, 37.5% guarded routes, both guard transports and 22 proxy ranges; output bytes and every route/guard checked |
+| `StateRevisionReads` | 16 | Fleet/history pairs (1,32), (25,32), (25,512), (100,512); active fleet, active/previous per app, full per-app history; manifests, image/container maps and ordering checked |
+| `StateBackupReads` | 20 | Same fleet/history pairs; daily backups plus periodic drills/restores; latest app backup, app history, fleet history, fleet backup history, newest successful backup; tied timestamps and latest failure included |
+| `Parse`, `Validate` | 6 | 1/8/32 workloads mixing web/worker/cron, three routes/web, six environment values/workload, secrets, resources, mounts, checks, Postgres and backup policy |
+| `RouteFor` | 9 | Each manifest size with a nested-path hit, unknown host and unmatched path |
+| `CheckRouteConflicts` | 3 | 1/25/100 active apps with 16 routes each; candidate has 2/8/32 workloads with four routes each, including a shared host and guarded admin path |
+| `SchedulerFirstDeploy` | 3 | 1/100/1,000 retained revisions; scheduler method must return the earliest timestamp |
+
 ## Reproduce and compare
 
 Use the same Go version, CPU, power mode, workload and benchmark settings for
@@ -108,5 +128,7 @@ outcomes. They depend on external services and data volume, so local microbenchm
 gains alone cannot establish improvements there. Live measurements or deployment
 are separate from this local optimization work.
 
-The dated results directory contains the baseline, each retained sweep, statistical
-comparisons and the final report for this work.
+The [2026-10-17 report](performance/results/2026-10-17/report.md) contains the
+results and limitations, with an [interactive HTML view](performance/results/2026-10-17/report.html).
+The same directory retains the baseline, both sweeps, source/environment metadata,
+profiles and statistical comparisons.

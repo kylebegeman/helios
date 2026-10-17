@@ -1,0 +1,353 @@
+goos: darwin
+goarch: arm64
+pkg: github.com/kylebegeman/helios/internal/app
+cpu: Apple M5 Pro
+,docs/technical/performance/results/2026-10-17/paired-final/baseline.txt,,docs/technical/performance/results/2026-10-17/paired-final/candidate.txt,,,
+,sec/op,CI,sec/op,CI,vs base,P
+CheckRouteConflicts/Apps1/Workloads2,3.6134e-05,9%,3.4636500000000006e-05,13%,~,p=1.000 n=10
+CheckRouteConflicts/Apps25/Workloads8,0.0006412165000000001,13%,0.0004441865,10%,-30.73%,p=0.000 n=10
+CheckRouteConflicts/Apps100/Workloads32,0.005101191,9%,0.0019289095,10%,-62.19%,p=0.000 n=10
+geomean,0.0004907542900157781,,0.00030960198451859236,,-36.91%,
+
+,docs/technical/performance/results/2026-10-17/paired-final/baseline.txt,,docs/technical/performance/results/2026-10-17/paired-final/candidate.txt,,,
+,B/op,CI,B/op,CI,vs base,P
+CheckRouteConflicts/Apps1/Workloads2,12022,0%,12647.5,0%,+5.20%,p=0.000 n=10
+CheckRouteConflicts/Apps25/Workloads8,308591.5,0%,272222,0%,-11.79%,p=0.000 n=10
+CheckRouteConflicts/Apps100/Workloads32,1.8850715e+06,0%,1.087366e+06,0%,-42.32%,p=0.000 n=10
+geomean,191232.9994274014,,155274.88606460742,,-18.80%,
+
+,docs/technical/performance/results/2026-10-17/paired-final/baseline.txt,,docs/technical/performance/results/2026-10-17/paired-final/candidate.txt,,,
+,allocs/op,CI,allocs/op,CI,vs base,P
+CheckRouteConflicts/Apps1/Workloads2,120,0%,125,0%,+4.17%,p=0.000 n=10
+CheckRouteConflicts/Apps25/Workloads8,2608,0%,2013,0%,-22.81%,p=0.000 n=10
+CheckRouteConflicts/Apps100/Workloads32,19903,0%,7929,0%,-60.16%,p=0.000 n=10
+geomean,1839.93490632985,,1258.8985555800293,,-31.58%,
+
+pkg: github.com/kylebegeman/helios/internal/daemon
+,docs/technical/performance/results/2026-10-17/paired-final/baseline.txt,,docs/technical/performance/results/2026-10-17/paired-final/candidate.txt,,,
+,sec/op,CI,sec/op,CI,vs base,P
+SchedulerFirstDeploy/Revisions1,1.9563500000000003e-05,28%,1.0294e-05,13%,-47.38%,p=0.000 n=10
+SchedulerFirstDeploy/Revisions100,0.00035641100000000005,62%,3.10935e-05,22%,-91.28%,p=0.000 n=10
+SchedulerFirstDeploy/Revisions1000,0.0031934955000000004,11%,0.00022414800000000002,38%,-92.98%,p=0.000 n=10
+geomean,0.00028133341685441236,,4.155240968479589e-05,,-85.23%,
+
+,docs/technical/performance/results/2026-10-17/paired-final/baseline.txt,,docs/technical/performance/results/2026-10-17/paired-final/candidate.txt,,,
+,B/op,CI,B/op,CI,vs base,P
+SchedulerFirstDeploy/Revisions1,3266,1%,1045,2%,-68.00%,p=0.000 n=10
+SchedulerFirstDeploy/Revisions100,200173,0%,935,0%,-99.53%,p=0.000 n=10
+SchedulerFirstDeploy/Revisions1000,2.0835835e+06,0%,934.5,0%,-99.96%,p=0.000 n=10
+geomean,110852.16920296398,,970.1429581695879,,-99.12%,
+
+,docs/technical/performance/results/2026-10-17/paired-final/baseline.txt,,docs/technical/performance/results/2026-10-17/paired-final/candidate.txt,,,
+,allocs/op,CI,allocs/op,CI,vs base,P
+SchedulerFirstDeploy/Revisions1,71,0%,25,0%,-64.79%,p=0.000 n=10
+SchedulerFirstDeploy/Revisions100,3047.5,0%,24,0%,-99.21%,p=0.000 n=10
+SchedulerFirstDeploy/Revisions1000,30052,0%,24,0%,-99.92%,p=0.000 n=10
+geomean,1866.4877662661033,,24.328807982293604,,-98.70%,
+
+pkg: github.com/kylebegeman/helios/internal/edge
+,docs/technical/performance/results/2026-10-17/paired-final/baseline.txt,,docs/technical/performance/results/2026-10-17/paired-final/candidate.txt,,,
+,sec/op,CI,sec/op,CI,vs base,P
+ConfigBehind/apps=10,0.0010152855,25%,0.000247965,96%,-75.58%,p=0.000 n=10
+ConfigBehind/apps=100,0.009972819,76%,0.0029120630000000003,145%,-70.80%,p=0.000 n=10
+ConfigBehind/apps=1000,0.11324059,62%,0.022018523,235%,-80.56%,p=0.002 n=10
+geomean,0.010466530613610161,,0.00251454711938539,,-75.98%,
+
+,docs/technical/performance/results/2026-10-17/paired-final/baseline.txt,,docs/technical/performance/results/2026-10-17/paired-final/candidate.txt,,,
+,B/s,CI,B/s,CI,vs base,P
+ConfigBehind/apps=10,8.9355e+07,27%,3.65845e+08,49%,+309.43%,p=0.000 n=10
+ConfigBehind/apps=100,8.923e+07,43%,3.06015e+08,59%,+242.95%,p=0.000 n=10
+ConfigBehind/apps=1000,7.9815e+07,103%,4.07405e+08,70%,+410.44%,p=0.002 n=10
+geomean,8.601445132440105e+07,,3.5729099000468963e+08,,+315.38%,
+
+,docs/technical/performance/results/2026-10-17/paired-final/baseline.txt,,docs/technical/performance/results/2026-10-17/paired-final/candidate.txt,,,
+,B/op,CI,B/op,CI,vs base,P
+ConfigBehind/apps=10,329294,0%,151728,0%,-53.92%,p=0.000 n=10
+ConfigBehind/apps=100,3.1285435e+06,0%,1.4063e+06,0%,-55.05%,p=0.000 n=10
+ConfigBehind/apps=1000,4.42320875e+07,30%,1.4013256e+07,0%,-68.32%,p=0.000 n=10
+geomean,3.5718056274668863e+06,,1.4406580887588742e+06,,-59.67%,
+
+,docs/technical/performance/results/2026-10-17/paired-final/baseline.txt,,docs/technical/performance/results/2026-10-17/paired-final/candidate.txt,,,
+,allocs/op,CI,allocs/op,CI,vs base,P
+ConfigBehind/apps=10,3733,0%,372,0%,-90.03%,p=0.000 n=10
+ConfigBehind/apps=100,36382,0%,3532,0%,-90.29%,p=0.000 n=10
+ConfigBehind/apps=1000,362690.5,0%,35047,0%,-90.34%,p=0.000 n=10
+geomean,36657.28082137493,,3584.3039247371908,,-90.22%,
+
+,docs/technical/performance/results/2026-10-17/paired-final/baseline.txt,,docs/technical/performance/results/2026-10-17/paired-final/candidate.txt,,,
+,hosts/op,CI,hosts/op,CI,vs base,P
+ConfigBehind/apps=10,11,0%,11,0%,~,p=1.000 n=10
+ConfigBehind/apps=100,101,0%,101,0%,~,p=1.000 n=10
+ConfigBehind/apps=1000,1001,0%,1001,0%,~,p=1.000 n=10
+geomean,103.60547642273794,,103.60547642273794,,+0.00%,
+
+,docs/technical/performance/results/2026-10-17/paired-final/baseline.txt,,docs/technical/performance/results/2026-10-17/paired-final/candidate.txt,,,
+,routes/op,CI,routes/op,CI,vs base,P
+ConfigBehind/apps=10,40,0%,40,0%,~,p=1.000 n=10
+ConfigBehind/apps=100,400,0%,400,0%,~,p=1.000 n=10
+ConfigBehind/apps=1000,4000,0%,4000,0%,~,p=1.000 n=10
+geomean,399.9999999999999,,399.9999999999999,,+0.00%,
+
+pkg: github.com/kylebegeman/helios/internal/manifest
+,docs/technical/performance/results/2026-10-17/paired-final/baseline.txt,,docs/technical/performance/results/2026-10-17/paired-final/candidate.txt,,,
+,sec/op,CI,sec/op,CI,vs base,P
+Parse/Workloads1,0.000101366,14%,0.00010374050000000001,17%,~,p=0.631 n=10
+Parse/Workloads8,0.0004072715,11%,0.00041289800000000003,13%,~,p=0.529 n=10
+Parse/Workloads32,0.0014576175000000002,11%,0.0015597360000000002,17%,~,p=0.143 n=10
+Validate/Workloads1,6.631500000000001e-06,54%,7.663000000000001e-06,26%,~,p=0.529 n=10
+Validate/Workloads8,2.68955e-05,18%,2.9386000000000003e-05,16%,~,p=0.529 n=10
+Validate/Workloads32,0.00010497350000000001,23%,0.00011576400000000001,13%,~,p=0.684 n=10
+RouteFor/Workloads1/Hit,1.3735000000000002e-07,6%,1.0195500000000002e-07,19%,-25.77%,p=0.001 n=10
+RouteFor/Workloads1/MissHost,1.1500000000000001e-07,16%,5.501e-08,9%,-52.17%,p=0.000 n=10
+RouteFor/Workloads1/MissPath,1.1825000000000002e-07,15%,8.1745e-08,40%,-30.87%,p=0.003 n=10
+RouteFor/Workloads8/Hit,4.625e-07,15%,1.9455000000000003e-07,12%,-57.94%,p=0.000 n=10
+RouteFor/Workloads8/MissHost,4.3215000000000007e-07,10%,9.035000000000001e-08,9%,-79.09%,p=0.000 n=10
+RouteFor/Workloads8/MissPath,4.222e-07,12%,1.6375000000000002e-07,7%,-61.22%,p=0.000 n=10
+RouteFor/Workloads32/Hit,2.1485e-06,7%,6.671999999999999e-07,12%,-68.95%,p=0.000 n=10
+RouteFor/Workloads32/MissHost,2.1075e-06,9%,3.1809999999999997e-07,11%,-84.91%,p=0.000 n=10
+RouteFor/Workloads32/MissPath,2.0695000000000003e-06,6%,6.048e-07,7%,-70.78%,p=0.000 n=10
+geomean,4.118541366658252e-06,,2.315559295192304e-06,,-43.78%,
+
+,docs/technical/performance/results/2026-10-17/paired-final/baseline.txt,,docs/technical/performance/results/2026-10-17/paired-final/candidate.txt,,,
+,B/s,CI,B/s,CI,vs base,P
+Parse/Workloads1,1.63e+07,16%,1.593e+07,21%,~,p=0.631 n=10
+Parse/Workloads8,1.847e+07,13%,1.822e+07,11%,~,p=0.529 n=10
+Parse/Workloads32,1.9085e+07,10%,1.7835e+07,15%,~,p=0.128 n=10
+geomean,1.79108235207517e+07,,1.729865832200345e+07,,-3.42%,
+
+,docs/technical/performance/results/2026-10-17/paired-final/baseline.txt,,docs/technical/performance/results/2026-10-17/paired-final/candidate.txt,,,
+,B/op,CI,B/op,CI,vs base,P
+Parse/Workloads1,50129,0%,50129,0%,~,p=0.582 n=10
+Parse/Workloads8,187802,0%,187802.5,0%,~,p=0.134 n=10
+Parse/Workloads32,673825.5,0%,673822.5,0%,~,p=0.099 n=10
+Validate/Workloads1,2184,0%,2184,0%,~,p=1.000 n=10
+Validate/Workloads8,7513,0%,7513,0%,~,p=1.000 n=10
+Validate/Workloads32,33005,0%,33005,0%,~,p=1.000 n=10
+RouteFor/Workloads1/Hit,16,0%,0,0%,-100.00%,p=0.000 n=10
+RouteFor/Workloads1/MissHost,16,0%,0,0%,-100.00%,p=0.000 n=10
+RouteFor/Workloads1/MissPath,16,0%,0,0%,-100.00%,p=0.000 n=10
+RouteFor/Workloads8/Hit,128,0%,0,0%,-100.00%,p=0.000 n=10
+RouteFor/Workloads8/MissHost,128,0%,0,0%,-100.00%,p=0.000 n=10
+RouteFor/Workloads8/MissPath,128,0%,0,0%,-100.00%,p=0.000 n=10
+RouteFor/Workloads32/Hit,512,0%,0,0%,-100.00%,p=0.000 n=10
+RouteFor/Workloads32/MissHost,512,0%,0,0%,-100.00%,p=0.000 n=10
+RouteFor/Workloads32/MissPath,512,0%,0,0%,-100.00%,p=0.000 n=10
+geomean,1096.1049686453744,,,,?,
+
+,docs/technical/performance/results/2026-10-17/paired-final/baseline.txt,,docs/technical/performance/results/2026-10-17/paired-final/candidate.txt,,,
+,allocs/op,CI,allocs/op,CI,vs base,P
+Parse/Workloads1,942,0%,942,0%,~,p=1.000 n=10
+Parse/Workloads8,3849,0%,3849,0%,~,p=1.000 n=10
+Parse/Workloads32,13939,0%,13939,0%,~,p=1.000 n=10
+Validate/Workloads1,79,0%,79,0%,~,p=1.000 n=10
+Validate/Workloads8,214,0%,214,0%,~,p=1.000 n=10
+Validate/Workloads32,716,0%,716,0%,~,p=1.000 n=10
+RouteFor/Workloads1/Hit,1,0%,0,0%,-100.00%,p=0.000 n=10
+RouteFor/Workloads1/MissHost,1,0%,0,0%,-100.00%,p=0.000 n=10
+RouteFor/Workloads1/MissPath,1,0%,0,0%,-100.00%,p=0.000 n=10
+RouteFor/Workloads8/Hit,1,0%,0,0%,-100.00%,p=0.000 n=10
+RouteFor/Workloads8/MissHost,1,0%,0,0%,-100.00%,p=0.000 n=10
+RouteFor/Workloads8/MissPath,1,0%,0,0%,-100.00%,p=0.000 n=10
+RouteFor/Workloads32/Hit,1,0%,0,0%,-100.00%,p=0.000 n=10
+RouteFor/Workloads32/MissHost,1,0%,0,0%,-100.00%,p=0.000 n=10
+RouteFor/Workloads32/MissPath,1,0%,0,0%,-100.00%,p=0.000 n=10
+geomean,15.338125534783218,,,,?,
+
+pkg: github.com/kylebegeman/helios/internal/signals
+,docs/technical/performance/results/2026-10-17/paired-final/baseline.txt,,docs/technical/performance/results/2026-10-17/paired-final/candidate.txt,,,
+,sec/op,CI,sec/op,CI,vs base,P
+ParseMetrics/Hosts1,0.0006588470000000001,123%,0.000101271,99%,-84.63%,p=0.000 n=10
+ParseMetrics/Hosts10,0.0024884750000000004,130%,0.0009258580000000001,63%,-62.79%,p=0.000 n=10
+ParseMetrics/Hosts100,0.032503885,60%,0.014260251500000001,150%,-56.13%,p=0.035 n=10
+TrafficUnchanged/Hosts1,0.00016680900000000002,135%,7.10025e-05,128%,-57.43%,p=0.002 n=10
+TrafficUnchanged/Hosts10,0.0027068075,113%,0.0007832835,164%,-71.06%,p=0.002 n=10
+TrafficUnchanged/Hosts100,0.028004724,145%,0.00978409,206%,-65.06%,p=0.023 n=10
+TrafficRollups/Hosts1,0.0016332325000000003,202%,0.0008277435000000001,384%,~,p=0.190 n=10
+TrafficRollups/Hosts10,0.012392446500000001,84%,0.006769187500000001,220%,~,p=0.063 n=10
+Summarize/Hours24,2.31365e-05,117%,5.7387500000000006e-05,59%,~,p=0.089 n=10
+Summarize/Hours168,0.000148477,69%,0.0003097795,57%,~,p=0.075 n=10
+Summarize/Hours2160,0.0027677910000000003,92%,0.002406256,157%,~,p=0.579 n=10
+geomean,0.0015562446150252762,,0.0008531918815354063,,-45.18%,
+
+,docs/technical/performance/results/2026-10-17/paired-final/baseline.txt,,docs/technical/performance/results/2026-10-17/paired-final/candidate.txt,,,
+,B/s,CI,B/s,CI,vs base,P
+ParseMetrics/Hosts1,2.447e+07,55%,1.59665e+08,50%,+552.49%,p=0.000 n=10
+ParseMetrics/Hosts10,5.99e+07,56%,1.6137e+08,39%,+169.40%,p=0.000 n=10
+ParseMetrics/Hosts100,4.5575e+07,115%,1.0374e+08,94%,+127.62%,p=0.035 n=10
+geomean,4.057537008543424e+07,,1.3877979958967063e+08,,+242.03%,
+
+,docs/technical/performance/results/2026-10-17/paired-final/baseline.txt,,docs/technical/performance/results/2026-10-17/paired-final/candidate.txt,,,
+,series/op,CI,series/op,CI,vs base,P
+ParseMetrics/Hosts1,141,0%,141,0%,~,p=1.000 n=10
+ParseMetrics/Hosts10,1095,0%,1095,0%,~,p=1.000 n=10
+ParseMetrics/Hosts100,10635,0%,10635,0%,~,p=1.000 n=10
+TrafficUnchanged/Hosts1,141,0%,141,0%,~,p=1.000 n=10
+TrafficUnchanged/Hosts10,1095,0%,1095,0%,~,p=1.000 n=10
+TrafficUnchanged/Hosts100,10635,0%,10635,0%,~,p=1.000 n=10
+TrafficRollups/Hosts1,141,0%,141,0%,~,p=1.000 n=10
+TrafficRollups/Hosts10,1095,0%,1095,0%,~,p=1.000 n=10
+geomean,896.2348667050139,,896.2348667050139,,+0.00%,
+
+,docs/technical/performance/results/2026-10-17/paired-final/baseline.txt,,docs/technical/performance/results/2026-10-17/paired-final/candidate.txt,,,
+,B/op,CI,B/op,CI,vs base,P
+ParseMetrics/Hosts1,1.158666e+06,0%,69872,0%,-93.97%,p=0.000 n=10
+ParseMetrics/Hosts10,2.111001e+06,0%,640752,0%,-69.65%,p=0.000 n=10
+ParseMetrics/Hosts100,1.1885242e+07,0%,6.600432e+06,0%,-44.47%,p=0.000 n=10
+TrafficUnchanged/Hosts1,59313,0%,14760,0%,-75.12%,p=0.000 n=10
+TrafficUnchanged/Hosts10,634936,0%,134792,0%,-78.77%,p=0.000 n=10
+TrafficUnchanged/Hosts100,6.1349365e+06,0%,1.242808e+06,0%,-79.74%,p=0.000 n=10
+TrafficRollups/Hosts1,67852.5,0%,23297.5,0%,-65.66%,p=0.000 n=10
+TrafficRollups/Hosts10,720760,0%,220608.5,0%,-69.39%,p=0.000 n=10
+Summarize/Hours24,1096,0%,1096,0%,~,p=1.000 n=10
+Summarize/Hours168,9512,0%,9512,0%,~,p=1.000 n=10
+Summarize/Hours2160,148312,0%,148312,0%,~,p=1.000 n=10
+geomean,267791.23071767297,,95178.1583824355,,-64.46%,
+
+,docs/technical/performance/results/2026-10-17/paired-final/baseline.txt,,docs/technical/performance/results/2026-10-17/paired-final/candidate.txt,,,
+,allocs/op,CI,allocs/op,CI,vs base,P
+ParseMetrics/Hosts1,2205,0%,409,0%,-81.45%,p=0.000 n=10
+ParseMetrics/Hosts10,20443,0%,3302,0%,-83.85%,p=0.000 n=10
+ParseMetrics/Hosts100,202790,0%,32199,0%,-84.12%,p=0.000 n=10
+TrafficUnchanged/Hosts1,1218,0%,70,0%,-94.25%,p=0.000 n=10
+TrafficUnchanged/Hosts10,12110,0%,625,0%,-94.84%,p=0.000 n=10
+TrafficUnchanged/Hosts100,120979,0%,6146,0%,-94.92%,p=0.000 n=10
+TrafficRollups/Hosts1,1442,0%,294,0%,-79.61%,p=0.000 n=10
+TrafficRollups/Hosts10,14353,0%,2868,0%,-80.02%,p=0.000 n=10
+Summarize/Hours24,9,0%,9,0%,~,p=1.000 n=10
+Summarize/Hours168,15,0%,15,0%,~,p=1.000 n=10
+Summarize/Hours2160,33,0%,33,0%,~,p=1.000 n=10
+geomean,1944.6503686366198,,401.6804429481481,,-79.34%,
+
+,docs/technical/performance/results/2026-10-17/paired-final/baseline.txt,,docs/technical/performance/results/2026-10-17/paired-final/candidate.txt,,,
+,rollups/op,CI,rollups/op,CI,vs base,P
+TrafficRollups/Hosts1,12,0%,12,0%,~,p=1.000 n=10
+TrafficRollups/Hosts10,120,0%,120,0%,~,p=1.000 n=10
+geomean,37.94733192202056,,37.94733192202056,,+0.00%,
+
+,docs/technical/performance/results/2026-10-17/paired-final/baseline.txt,,docs/technical/performance/results/2026-10-17/paired-final/candidate.txt,,,
+,rows/op,CI,rows/op,CI,vs base,P
+Summarize/Hours24,816,0%,816,0%,~,p=1.000 n=10
+Summarize/Hours168,5712,0%,5712,0%,~,p=1.000 n=10
+Summarize/Hours2160,73440,0%,73440,0%,~,p=1.000 n=10
+geomean,6995.257007967728,,6995.257007967728,,+0.00%,
+
+pkg: github.com/kylebegeman/helios/internal/state
+,docs/technical/performance/results/2026-10-17/paired-final/baseline.txt,,docs/technical/performance/results/2026-10-17/paired-final/candidate.txt,,,
+,sec/op,CI,sec/op,CI,vs base,P
+StateRevisionReads/apps=1/history=32/ActiveRevisions,2.5402000000000002e-05,70%,2.1568e-05,23%,~,p=0.280 n=10
+StateRevisionReads/apps=1/history=32/RevisionWithStatus/active,2.8762e-05,53%,3.06915e-05,52%,~,p=0.971 n=10
+StateRevisionReads/apps=1/history=32/RevisionWithStatus/previous,2.6856500000000003e-05,42%,3.0792e-05,28%,~,p=0.853 n=10
+StateRevisionReads/apps=1/history=32/Revisions,0.000192565,47%,0.00018991200000000003,27%,~,p=0.353 n=10
+StateRevisionReads/apps=25/history=32/ActiveRevisions,0.00029511,37%,0.000206185,35%,-30.13%,p=0.043 n=10
+StateRevisionReads/apps=25/history=32/RevisionWithStatus/active,2.91705e-05,50%,2.8973500000000003e-05,23%,~,p=0.579 n=10
+StateRevisionReads/apps=25/history=32/RevisionWithStatus/previous,2.97155e-05,36%,2.7808500000000003e-05,48%,~,p=0.579 n=10
+StateRevisionReads/apps=25/history=32/Revisions,0.000233481,46%,0.0001622275,36%,~,p=0.075 n=10
+StateRevisionReads/apps=25/history=512/ActiveRevisions,0.008118024500000001,286%,0.0060484760000000005,88%,~,p=0.218 n=10
+StateRevisionReads/apps=25/history=512/RevisionWithStatus/active,0.000133913,114%,0.0001213255,79%,~,p=0.393 n=10
+StateRevisionReads/apps=25/history=512/RevisionWithStatus/previous,0.000119858,172%,0.00011761600000000001,69%,~,p=0.684 n=10
+StateRevisionReads/apps=25/history=512/Revisions,0.0027717265,27%,0.002452798,45%,~,p=0.579 n=10
+StateRevisionReads/apps=100/history=512/ActiveRevisions,0.031750320500000005,104%,0.035171060000000004,75%,~,p=0.436 n=10
+StateRevisionReads/apps=100/history=512/RevisionWithStatus/active,0.000132629,52%,0.00011740350000000001,15%,~,p=0.218 n=10
+StateRevisionReads/apps=100/history=512/RevisionWithStatus/previous,0.000148774,66%,0.000121725,65%,~,p=0.579 n=10
+StateRevisionReads/apps=100/history=512/Revisions,0.002882656,135%,0.0023290905000000004,33%,~,p=0.190 n=10
+StateBackupReads/apps=1/history=32/LatestForApp,3.935e-05,47%,3.604300000000001e-05,14%,~,p=0.280 n=10
+StateBackupReads/apps=1/history=32/AppHistory,9.5649e-05,73%,8.594700000000001e-05,14%,~,p=0.280 n=10
+StateBackupReads/apps=1/history=32/FleetHistory,9.40635e-05,51%,8.3943e-05,20%,~,p=0.393 n=10
+StateBackupReads/apps=1/history=32/FleetBackupHistory,9.747600000000001e-05,39%,8.16585e-05,63%,~,p=0.853 n=10
+StateBackupReads/apps=1/history=32/LastGoodBackupRun,2.5893e-05,60%,2.28365e-05,23%,~,p=0.579 n=10
+StateBackupReads/apps=25/history=32/LatestForApp,4.5483e-05,100%,3.7605e-05,29%,~,p=0.218 n=10
+StateBackupReads/apps=25/history=32/AppHistory,0.00010070350000000001,34%,8.881000000000001e-05,24%,~,p=0.436 n=10
+StateBackupReads/apps=25/history=32/FleetHistory,0.00026553100000000006,44%,0.000299785,24%,~,p=0.684 n=10
+StateBackupReads/apps=25/history=32/FleetBackupHistory,0.000322783,146%,0.0002901615,24%,~,p=0.218 n=10
+StateBackupReads/apps=25/history=32/LastGoodBackupRun,2.82615e-05,52%,2.2348e-05,20%,~,p=0.105 n=10
+StateBackupReads/apps=25/history=512/LatestForApp,3.7293500000000005e-05,71%,3.7904e-05,20%,~,p=0.853 n=10
+StateBackupReads/apps=25/history=512/AppHistory,0.00021872900000000003,78%,0.0002038975,10%,~,p=0.247 n=10
+StateBackupReads/apps=25/history=512/FleetHistory,0.006646776,541%,0.003629887,208%,~,p=0.247 n=10
+StateBackupReads/apps=25/history=512/FleetBackupHistory,0.0038853225,250%,0.004467701,57%,~,p=0.739 n=10
+StateBackupReads/apps=25/history=512/LastGoodBackupRun,2.3852500000000002e-05,54%,2.1565e-05,29%,~,p=0.579 n=10
+StateBackupReads/apps=100/history=512/LatestForApp,4.0211e-05,33%,3.816650000000001e-05,13%,~,p=0.912 n=10
+StateBackupReads/apps=100/history=512/AppHistory,0.00021510800000000001,92%,0.00021103000000000002,16%,~,p=0.739 n=10
+StateBackupReads/apps=100/history=512/FleetHistory,0.015981194,96%,0.0211086795,72%,~,p=0.481 n=10
+StateBackupReads/apps=100/history=512/FleetBackupHistory,0.015347799500000002,32%,0.025378550000000003,53%,+65.36%,p=0.043 n=10
+StateBackupReads/apps=100/history=512/LastGoodBackupRun,2.3133000000000004e-05,25%,2.3882e-05,21%,~,p=0.971 n=10
+geomean,0.00020941277942715367,,0.00019393283987344744,,-7.39%,
+
+,docs/technical/performance/results/2026-10-17/paired-final/baseline.txt,,docs/technical/performance/results/2026-10-17/paired-final/candidate.txt,,,
+,B/op,CI,B/op,CI,vs base,P
+StateRevisionReads/apps=1/history=32/ActiveRevisions,4032,0%,4032,0%,~,p=1.000 n=10
+StateRevisionReads/apps=1/history=32/RevisionWithStatus/active,3992,0%,3992,0%,~,p=1.000 n=10
+StateRevisionReads/apps=1/history=32/RevisionWithStatus/previous,3992,0%,3992,0%,~,p=1.000 n=10
+StateRevisionReads/apps=1/history=32/Revisions,102012,0%,102012,0%,~,p=1.000 n=10
+StateRevisionReads/apps=25/history=32/ActiveRevisions,81960,0%,81959,0%,~,p=0.125 n=10
+StateRevisionReads/apps=25/history=32/RevisionWithStatus/active,3992,0%,3992,0%,~,p=1.000 n=10
+StateRevisionReads/apps=25/history=32/RevisionWithStatus/previous,3992,0%,3992,0%,~,p=1.000 n=10
+StateRevisionReads/apps=25/history=32/Revisions,102012,0%,102012,0%,~,p=1.000 n=10
+StateRevisionReads/apps=25/history=512/ActiveRevisions,82458.5,1%,82426,0%,~,p=0.128 n=10
+StateRevisionReads/apps=25/history=512/RevisionWithStatus/active,3992,0%,3992,0%,~,p=1.000 n=10
+StateRevisionReads/apps=25/history=512/RevisionWithStatus/previous,3992,0%,3992,0%,~,p=1.000 n=10
+StateRevisionReads/apps=25/history=512/Revisions,1.635388e+06,0%,1.635388e+06,0%,~,p=0.779 n=10
+StateRevisionReads/apps=100/history=512/ActiveRevisions,329169,0%,328883.5,0%,~,p=0.060 n=10
+StateRevisionReads/apps=100/history=512/RevisionWithStatus/active,3992,0%,3992,0%,~,p=1.000 n=10
+StateRevisionReads/apps=100/history=512/RevisionWithStatus/previous,3992,0%,3992,0%,~,p=1.000 n=10
+StateRevisionReads/apps=100/history=512/Revisions,1.635308e+06,0%,1.635306e+06,0%,~,p=0.264 n=10
+StateBackupReads/apps=1/history=32/LatestForApp,2576,0%,2576,0%,~,p=1.000 n=10
+StateBackupReads/apps=1/history=32/AppHistory,22264,0%,22264,0%,~,p=1.000 n=10
+StateBackupReads/apps=1/history=32/FleetHistory,22056,0%,22056,0%,~,p=1.000 n=10
+StateBackupReads/apps=1/history=32/FleetBackupHistory,22312,0%,22312,0%,~,p=1.000 n=10
+StateBackupReads/apps=1/history=32/LastGoodBackupRun,1696,0%,1696,0%,~,p=1.000 n=10
+StateBackupReads/apps=25/history=32/LatestForApp,2592,0%,2592,0%,~,p=1.000 n=10
+StateBackupReads/apps=25/history=32/AppHistory,22424,0%,22424,0%,~,p=1.000 n=10
+StateBackupReads/apps=25/history=32/FleetHistory,23080,0%,23080,0%,~,p=1.000 n=10
+StateBackupReads/apps=25/history=32/FleetBackupHistory,23336,0%,23336,0%,~,p=1.000 n=10
+StateBackupReads/apps=25/history=32/LastGoodBackupRun,1712,0%,1712,0%,~,p=1.000 n=10
+StateBackupReads/apps=25/history=512/LatestForApp,2592,0%,2592,0%,~,p=1.000 n=10
+StateBackupReads/apps=25/history=512/AppHistory,22520,0%,22520,0%,~,p=1.000 n=10
+StateBackupReads/apps=25/history=512/FleetHistory,23080,0%,23080,0%,~,p=1.000 n=10
+StateBackupReads/apps=25/history=512/FleetBackupHistory,23336,0%,23336,0%,~,p=1.000 n=10
+StateBackupReads/apps=25/history=512/LastGoodBackupRun,1712,0%,1712,0%,~,p=1.000 n=10
+StateBackupReads/apps=100/history=512/LatestForApp,2592,0%,2592,0%,~,p=1.000 n=10
+StateBackupReads/apps=100/history=512/AppHistory,22520,0%,22520,0%,~,p=1.000 n=10
+StateBackupReads/apps=100/history=512/FleetHistory,23080,0%,23080,0%,~,p=1.000 n=10
+StateBackupReads/apps=100/history=512/FleetBackupHistory,23336,0%,23336,0%,~,p=1.000 n=10
+StateBackupReads/apps=100/history=512/LastGoodBackupRun,1712,0%,1712,0%,~,p=1.000 n=10
+geomean,13837.36025997036,,13836.870060376095,,-0.00%,
+
+,docs/technical/performance/results/2026-10-17/paired-final/baseline.txt,,docs/technical/performance/results/2026-10-17/paired-final/candidate.txt,,,
+,allocs/op,CI,allocs/op,CI,vs base,P
+StateRevisionReads/apps=1/history=32/ActiveRevisions,69,0%,69,0%,~,p=1.000 n=10
+StateRevisionReads/apps=1/history=32/RevisionWithStatus/active,72,0%,72,0%,~,p=1.000 n=10
+StateRevisionReads/apps=1/history=32/RevisionWithStatus/previous,72,0%,72,0%,~,p=1.000 n=10
+StateRevisionReads/apps=1/history=32/Revisions,1222,0%,1222,0%,~,p=1.000 n=10
+StateRevisionReads/apps=25/history=32/ActiveRevisions,962,0%,962,0%,~,p=1.000 n=10
+StateRevisionReads/apps=25/history=32/RevisionWithStatus/active,72,0%,72,0%,~,p=1.000 n=10
+StateRevisionReads/apps=25/history=32/RevisionWithStatus/previous,72,0%,72,0%,~,p=1.000 n=10
+StateRevisionReads/apps=25/history=32/Revisions,1222,0%,1222,0%,~,p=1.000 n=10
+StateRevisionReads/apps=25/history=512/ActiveRevisions,1012,0%,1012,0%,~,p=1.000 n=10
+StateRevisionReads/apps=25/history=512/RevisionWithStatus/active,74,0%,74,0%,~,p=1.000 n=10
+StateRevisionReads/apps=25/history=512/RevisionWithStatus/previous,74,0%,74,0%,~,p=1.000 n=10
+StateRevisionReads/apps=25/history=512/Revisions,19696,0%,19696,0%,~,p=1.000 n=10
+StateRevisionReads/apps=100/history=512/ActiveRevisions,3940,0%,3939,0%,~,p=0.270 n=10
+StateRevisionReads/apps=100/history=512/RevisionWithStatus/active,74,0%,74,0%,~,p=1.000 n=10
+StateRevisionReads/apps=100/history=512/RevisionWithStatus/previous,74,0%,74,0%,~,p=1.000 n=10
+StateRevisionReads/apps=100/history=512/Revisions,19676,0%,19676,0%,~,p=1.000 n=10
+StateBackupReads/apps=1/history=32/LatestForApp,63,0%,63,0%,~,p=1.000 n=10
+StateBackupReads/apps=1/history=32/AppHistory,370,0%,370,0%,~,p=1.000 n=10
+StateBackupReads/apps=1/history=32/FleetHistory,368,0%,368,0%,~,p=1.000 n=10
+StateBackupReads/apps=1/history=32/FleetBackupHistory,372,0%,372,0%,~,p=1.000 n=10
+StateBackupReads/apps=1/history=32/LastGoodBackupRun,55,0%,55,0%,~,p=1.000 n=10
+StateBackupReads/apps=25/history=32/LatestForApp,64,0%,64,0%,~,p=1.000 n=10
+StateBackupReads/apps=25/history=32/AppHistory,390,0%,390,0%,~,p=1.000 n=10
+StateBackupReads/apps=25/history=32/FleetHistory,423,0%,423,0%,~,p=1.000 n=10
+StateBackupReads/apps=25/history=32/FleetBackupHistory,427,0%,427,0%,~,p=1.000 n=10
+StateBackupReads/apps=25/history=32/LastGoodBackupRun,56,0%,56,0%,~,p=1.000 n=10
+StateBackupReads/apps=25/history=512/LatestForApp,64,0%,64,0%,~,p=1.000 n=10
+StateBackupReads/apps=25/history=512/AppHistory,394,0%,394,0%,~,p=1.000 n=10
+StateBackupReads/apps=25/history=512/FleetHistory,424,0%,424,0%,~,p=1.000 n=10
+StateBackupReads/apps=25/history=512/FleetBackupHistory,428,0%,428,0%,~,p=1.000 n=10
+StateBackupReads/apps=25/history=512/LastGoodBackupRun,56,0%,56,0%,~,p=1.000 n=10
+StateBackupReads/apps=100/history=512/LatestForApp,64,0%,64,0%,~,p=1.000 n=10
+StateBackupReads/apps=100/history=512/AppHistory,394,0%,394,0%,~,p=1.000 n=10
+StateBackupReads/apps=100/history=512/FleetHistory,424,0%,424,0%,~,p=1.000 n=10
+StateBackupReads/apps=100/history=512/FleetBackupHistory,428,0%,428,0%,~,p=1.000 n=10
+StateBackupReads/apps=100/history=512/LastGoodBackupRun,56,0%,56,0%,~,p=1.000 n=10
+geomean,253.69549663881094,,253.69370781476653,,-0.00%,

@@ -1,0 +1,18 @@
+utc: 2026-10-17T19:25:45Z
+baseline: 6d2398eaea873909dfbdf08048e7882680e11429
+candidate: 56f1ffc2efbf59049c79920a646f725f8024c0e4
+go version go1.27.1 darwin/arm64
+{
+	"CGO_ENABLED": "1",
+	"GOARCH": "arm64",
+	"GOEXPERIMENT": "",
+	"GOFLAGS": "",
+	"GOOS": "darwin",
+	"GOTOOLCHAIN": "auto",
+	"GOWORK": "off"
+}
+GOGC: default
+GOMEMLIMIT: default
+benchmark: -test.run=^$ -test.bench=. -test.benchmem -test.count=1 -test.benchtime=250ms -test.cpu=1
+samples-per-case: 10
+order: baseline/candidate, then candidate/baseline, alternating per package
