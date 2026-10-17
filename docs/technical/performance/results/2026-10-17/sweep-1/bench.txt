@@ -1,0 +1,746 @@
+goos: darwin
+goarch: arm64
+pkg: github.com/kylebegeman/helios/internal/signals
+cpu: Apple M5 Pro
+BenchmarkParseMetrics/Hosts1         	    2620	    112747 ns/op	 142.82 MB/s	       141.0 series/op	   69872 B/op	     409 allocs/op
+BenchmarkParseMetrics/Hosts1         	    3562	     98933 ns/op	 162.77 MB/s	       141.0 series/op	   69872 B/op	     409 allocs/op
+BenchmarkParseMetrics/Hosts1         	    3608	    102723 ns/op	 156.76 MB/s	       141.0 series/op	   69872 B/op	     409 allocs/op
+BenchmarkParseMetrics/Hosts1         	    3166	     91028 ns/op	 176.90 MB/s	       141.0 series/op	   69872 B/op	     409 allocs/op
+BenchmarkParseMetrics/Hosts1         	    3766	     88012 ns/op	 182.96 MB/s	       141.0 series/op	   69872 B/op	     409 allocs/op
+BenchmarkParseMetrics/Hosts1         	    3457	     89824 ns/op	 179.27 MB/s	       141.0 series/op	   69872 B/op	     409 allocs/op
+BenchmarkParseMetrics/Hosts1         	    3418	     84224 ns/op	 191.19 MB/s	       141.0 series/op	   69872 B/op	     409 allocs/op
+BenchmarkParseMetrics/Hosts1         	    3820	    136771 ns/op	 117.74 MB/s	       141.0 series/op	   69872 B/op	     409 allocs/op
+BenchmarkParseMetrics/Hosts1         	    2385	    183315 ns/op	  87.84 MB/s	       141.0 series/op	   69872 B/op	     409 allocs/op
+BenchmarkParseMetrics/Hosts1         	    3646	     99209 ns/op	 162.31 MB/s	       141.0 series/op	   69872 B/op	     409 allocs/op
+BenchmarkParseMetrics/Hosts10        	     338	    775338 ns/op	 192.00 MB/s	      1095 series/op	  640752 B/op	    3302 allocs/op
+BenchmarkParseMetrics/Hosts10        	     439	    696099 ns/op	 213.85 MB/s	      1095 series/op	  640752 B/op	    3302 allocs/op
+BenchmarkParseMetrics/Hosts10        	     428	    727760 ns/op	 204.55 MB/s	      1095 series/op	  640752 B/op	    3302 allocs/op
+BenchmarkParseMetrics/Hosts10        	     396	    737830 ns/op	 201.76 MB/s	      1095 series/op	  640752 B/op	    3302 allocs/op
+BenchmarkParseMetrics/Hosts10        	     399	    738067 ns/op	 201.69 MB/s	      1095 series/op	  640752 B/op	    3302 allocs/op
+BenchmarkParseMetrics/Hosts10        	     439	    777040 ns/op	 191.58 MB/s	      1095 series/op	  640752 B/op	    3302 allocs/op
+BenchmarkParseMetrics/Hosts10        	     439	    764095 ns/op	 194.82 MB/s	      1095 series/op	  640752 B/op	    3302 allocs/op
+BenchmarkParseMetrics/Hosts10        	     301	    896786 ns/op	 165.99 MB/s	      1095 series/op	  640752 B/op	    3302 allocs/op
+BenchmarkParseMetrics/Hosts10        	     351	   1271679 ns/op	 117.06 MB/s	      1095 series/op	  640752 B/op	    3302 allocs/op
+BenchmarkParseMetrics/Hosts10        	     302	    852562 ns/op	 174.61 MB/s	      1095 series/op	  640752 B/op	    3302 allocs/op
+BenchmarkParseMetrics/Hosts100       	      34	  14817234 ns/op	  99.64 MB/s	     10635 series/op	 6600432 B/op	   32199 allocs/op
+BenchmarkParseMetrics/Hosts100       	      61	  21523068 ns/op	  68.60 MB/s	     10635 series/op	 6600432 B/op	   32199 allocs/op
+BenchmarkParseMetrics/Hosts100       	      52	  23660507 ns/op	  62.40 MB/s	     10635 series/op	 6600432 B/op	   32199 allocs/op
+BenchmarkParseMetrics/Hosts100       	      14	  20924461 ns/op	  70.56 MB/s	     10635 series/op	 6600432 B/op	   32199 allocs/op
+BenchmarkParseMetrics/Hosts100       	      24	  18189309 ns/op	  81.17 MB/s	     10635 series/op	 6600432 B/op	   32199 allocs/op
+BenchmarkParseMetrics/Hosts100       	      42	  12118567 ns/op	 121.83 MB/s	     10635 series/op	 6600432 B/op	   32199 allocs/op
+BenchmarkParseMetrics/Hosts100       	      57	  18879319 ns/op	  78.20 MB/s	     10635 series/op	 6600432 B/op	   32199 allocs/op
+BenchmarkParseMetrics/Hosts100       	      44	  18025573 ns/op	  81.91 MB/s	     10635 series/op	 6600432 B/op	   32199 allocs/op
+BenchmarkParseMetrics/Hosts100       	      25	  93239017 ns/op	  15.84 MB/s	     10635 series/op	 6600432 B/op	   32199 allocs/op
+BenchmarkParseMetrics/Hosts100       	      54	   9313769 ns/op	 158.52 MB/s	     10635 series/op	 6600432 B/op	   32199 allocs/op
+BenchmarkTrafficUnchanged/Hosts1     	    2806	    137546 ns/op	       141.0 series/op	   59313 B/op	    1218 allocs/op
+BenchmarkTrafficUnchanged/Hosts1     	    2760	    138137 ns/op	       141.0 series/op	   59313 B/op	    1218 allocs/op
+BenchmarkTrafficUnchanged/Hosts1     	    2695	    148600 ns/op	       141.0 series/op	   59313 B/op	    1218 allocs/op
+BenchmarkTrafficUnchanged/Hosts1     	    2444	    131044 ns/op	       141.0 series/op	   59313 B/op	    1218 allocs/op
+BenchmarkTrafficUnchanged/Hosts1     	    2540	    133100 ns/op	       141.0 series/op	   59313 B/op	    1218 allocs/op
+BenchmarkTrafficUnchanged/Hosts1     	    2757	    131505 ns/op	       141.0 series/op	   59313 B/op	    1218 allocs/op
+BenchmarkTrafficUnchanged/Hosts1     	    2774	    136832 ns/op	       141.0 series/op	   59313 B/op	    1218 allocs/op
+BenchmarkTrafficUnchanged/Hosts1     	    2527	    133161 ns/op	       141.0 series/op	   59313 B/op	    1218 allocs/op
+BenchmarkTrafficUnchanged/Hosts1     	    2610	    132138 ns/op	       141.0 series/op	   59313 B/op	    1218 allocs/op
+BenchmarkTrafficUnchanged/Hosts1     	    2629	    126468 ns/op	       141.0 series/op	   59313 B/op	    1218 allocs/op
+BenchmarkTrafficUnchanged/Hosts10    	     210	   1444749 ns/op	      1095 series/op	  634937 B/op	   12110 allocs/op
+BenchmarkTrafficUnchanged/Hosts10    	     214	   1364420 ns/op	      1095 series/op	  634937 B/op	   12110 allocs/op
+BenchmarkTrafficUnchanged/Hosts10    	     224	   1325785 ns/op	      1095 series/op	  634936 B/op	   12110 allocs/op
+BenchmarkTrafficUnchanged/Hosts10    	     232	   1326189 ns/op	      1095 series/op	  634935 B/op	   12110 allocs/op
+BenchmarkTrafficUnchanged/Hosts10    	     231	   1333265 ns/op	      1095 series/op	  634935 B/op	   12110 allocs/op
+BenchmarkTrafficUnchanged/Hosts10    	     218	   1322688 ns/op	      1095 series/op	  634936 B/op	   12110 allocs/op
+BenchmarkTrafficUnchanged/Hosts10    	     219	   1471365 ns/op	      1095 series/op	  634936 B/op	   12110 allocs/op
+BenchmarkTrafficUnchanged/Hosts10    	     210	   1417591 ns/op	      1095 series/op	  634937 B/op	   12110 allocs/op
+BenchmarkTrafficUnchanged/Hosts10    	     204	   1431262 ns/op	      1095 series/op	  634937 B/op	   12110 allocs/op
+BenchmarkTrafficUnchanged/Hosts10    	     205	   1447944 ns/op	      1095 series/op	  634937 B/op	   12110 allocs/op
+BenchmarkTrafficUnchanged/Hosts100   	      12	  20898559 ns/op	     10635 series/op	 6134965 B/op	  120980 allocs/op
+BenchmarkTrafficUnchanged/Hosts100   	      21	  15923054 ns/op	     10635 series/op	 6134938 B/op	  120979 allocs/op
+BenchmarkTrafficUnchanged/Hosts100   	      19	  14542193 ns/op	     10635 series/op	 6134945 B/op	  120980 allocs/op
+BenchmarkTrafficUnchanged/Hosts100   	      18	  14179979 ns/op	     10635 series/op	 6134949 B/op	  120980 allocs/op
+BenchmarkTrafficUnchanged/Hosts100   	      22	  13689803 ns/op	     10635 series/op	 6134948 B/op	  120980 allocs/op
+BenchmarkTrafficUnchanged/Hosts100   	      27	  13533685 ns/op	     10635 series/op	 6134954 B/op	  120980 allocs/op
+BenchmarkTrafficUnchanged/Hosts100   	      26	  13163271 ns/op	     10635 series/op	 6134947 B/op	  120980 allocs/op
+BenchmarkTrafficUnchanged/Hosts100   	      28	  13621679 ns/op	     10635 series/op	 6134942 B/op	  120980 allocs/op
+BenchmarkTrafficUnchanged/Hosts100   	      20	  13623392 ns/op	     10635 series/op	 6134942 B/op	  120980 allocs/op
+BenchmarkTrafficUnchanged/Hosts100   	      25	  14403510 ns/op	     10635 series/op	 6134961 B/op	  120980 allocs/op
+BenchmarkTrafficRollups/Hosts1       	     562	    462843 ns/op	        12.00 rollups/op	       141.0 series/op	   67851 B/op	    1442 allocs/op
+BenchmarkTrafficRollups/Hosts1       	     608	    464545 ns/op	        12.00 rollups/op	       141.0 series/op	   67850 B/op	    1442 allocs/op
+BenchmarkTrafficRollups/Hosts1       	     600	    448700 ns/op	        12.00 rollups/op	       141.0 series/op	   67850 B/op	    1442 allocs/op
+BenchmarkTrafficRollups/Hosts1       	     496	    510664 ns/op	        12.00 rollups/op	       141.0 series/op	   67850 B/op	    1442 allocs/op
+BenchmarkTrafficRollups/Hosts1       	     690	    461215 ns/op	        12.00 rollups/op	       141.0 series/op	   67850 B/op	    1442 allocs/op
+BenchmarkTrafficRollups/Hosts1       	     501	    560347 ns/op	        12.00 rollups/op	       141.0 series/op	   67850 B/op	    1442 allocs/op
+BenchmarkTrafficRollups/Hosts1       	     558	    486379 ns/op	        12.00 rollups/op	       141.0 series/op	   67850 B/op	    1442 allocs/op
+BenchmarkTrafficRollups/Hosts1       	     681	    432676 ns/op	        12.00 rollups/op	       141.0 series/op	   67850 B/op	    1442 allocs/op
+BenchmarkTrafficRollups/Hosts1       	     650	    684718 ns/op	        12.00 rollups/op	       141.0 series/op	   67850 B/op	    1442 allocs/op
+BenchmarkTrafficRollups/Hosts1       	     313	    938637 ns/op	        12.00 rollups/op	       141.0 series/op	   67851 B/op	    1442 allocs/op
+BenchmarkTrafficRollups/Hosts10      	      62	   9568415 ns/op	       120.0 rollups/op	      1095 series/op	  720761 B/op	   14353 allocs/op
+BenchmarkTrafficRollups/Hosts10      	      44	   7966892 ns/op	       120.0 rollups/op	      1095 series/op	  720765 B/op	   14353 allocs/op
+BenchmarkTrafficRollups/Hosts10      	      40	   7613433 ns/op	       120.0 rollups/op	      1095 series/op	  720764 B/op	   14353 allocs/op
+BenchmarkTrafficRollups/Hosts10      	      54	   6014985 ns/op	       120.0 rollups/op	      1095 series/op	  720765 B/op	   14353 allocs/op
+BenchmarkTrafficRollups/Hosts10      	      51	   5638869 ns/op	       120.0 rollups/op	      1095 series/op	  720763 B/op	   14353 allocs/op
+BenchmarkTrafficRollups/Hosts10      	      58	   6183483 ns/op	       120.0 rollups/op	      1095 series/op	  720761 B/op	   14353 allocs/op
+BenchmarkTrafficRollups/Hosts10      	      68	   5699348 ns/op	       120.0 rollups/op	      1095 series/op	  720760 B/op	   14353 allocs/op
+BenchmarkTrafficRollups/Hosts10      	      55	   5979556 ns/op	       120.0 rollups/op	      1095 series/op	  720759 B/op	   14353 allocs/op
+BenchmarkTrafficRollups/Hosts10      	      73	   7064831 ns/op	       120.0 rollups/op	      1095 series/op	  720759 B/op	   14353 allocs/op
+BenchmarkTrafficRollups/Hosts10      	      45	   6126081 ns/op	       120.0 rollups/op	      1095 series/op	  720765 B/op	   14353 allocs/op
+BenchmarkSummarize/Hours24           	    5404	     56918 ns/op	       816.0 rows/op	    1096 B/op	       9 allocs/op
+BenchmarkSummarize/Hours24           	   14980	     19239 ns/op	       816.0 rows/op	    1096 B/op	       9 allocs/op
+BenchmarkSummarize/Hours24           	   17221	     17695 ns/op	       816.0 rows/op	    1096 B/op	       9 allocs/op
+BenchmarkSummarize/Hours24           	   17340	     17234 ns/op	       816.0 rows/op	    1096 B/op	       9 allocs/op
+BenchmarkSummarize/Hours24           	   17674	     16992 ns/op	       816.0 rows/op	    1096 B/op	       9 allocs/op
+BenchmarkSummarize/Hours24           	   10000	     46670 ns/op	       816.0 rows/op	    1096 B/op	       9 allocs/op
+BenchmarkSummarize/Hours24           	    3756	     96525 ns/op	       816.0 rows/op	    1096 B/op	       9 allocs/op
+BenchmarkSummarize/Hours24           	   10000	     57321 ns/op	       816.0 rows/op	    1096 B/op	       9 allocs/op
+BenchmarkSummarize/Hours24           	   10789	     42565 ns/op	       816.0 rows/op	    1096 B/op	       9 allocs/op
+BenchmarkSummarize/Hours24           	   10000	     49320 ns/op	       816.0 rows/op	    1096 B/op	       9 allocs/op
+BenchmarkSummarize/Hours168          	     903	    426052 ns/op	      5712 rows/op	    9512 B/op	      15 allocs/op
+BenchmarkSummarize/Hours168          	    2043	    132508 ns/op	      5712 rows/op	    9512 B/op	      15 allocs/op
+BenchmarkSummarize/Hours168          	    2156	    293369 ns/op	      5712 rows/op	    9512 B/op	      15 allocs/op
+BenchmarkSummarize/Hours168          	    1821	    287399 ns/op	      5712 rows/op	    9512 B/op	      15 allocs/op
+BenchmarkSummarize/Hours168          	     889	    482003 ns/op	      5712 rows/op	    9512 B/op	      15 allocs/op
+BenchmarkSummarize/Hours168          	     789	    387575 ns/op	      5712 rows/op	    9512 B/op	      15 allocs/op
+BenchmarkSummarize/Hours168          	    1849	    344691 ns/op	      5712 rows/op	    9512 B/op	      15 allocs/op
+BenchmarkSummarize/Hours168          	    2311	    365732 ns/op	      5712 rows/op	    9512 B/op	      15 allocs/op
+BenchmarkSummarize/Hours168          	     660	    390857 ns/op	      5712 rows/op	    9512 B/op	      15 allocs/op
+BenchmarkSummarize/Hours168          	    1188	    299345 ns/op	      5712 rows/op	    9512 B/op	      15 allocs/op
+BenchmarkSummarize/Hours2160         	     104	   3289019 ns/op	     73440 rows/op	  148312 B/op	      33 allocs/op
+BenchmarkSummarize/Hours2160         	     109	   2893324 ns/op	     73440 rows/op	  148312 B/op	      33 allocs/op
+BenchmarkSummarize/Hours2160         	      86	   3275707 ns/op	     73440 rows/op	  148312 B/op	      33 allocs/op
+BenchmarkSummarize/Hours2160         	     102	   3063152 ns/op	     73440 rows/op	  148312 B/op	      33 allocs/op
+BenchmarkSummarize/Hours2160         	     123	   2851804 ns/op	     73440 rows/op	  148312 B/op	      33 allocs/op
+BenchmarkSummarize/Hours2160         	     100	   4912688 ns/op	     73440 rows/op	  148312 B/op	      33 allocs/op
+BenchmarkSummarize/Hours2160         	     100	   4392290 ns/op	     73440 rows/op	  148312 B/op	      33 allocs/op
+BenchmarkSummarize/Hours2160         	     100	   4133740 ns/op	     73440 rows/op	  148312 B/op	      33 allocs/op
+BenchmarkSummarize/Hours2160         	     100	   5257220 ns/op	     73440 rows/op	  148312 B/op	      33 allocs/op
+BenchmarkSummarize/Hours2160         	      81	   4721320 ns/op	     73440 rows/op	  148312 B/op	      33 allocs/op
+PASS
+ok  	github.com/kylebegeman/helios/internal/signals	47.529s
+goos: darwin
+goarch: arm64
+pkg: github.com/kylebegeman/helios/internal/edge
+cpu: Apple M5 Pro
+BenchmarkConfigBehind/apps=10         	    1440	    423388 ns/op	 214.24 MB/s	        11.00 hosts/op	        40.00 routes/op	  151728 B/op	     372 allocs/op
+BenchmarkConfigBehind/apps=10         	    1351	    242782 ns/op	 373.62 MB/s	        11.00 hosts/op	        40.00 routes/op	  151728 B/op	     372 allocs/op
+BenchmarkConfigBehind/apps=10         	    1399	    210178 ns/op	 431.58 MB/s	        11.00 hosts/op	        40.00 routes/op	  151728 B/op	     372 allocs/op
+BenchmarkConfigBehind/apps=10         	    1471	    212125 ns/op	 427.62 MB/s	        11.00 hosts/op	        40.00 routes/op	  151728 B/op	     372 allocs/op
+BenchmarkConfigBehind/apps=10         	    1604	    232425 ns/op	 390.27 MB/s	        11.00 hosts/op	        40.00 routes/op	  151728 B/op	     372 allocs/op
+BenchmarkConfigBehind/apps=10         	    1476	    219550 ns/op	 413.15 MB/s	        11.00 hosts/op	        40.00 routes/op	  151728 B/op	     372 allocs/op
+BenchmarkConfigBehind/apps=10         	    1363	    249883 ns/op	 363.00 MB/s	        11.00 hosts/op	        40.00 routes/op	  151728 B/op	     372 allocs/op
+BenchmarkConfigBehind/apps=10         	    1090	    967869 ns/op	  93.72 MB/s	        11.00 hosts/op	        40.00 routes/op	  151728 B/op	     372 allocs/op
+BenchmarkConfigBehind/apps=10         	    1057	    498109 ns/op	 182.10 MB/s	        11.00 hosts/op	        40.00 routes/op	  151728 B/op	     372 allocs/op
+BenchmarkConfigBehind/apps=10         	     922	    585635 ns/op	 154.89 MB/s	        11.00 hosts/op	        40.00 routes/op	  151728 B/op	     372 allocs/op
+BenchmarkConfigBehind/apps=100        	      45	   9182900 ns/op	  96.88 MB/s	       101.0 hosts/op	       400.0 routes/op	 1406302 B/op	    3532 allocs/op
+BenchmarkConfigBehind/apps=100        	      60	   8246353 ns/op	 107.88 MB/s	       101.0 hosts/op	       400.0 routes/op	 1406296 B/op	    3532 allocs/op
+BenchmarkConfigBehind/apps=100        	     100	   3471326 ns/op	 256.28 MB/s	       101.0 hosts/op	       400.0 routes/op	 1406301 B/op	    3532 allocs/op
+BenchmarkConfigBehind/apps=100        	     114	   2910716 ns/op	 305.64 MB/s	       101.0 hosts/op	       400.0 routes/op	 1406297 B/op	    3532 allocs/op
+BenchmarkConfigBehind/apps=100        	     100	   7227398 ns/op	 123.09 MB/s	       101.0 hosts/op	       400.0 routes/op	 1406301 B/op	    3532 allocs/op
+BenchmarkConfigBehind/apps=100        	     100	   7335516 ns/op	 121.28 MB/s	       101.0 hosts/op	       400.0 routes/op	 1406298 B/op	    3532 allocs/op
+BenchmarkConfigBehind/apps=100        	      60	   7828859 ns/op	 113.64 MB/s	       101.0 hosts/op	       400.0 routes/op	 1406301 B/op	    3532 allocs/op
+BenchmarkConfigBehind/apps=100        	     100	   5488045 ns/op	 162.10 MB/s	       101.0 hosts/op	       400.0 routes/op	 1406298 B/op	    3532 allocs/op
+BenchmarkConfigBehind/apps=100        	     100	   7670420 ns/op	 115.98 MB/s	       101.0 hosts/op	       400.0 routes/op	 1406298 B/op	    3532 allocs/op
+BenchmarkConfigBehind/apps=100        	     100	   6584290 ns/op	 135.12 MB/s	       101.0 hosts/op	       400.0 routes/op	 1406298 B/op	    3532 allocs/op
+BenchmarkConfigBehind/apps=1000       	      12	  65617243 ns/op	 135.31 MB/s	      1001 hosts/op	      4000 routes/op	14013267 B/op	   35047 allocs/op
+BenchmarkConfigBehind/apps=1000       	       7	  63814482 ns/op	 139.14 MB/s	      1001 hosts/op	      4000 routes/op	14013236 B/op	   35046 allocs/op
+BenchmarkConfigBehind/apps=1000       	       8	  45176203 ns/op	 196.54 MB/s	      1001 hosts/op	      4000 routes/op	14013256 B/op	   35047 allocs/op
+BenchmarkConfigBehind/apps=1000       	      18	  30430880 ns/op	 291.77 MB/s	      1001 hosts/op	      4000 routes/op	14013256 B/op	   35047 allocs/op
+BenchmarkConfigBehind/apps=1000       	       8	  32423307 ns/op	 273.84 MB/s	      1001 hosts/op	      4000 routes/op	14013256 B/op	   35047 allocs/op
+BenchmarkConfigBehind/apps=1000       	      19	  22844857 ns/op	 388.66 MB/s	      1001 hosts/op	      4000 routes/op	14013256 B/op	   35047 allocs/op
+BenchmarkConfigBehind/apps=1000       	       7	  37393304 ns/op	 237.45 MB/s	      1001 hosts/op	      4000 routes/op	14013256 B/op	   35047 allocs/op
+BenchmarkConfigBehind/apps=1000       	      19	  18428219 ns/op	 481.81 MB/s	      1001 hosts/op	      4000 routes/op	14013256 B/op	   35047 allocs/op
+BenchmarkConfigBehind/apps=1000       	       8	  36815766 ns/op	 241.17 MB/s	      1001 hosts/op	      4000 routes/op	14013256 B/op	   35047 allocs/op
+BenchmarkConfigBehind/apps=1000       	       6	  41918472 ns/op	 211.81 MB/s	      1001 hosts/op	      4000 routes/op	14013256 B/op	   35047 allocs/op
+PASS
+ok  	github.com/kylebegeman/helios/internal/edge	15.708s
+goos: darwin
+goarch: arm64
+pkg: github.com/kylebegeman/helios/internal/state
+cpu: Apple M5 Pro
+BenchmarkStateRevisionReads/apps=1/history=32/ActiveRevisions         	    9265	     36309 ns/op	    4032 B/op	      69 allocs/op
+BenchmarkStateRevisionReads/apps=1/history=32/ActiveRevisions         	   10000	     62138 ns/op	    4032 B/op	      69 allocs/op
+BenchmarkStateRevisionReads/apps=1/history=32/ActiveRevisions         	   10000	     32570 ns/op	    4032 B/op	      69 allocs/op
+BenchmarkStateRevisionReads/apps=1/history=32/ActiveRevisions         	   10000	     30603 ns/op	    4032 B/op	      69 allocs/op
+BenchmarkStateRevisionReads/apps=1/history=32/ActiveRevisions         	   10000	     29418 ns/op	    4032 B/op	      69 allocs/op
+BenchmarkStateRevisionReads/apps=1/history=32/ActiveRevisions         	   10000	     51752 ns/op	    4032 B/op	      69 allocs/op
+BenchmarkStateRevisionReads/apps=1/history=32/ActiveRevisions         	   14228	     21071 ns/op	    4032 B/op	      69 allocs/op
+BenchmarkStateRevisionReads/apps=1/history=32/ActiveRevisions         	   10000	     88636 ns/op	    4032 B/op	      69 allocs/op
+BenchmarkStateRevisionReads/apps=1/history=32/ActiveRevisions         	   10000	     64250 ns/op	    4032 B/op	      69 allocs/op
+BenchmarkStateRevisionReads/apps=1/history=32/ActiveRevisions         	   10000	     60974 ns/op	    4032 B/op	      69 allocs/op
+BenchmarkStateRevisionReads/apps=1/history=32/RevisionWithStatus/active         	    2526	    123470 ns/op	    3992 B/op	      72 allocs/op
+BenchmarkStateRevisionReads/apps=1/history=32/RevisionWithStatus/active         	   10000	     56754 ns/op	    3992 B/op	      72 allocs/op
+BenchmarkStateRevisionReads/apps=1/history=32/RevisionWithStatus/active         	   10000	     63361 ns/op	    3992 B/op	      72 allocs/op
+BenchmarkStateRevisionReads/apps=1/history=32/RevisionWithStatus/active         	   10000	    109958 ns/op	    3992 B/op	      72 allocs/op
+BenchmarkStateRevisionReads/apps=1/history=32/RevisionWithStatus/active         	   10000	     89098 ns/op	    3992 B/op	      72 allocs/op
+BenchmarkStateRevisionReads/apps=1/history=32/RevisionWithStatus/active         	   10000	     51043 ns/op	    3992 B/op	      72 allocs/op
+BenchmarkStateRevisionReads/apps=1/history=32/RevisionWithStatus/active         	   10000	     89875 ns/op	    3992 B/op	      72 allocs/op
+BenchmarkStateRevisionReads/apps=1/history=32/RevisionWithStatus/active         	    9385	    119432 ns/op	    3992 B/op	      72 allocs/op
+BenchmarkStateRevisionReads/apps=1/history=32/RevisionWithStatus/active         	    9182	     87907 ns/op	    3992 B/op	      72 allocs/op
+BenchmarkStateRevisionReads/apps=1/history=32/RevisionWithStatus/active         	    2930	    102329 ns/op	    3992 B/op	      72 allocs/op
+BenchmarkStateRevisionReads/apps=1/history=32/RevisionWithStatus/previous       	   10000	     78666 ns/op	    3992 B/op	      72 allocs/op
+BenchmarkStateRevisionReads/apps=1/history=32/RevisionWithStatus/previous       	   10000	     54264 ns/op	    3992 B/op	      72 allocs/op
+BenchmarkStateRevisionReads/apps=1/history=32/RevisionWithStatus/previous       	   10000	    123988 ns/op	    3992 B/op	      72 allocs/op
+BenchmarkStateRevisionReads/apps=1/history=32/RevisionWithStatus/previous       	    2667	    126654 ns/op	    3992 B/op	      72 allocs/op
+BenchmarkStateRevisionReads/apps=1/history=32/RevisionWithStatus/previous       	   10000	    121110 ns/op	    3992 B/op	      72 allocs/op
+BenchmarkStateRevisionReads/apps=1/history=32/RevisionWithStatus/previous       	    9571	    108389 ns/op	    3992 B/op	      72 allocs/op
+BenchmarkStateRevisionReads/apps=1/history=32/RevisionWithStatus/previous       	    5985	     96767 ns/op	    3992 B/op	      72 allocs/op
+BenchmarkStateRevisionReads/apps=1/history=32/RevisionWithStatus/previous       	    9399	     95904 ns/op	    3992 B/op	      72 allocs/op
+BenchmarkStateRevisionReads/apps=1/history=32/RevisionWithStatus/previous       	    6105	     70611 ns/op	    3992 B/op	      72 allocs/op
+BenchmarkStateRevisionReads/apps=1/history=32/RevisionWithStatus/previous       	   10000	     53603 ns/op	    3992 B/op	      72 allocs/op
+BenchmarkStateRevisionReads/apps=1/history=32/Revisions                         	    1632	    418251 ns/op	  102012 B/op	    1222 allocs/op
+BenchmarkStateRevisionReads/apps=1/history=32/Revisions                         	     670	    469348 ns/op	  102013 B/op	    1222 allocs/op
+BenchmarkStateRevisionReads/apps=1/history=32/Revisions                         	    2006	    341464 ns/op	  102012 B/op	    1222 allocs/op
+BenchmarkStateRevisionReads/apps=1/history=32/Revisions                         	     591	    584104 ns/op	  102013 B/op	    1222 allocs/op
+BenchmarkStateRevisionReads/apps=1/history=32/Revisions                         	    2040	    493108 ns/op	  102012 B/op	    1222 allocs/op
+BenchmarkStateRevisionReads/apps=1/history=32/Revisions                         	    1866	    492099 ns/op	  102012 B/op	    1222 allocs/op
+BenchmarkStateRevisionReads/apps=1/history=32/Revisions                         	    1302	    400230 ns/op	  102012 B/op	    1222 allocs/op
+BenchmarkStateRevisionReads/apps=1/history=32/Revisions                         	    1982	    366079 ns/op	  102012 B/op	    1222 allocs/op
+BenchmarkStateRevisionReads/apps=1/history=32/Revisions                         	    1588	    476597 ns/op	  102012 B/op	    1222 allocs/op
+BenchmarkStateRevisionReads/apps=1/history=32/Revisions                         	     441	    680449 ns/op	  102013 B/op	    1222 allocs/op
+BenchmarkStateRevisionReads/apps=25/history=32/ActiveRevisions                  	    1292	    626173 ns/op	   81959 B/op	     962 allocs/op
+BenchmarkStateRevisionReads/apps=25/history=32/ActiveRevisions                  	    1154	    450201 ns/op	   81955 B/op	     962 allocs/op
+BenchmarkStateRevisionReads/apps=25/history=32/ActiveRevisions                  	    1201	    517612 ns/op	   81955 B/op	     962 allocs/op
+BenchmarkStateRevisionReads/apps=25/history=32/ActiveRevisions                  	     783	    440905 ns/op	   81955 B/op	     962 allocs/op
+BenchmarkStateRevisionReads/apps=25/history=32/ActiveRevisions                  	    1268	    331401 ns/op	   81955 B/op	     962 allocs/op
+BenchmarkStateRevisionReads/apps=25/history=32/ActiveRevisions                  	     594	    578926 ns/op	   81955 B/op	     962 allocs/op
+BenchmarkStateRevisionReads/apps=25/history=32/ActiveRevisions                  	    1209	    772758 ns/op	   81956 B/op	     962 allocs/op
+BenchmarkStateRevisionReads/apps=25/history=32/ActiveRevisions                  	    1230	    616410 ns/op	   81955 B/op	     962 allocs/op
+BenchmarkStateRevisionReads/apps=25/history=32/ActiveRevisions                  	    1191	    806171 ns/op	   81955 B/op	     962 allocs/op
+BenchmarkStateRevisionReads/apps=25/history=32/ActiveRevisions                  	    1332	    826544 ns/op	   81955 B/op	     962 allocs/op
+BenchmarkStateRevisionReads/apps=25/history=32/RevisionWithStatus/active        	   10000	     74827 ns/op	    3992 B/op	      72 allocs/op
+BenchmarkStateRevisionReads/apps=25/history=32/RevisionWithStatus/active        	    8876	     79831 ns/op	    3992 B/op	      72 allocs/op
+BenchmarkStateRevisionReads/apps=25/history=32/RevisionWithStatus/active        	    4780	     81292 ns/op	    3992 B/op	      72 allocs/op
+BenchmarkStateRevisionReads/apps=25/history=32/RevisionWithStatus/active        	    8920	     60743 ns/op	    3992 B/op	      72 allocs/op
+BenchmarkStateRevisionReads/apps=25/history=32/RevisionWithStatus/active        	   10000	     60127 ns/op	    3992 B/op	      72 allocs/op
+BenchmarkStateRevisionReads/apps=25/history=32/RevisionWithStatus/active        	    7377	     47168 ns/op	    3992 B/op	      72 allocs/op
+BenchmarkStateRevisionReads/apps=25/history=32/RevisionWithStatus/active        	   10000	     52964 ns/op	    3992 B/op	      72 allocs/op
+BenchmarkStateRevisionReads/apps=25/history=32/RevisionWithStatus/active        	   10000	     44460 ns/op	    3992 B/op	      72 allocs/op
+BenchmarkStateRevisionReads/apps=25/history=32/RevisionWithStatus/active        	    5246	     56646 ns/op	    3992 B/op	      72 allocs/op
+BenchmarkStateRevisionReads/apps=25/history=32/RevisionWithStatus/active        	   10000	     53648 ns/op	    3992 B/op	      72 allocs/op
+BenchmarkStateRevisionReads/apps=25/history=32/RevisionWithStatus/previous      	    7032	     58064 ns/op	    3992 B/op	      72 allocs/op
+BenchmarkStateRevisionReads/apps=25/history=32/RevisionWithStatus/previous      	    6340	     74928 ns/op	    3992 B/op	      72 allocs/op
+BenchmarkStateRevisionReads/apps=25/history=32/RevisionWithStatus/previous      	   10000	     40448 ns/op	    3992 B/op	      72 allocs/op
+BenchmarkStateRevisionReads/apps=25/history=32/RevisionWithStatus/previous      	   10000	     48850 ns/op	    3992 B/op	      72 allocs/op
+BenchmarkStateRevisionReads/apps=25/history=32/RevisionWithStatus/previous      	   10000	     49378 ns/op	    3992 B/op	      72 allocs/op
+BenchmarkStateRevisionReads/apps=25/history=32/RevisionWithStatus/previous      	   10000	     48857 ns/op	    3992 B/op	      72 allocs/op
+BenchmarkStateRevisionReads/apps=25/history=32/RevisionWithStatus/previous      	   10000	     66115 ns/op	    3992 B/op	      72 allocs/op
+BenchmarkStateRevisionReads/apps=25/history=32/RevisionWithStatus/previous      	    5568	     55298 ns/op	    3992 B/op	      72 allocs/op
+BenchmarkStateRevisionReads/apps=25/history=32/RevisionWithStatus/previous      	   10000	     42561 ns/op	    3992 B/op	      72 allocs/op
+BenchmarkStateRevisionReads/apps=25/history=32/RevisionWithStatus/previous      	    8138	     67758 ns/op	    3992 B/op	      72 allocs/op
+BenchmarkStateRevisionReads/apps=25/history=32/Revisions                        	    1687	    404078 ns/op	  102013 B/op	    1222 allocs/op
+BenchmarkStateRevisionReads/apps=25/history=32/Revisions                        	     394	    725936 ns/op	  102013 B/op	    1222 allocs/op
+BenchmarkStateRevisionReads/apps=25/history=32/Revisions                        	     967	    434633 ns/op	  102012 B/op	    1222 allocs/op
+BenchmarkStateRevisionReads/apps=25/history=32/Revisions                        	    1065	    459857 ns/op	  102012 B/op	    1222 allocs/op
+BenchmarkStateRevisionReads/apps=25/history=32/Revisions                        	    1404	    237682 ns/op	  102012 B/op	    1222 allocs/op
+BenchmarkStateRevisionReads/apps=25/history=32/Revisions                        	    1370	    207140 ns/op	  102012 B/op	    1222 allocs/op
+BenchmarkStateRevisionReads/apps=25/history=32/Revisions                        	    1728	    282818 ns/op	  102012 B/op	    1222 allocs/op
+BenchmarkStateRevisionReads/apps=25/history=32/Revisions                        	    1225	    340757 ns/op	  102012 B/op	    1222 allocs/op
+BenchmarkStateRevisionReads/apps=25/history=32/Revisions                        	     932	    370091 ns/op	  102012 B/op	    1222 allocs/op
+BenchmarkStateRevisionReads/apps=25/history=32/Revisions                        	     886	    418965 ns/op	  102012 B/op	    1222 allocs/op
+BenchmarkStateRevisionReads/apps=25/history=512/ActiveRevisions                 	      14	  28368196 ns/op	   82720 B/op	    1012 allocs/op
+BenchmarkStateRevisionReads/apps=25/history=512/ActiveRevisions                 	      19	  25683761 ns/op	   82344 B/op	    1012 allocs/op
+BenchmarkStateRevisionReads/apps=25/history=512/ActiveRevisions                 	      69	  54306462 ns/op	   82342 B/op	    1012 allocs/op
+BenchmarkStateRevisionReads/apps=25/history=512/ActiveRevisions                 	       6	  43994562 ns/op	   82361 B/op	    1012 allocs/op
+BenchmarkStateRevisionReads/apps=25/history=512/ActiveRevisions                 	      10	  27093492 ns/op	   82351 B/op	    1012 allocs/op
+BenchmarkStateRevisionReads/apps=25/history=512/ActiveRevisions                 	      18	  38134706 ns/op	   82344 B/op	    1012 allocs/op
+BenchmarkStateRevisionReads/apps=25/history=512/ActiveRevisions                 	       6	  45794333 ns/op	   82361 B/op	    1012 allocs/op
+BenchmarkStateRevisionReads/apps=25/history=512/ActiveRevisions                 	       9	  28487236 ns/op	   82352 B/op	    1012 allocs/op
+BenchmarkStateRevisionReads/apps=25/history=512/ActiveRevisions                 	      40	  12331998 ns/op	   82343 B/op	    1012 allocs/op
+BenchmarkStateRevisionReads/apps=25/history=512/ActiveRevisions                 	      12	  86749465 ns/op	   82348 B/op	    1012 allocs/op
+BenchmarkStateRevisionReads/apps=25/history=512/RevisionWithStatus/active       	     796	    386333 ns/op	    3992 B/op	      74 allocs/op
+BenchmarkStateRevisionReads/apps=25/history=512/RevisionWithStatus/active       	     562	    537362 ns/op	    3992 B/op	      74 allocs/op
+BenchmarkStateRevisionReads/apps=25/history=512/RevisionWithStatus/active       	    1760	    301979 ns/op	    3992 B/op	      74 allocs/op
+BenchmarkStateRevisionReads/apps=25/history=512/RevisionWithStatus/active       	    1568	    373318 ns/op	    3992 B/op	      74 allocs/op
+BenchmarkStateRevisionReads/apps=25/history=512/RevisionWithStatus/active       	    1106	    312402 ns/op	    3992 B/op	      74 allocs/op
+BenchmarkStateRevisionReads/apps=25/history=512/RevisionWithStatus/active       	    1100	    530527 ns/op	    3992 B/op	      74 allocs/op
+BenchmarkStateRevisionReads/apps=25/history=512/RevisionWithStatus/active       	     258	   1050256 ns/op	    3992 B/op	      74 allocs/op
+BenchmarkStateRevisionReads/apps=25/history=512/RevisionWithStatus/active       	     841	    408446 ns/op	    3992 B/op	      74 allocs/op
+BenchmarkStateRevisionReads/apps=25/history=512/RevisionWithStatus/active       	    2827	    328476 ns/op	    3992 B/op	      74 allocs/op
+BenchmarkStateRevisionReads/apps=25/history=512/RevisionWithStatus/active       	    1834	    384913 ns/op	    3992 B/op	      74 allocs/op
+BenchmarkStateRevisionReads/apps=25/history=512/RevisionWithStatus/previous     	    1354	    334182 ns/op	    3992 B/op	      74 allocs/op
+BenchmarkStateRevisionReads/apps=25/history=512/RevisionWithStatus/previous     	    1188	    426355 ns/op	    3992 B/op	      74 allocs/op
+BenchmarkStateRevisionReads/apps=25/history=512/RevisionWithStatus/previous     	     960	    413987 ns/op	    3992 B/op	      74 allocs/op
+BenchmarkStateRevisionReads/apps=25/history=512/RevisionWithStatus/previous     	    1038	    363287 ns/op	    3992 B/op	      74 allocs/op
+BenchmarkStateRevisionReads/apps=25/history=512/RevisionWithStatus/previous     	    1684	    158151 ns/op	    3992 B/op	      74 allocs/op
+BenchmarkStateRevisionReads/apps=25/history=512/RevisionWithStatus/previous     	    2568	    267562 ns/op	    3992 B/op	      74 allocs/op
+BenchmarkStateRevisionReads/apps=25/history=512/RevisionWithStatus/previous     	    1555	    318166 ns/op	    3992 B/op	      74 allocs/op
+BenchmarkStateRevisionReads/apps=25/history=512/RevisionWithStatus/previous     	    2311	    323479 ns/op	    3992 B/op	      74 allocs/op
+BenchmarkStateRevisionReads/apps=25/history=512/RevisionWithStatus/previous     	    2828	    328927 ns/op	    3992 B/op	      74 allocs/op
+BenchmarkStateRevisionReads/apps=25/history=512/RevisionWithStatus/previous     	    2091	    142528 ns/op	    3992 B/op	      74 allocs/op
+BenchmarkStateRevisionReads/apps=25/history=512/Revisions                       	      88	   3293646 ns/op	 1635388 B/op	   19696 allocs/op
+BenchmarkStateRevisionReads/apps=25/history=512/Revisions                       	      66	   5643565 ns/op	 1635390 B/op	   19696 allocs/op
+BenchmarkStateRevisionReads/apps=25/history=512/Revisions                       	     100	   5697991 ns/op	 1635390 B/op	   19696 allocs/op
+BenchmarkStateRevisionReads/apps=25/history=512/Revisions                       	     100	   5453149 ns/op	 1635389 B/op	   19696 allocs/op
+BenchmarkStateRevisionReads/apps=25/history=512/Revisions                       	     100	   2857051 ns/op	 1635387 B/op	   19696 allocs/op
+BenchmarkStateRevisionReads/apps=25/history=512/Revisions                       	     100	   2958429 ns/op	 1635442 B/op	   19696 allocs/op
+BenchmarkStateRevisionReads/apps=25/history=512/Revisions                       	     100	   3513715 ns/op	 1635388 B/op	   19696 allocs/op
+BenchmarkStateRevisionReads/apps=25/history=512/Revisions                       	     100	   3114696 ns/op	 1635444 B/op	   19696 allocs/op
+BenchmarkStateRevisionReads/apps=25/history=512/Revisions                       	     100	   3380069 ns/op	 1635388 B/op	   19696 allocs/op
+BenchmarkStateRevisionReads/apps=25/history=512/Revisions                       	     100	   3149815 ns/op	 1635388 B/op	   19696 allocs/op
+BenchmarkStateRevisionReads/apps=100/history=512/ActiveRevisions                	       9	  80812620 ns/op	  329161 B/op	    3940 allocs/op
+BenchmarkStateRevisionReads/apps=100/history=512/ActiveRevisions                	       1	 485762959 ns/op	  328688 B/op	    3941 allocs/op
+BenchmarkStateRevisionReads/apps=100/history=512/ActiveRevisions                	       7	 109213482 ns/op	  328571 B/op	    3939 allocs/op
+BenchmarkStateRevisionReads/apps=100/history=512/ActiveRevisions                	       2	 164019833 ns/op	  328620 B/op	    3940 allocs/op
+BenchmarkStateRevisionReads/apps=100/history=512/ActiveRevisions                	       4	  66305177 ns/op	  328586 B/op	    3939 allocs/op
+BenchmarkStateRevisionReads/apps=100/history=512/ActiveRevisions                	      13	  64889545 ns/op	  328572 B/op	    3939 allocs/op
+BenchmarkStateRevisionReads/apps=100/history=512/ActiveRevisions                	       4	  65703875 ns/op	  328586 B/op	    3939 allocs/op
+BenchmarkStateRevisionReads/apps=100/history=512/ActiveRevisions                	       8	  59261214 ns/op	  328569 B/op	    3939 allocs/op
+BenchmarkStateRevisionReads/apps=100/history=512/ActiveRevisions                	       8	  32380833 ns/op	  329221 B/op	    3940 allocs/op
+BenchmarkStateRevisionReads/apps=100/history=512/ActiveRevisions                	      12	  45830771 ns/op	  329009 B/op	    3939 allocs/op
+BenchmarkStateRevisionReads/apps=100/history=512/RevisionWithStatus/active      	    1646	    226155 ns/op	    3992 B/op	      74 allocs/op
+BenchmarkStateRevisionReads/apps=100/history=512/RevisionWithStatus/active      	    1488	    343657 ns/op	    3992 B/op	      74 allocs/op
+BenchmarkStateRevisionReads/apps=100/history=512/RevisionWithStatus/active      	    2212	    181752 ns/op	    3992 B/op	      74 allocs/op
+BenchmarkStateRevisionReads/apps=100/history=512/RevisionWithStatus/active      	    2653	    756090 ns/op	    3992 B/op	      74 allocs/op
+BenchmarkStateRevisionReads/apps=100/history=512/RevisionWithStatus/active      	     699	    599248 ns/op	    3992 B/op	      74 allocs/op
+BenchmarkStateRevisionReads/apps=100/history=512/RevisionWithStatus/active      	    1640	    504005 ns/op	    3992 B/op	      74 allocs/op
+BenchmarkStateRevisionReads/apps=100/history=512/RevisionWithStatus/active      	    1120	    667290 ns/op	    3992 B/op	      74 allocs/op
+BenchmarkStateRevisionReads/apps=100/history=512/RevisionWithStatus/active      	     526	    521273 ns/op	    3992 B/op	      74 allocs/op
+BenchmarkStateRevisionReads/apps=100/history=512/RevisionWithStatus/active      	    2376	    363583 ns/op	    3992 B/op	      74 allocs/op
+BenchmarkStateRevisionReads/apps=100/history=512/RevisionWithStatus/active      	    1015	    780892 ns/op	    3992 B/op	      74 allocs/op
+BenchmarkStateRevisionReads/apps=100/history=512/RevisionWithStatus/previous    	    2322	    294241 ns/op	    3992 B/op	      74 allocs/op
+BenchmarkStateRevisionReads/apps=100/history=512/RevisionWithStatus/previous    	     967	    414756 ns/op	    3992 B/op	      74 allocs/op
+BenchmarkStateRevisionReads/apps=100/history=512/RevisionWithStatus/previous    	    1744	    453325 ns/op	    3992 B/op	      74 allocs/op
+BenchmarkStateRevisionReads/apps=100/history=512/RevisionWithStatus/previous    	    1912	    411654 ns/op	    3992 B/op	      74 allocs/op
+BenchmarkStateRevisionReads/apps=100/history=512/RevisionWithStatus/previous    	     784	    384851 ns/op	    3992 B/op	      74 allocs/op
+BenchmarkStateRevisionReads/apps=100/history=512/RevisionWithStatus/previous    	    1657	    416280 ns/op	    3992 B/op	      74 allocs/op
+BenchmarkStateRevisionReads/apps=100/history=512/RevisionWithStatus/previous    	    1128	    257141 ns/op	    3992 B/op	      74 allocs/op
+BenchmarkStateRevisionReads/apps=100/history=512/RevisionWithStatus/previous    	     616	    469810 ns/op	    3992 B/op	      74 allocs/op
+BenchmarkStateRevisionReads/apps=100/history=512/RevisionWithStatus/previous    	    2224	    225323 ns/op	    3992 B/op	      74 allocs/op
+BenchmarkStateRevisionReads/apps=100/history=512/RevisionWithStatus/previous    	    2115	    399713 ns/op	    3992 B/op	      74 allocs/op
+BenchmarkStateRevisionReads/apps=100/history=512/Revisions                      	     100	   3855982 ns/op	 1635306 B/op	   19676 allocs/op
+BenchmarkStateRevisionReads/apps=100/history=512/Revisions                      	     100	   5392610 ns/op	 1635311 B/op	   19676 allocs/op
+BenchmarkStateRevisionReads/apps=100/history=512/Revisions                      	     100	   3585043 ns/op	 1635309 B/op	   19676 allocs/op
+BenchmarkStateRevisionReads/apps=100/history=512/Revisions                      	     100	   6262113 ns/op	 1635308 B/op	   19676 allocs/op
+BenchmarkStateRevisionReads/apps=100/history=512/Revisions                      	     100	   7444166 ns/op	 1635309 B/op	   19676 allocs/op
+BenchmarkStateRevisionReads/apps=100/history=512/Revisions                      	     100	   7038278 ns/op	 1635305 B/op	   19676 allocs/op
+BenchmarkStateRevisionReads/apps=100/history=512/Revisions                      	     100	   5247770 ns/op	 1635308 B/op	   19676 allocs/op
+BenchmarkStateRevisionReads/apps=100/history=512/Revisions                      	     100	   6515568 ns/op	 1635309 B/op	   19676 allocs/op
+BenchmarkStateRevisionReads/apps=100/history=512/Revisions                      	     100	   4532226 ns/op	 1635306 B/op	   19676 allocs/op
+BenchmarkStateRevisionReads/apps=100/history=512/Revisions                      	     100	   2530892 ns/op	 1635306 B/op	   19676 allocs/op
+BenchmarkStateBackupReads/apps=1/history=32/LatestForApp                        	    9532	    102070 ns/op	    2576 B/op	      63 allocs/op
+BenchmarkStateBackupReads/apps=1/history=32/LatestForApp                        	    3499	    122252 ns/op	    2576 B/op	      63 allocs/op
+BenchmarkStateBackupReads/apps=1/history=32/LatestForApp                        	    7876	     92297 ns/op	    2576 B/op	      63 allocs/op
+BenchmarkStateBackupReads/apps=1/history=32/LatestForApp                        	    9186	    109963 ns/op	    2576 B/op	      63 allocs/op
+BenchmarkStateBackupReads/apps=1/history=32/LatestForApp                        	    8256	    127017 ns/op	    2576 B/op	      63 allocs/op
+BenchmarkStateBackupReads/apps=1/history=32/LatestForApp                        	    9282	     99511 ns/op	    2576 B/op	      63 allocs/op
+BenchmarkStateBackupReads/apps=1/history=32/LatestForApp                        	    7082	     73230 ns/op	    2576 B/op	      63 allocs/op
+BenchmarkStateBackupReads/apps=1/history=32/LatestForApp                        	    7924	     76795 ns/op	    2576 B/op	      63 allocs/op
+BenchmarkStateBackupReads/apps=1/history=32/LatestForApp                        	    8605	     45406 ns/op	    2576 B/op	      63 allocs/op
+BenchmarkStateBackupReads/apps=1/history=32/LatestForApp                        	    8841	     57979 ns/op	    2576 B/op	      63 allocs/op
+BenchmarkStateBackupReads/apps=1/history=32/AppHistory                          	    2074	    120645 ns/op	   22264 B/op	     370 allocs/op
+BenchmarkStateBackupReads/apps=1/history=32/AppHistory                          	    3747	    142007 ns/op	   22264 B/op	     370 allocs/op
+BenchmarkStateBackupReads/apps=1/history=32/AppHistory                          	    3019	    174523 ns/op	   22264 B/op	     370 allocs/op
+BenchmarkStateBackupReads/apps=1/history=32/AppHistory                          	    2100	    121048 ns/op	   22264 B/op	     370 allocs/op
+BenchmarkStateBackupReads/apps=1/history=32/AppHistory                          	    1659	    166199 ns/op	   22264 B/op	     370 allocs/op
+BenchmarkStateBackupReads/apps=1/history=32/AppHistory                          	    3208	    147852 ns/op	   22264 B/op	     370 allocs/op
+BenchmarkStateBackupReads/apps=1/history=32/AppHistory                          	    3360	    319599 ns/op	   22264 B/op	     370 allocs/op
+BenchmarkStateBackupReads/apps=1/history=32/AppHistory                          	    2126	    208618 ns/op	   22264 B/op	     370 allocs/op
+BenchmarkStateBackupReads/apps=1/history=32/AppHistory                          	    3566	    207051 ns/op	   22264 B/op	     370 allocs/op
+BenchmarkStateBackupReads/apps=1/history=32/AppHistory                          	    2472	    169545 ns/op	   22264 B/op	     370 allocs/op
+BenchmarkStateBackupReads/apps=1/history=32/FleetHistory                        	    2043	    257704 ns/op	   22056 B/op	     368 allocs/op
+BenchmarkStateBackupReads/apps=1/history=32/FleetHistory                        	    1546	    166398 ns/op	   22056 B/op	     368 allocs/op
+BenchmarkStateBackupReads/apps=1/history=32/FleetHistory                        	    3840	    191336 ns/op	   22056 B/op	     368 allocs/op
+BenchmarkStateBackupReads/apps=1/history=32/FleetHistory                        	    3321	    157168 ns/op	   22056 B/op	     368 allocs/op
+BenchmarkStateBackupReads/apps=1/history=32/FleetHistory                        	    3637	    212319 ns/op	   22056 B/op	     368 allocs/op
+BenchmarkStateBackupReads/apps=1/history=32/FleetHistory                        	    3399	    102647 ns/op	   22056 B/op	     368 allocs/op
+BenchmarkStateBackupReads/apps=1/history=32/FleetHistory                        	    3588	    177484 ns/op	   22056 B/op	     368 allocs/op
+BenchmarkStateBackupReads/apps=1/history=32/FleetHistory                        	    3930	    169069 ns/op	   22056 B/op	     368 allocs/op
+BenchmarkStateBackupReads/apps=1/history=32/FleetHistory                        	    2296	    279046 ns/op	   22056 B/op	     368 allocs/op
+BenchmarkStateBackupReads/apps=1/history=32/FleetHistory                        	    2638	    262454 ns/op	   22056 B/op	     368 allocs/op
+BenchmarkStateBackupReads/apps=1/history=32/FleetBackupHistory                  	    3708	    275082 ns/op	   22312 B/op	     372 allocs/op
+BenchmarkStateBackupReads/apps=1/history=32/FleetBackupHistory                  	    3790	    196640 ns/op	   22312 B/op	     372 allocs/op
+BenchmarkStateBackupReads/apps=1/history=32/FleetBackupHistory                  	    3379	    273226 ns/op	   22312 B/op	     372 allocs/op
+BenchmarkStateBackupReads/apps=1/history=32/FleetBackupHistory                  	    3650	    198242 ns/op	   22312 B/op	     372 allocs/op
+BenchmarkStateBackupReads/apps=1/history=32/FleetBackupHistory                  	    3420	    142019 ns/op	   22312 B/op	     372 allocs/op
+BenchmarkStateBackupReads/apps=1/history=32/FleetBackupHistory                  	    3465	    145191 ns/op	   22312 B/op	     372 allocs/op
+BenchmarkStateBackupReads/apps=1/history=32/FleetBackupHistory                  	    2859	    251792 ns/op	   22312 B/op	     372 allocs/op
+BenchmarkStateBackupReads/apps=1/history=32/FleetBackupHistory                  	    3115	    201562 ns/op	   22312 B/op	     372 allocs/op
+BenchmarkStateBackupReads/apps=1/history=32/FleetBackupHistory                  	    3649	    180591 ns/op	   22312 B/op	     372 allocs/op
+BenchmarkStateBackupReads/apps=1/history=32/FleetBackupHistory                  	    3625	    174753 ns/op	   22312 B/op	     372 allocs/op
+BenchmarkStateBackupReads/apps=1/history=32/LastGoodBackupRun                   	   10000	     29252 ns/op	    1696 B/op	      55 allocs/op
+BenchmarkStateBackupReads/apps=1/history=32/LastGoodBackupRun                   	   12120	     25176 ns/op	    1696 B/op	      55 allocs/op
+BenchmarkStateBackupReads/apps=1/history=32/LastGoodBackupRun                   	   10000	     31505 ns/op	    1696 B/op	      55 allocs/op
+BenchmarkStateBackupReads/apps=1/history=32/LastGoodBackupRun                   	    8670	     31153 ns/op	    1696 B/op	      55 allocs/op
+BenchmarkStateBackupReads/apps=1/history=32/LastGoodBackupRun                   	   10000	     35851 ns/op	    1696 B/op	      55 allocs/op
+BenchmarkStateBackupReads/apps=1/history=32/LastGoodBackupRun                   	   10000	     56035 ns/op	    1696 B/op	      55 allocs/op
+BenchmarkStateBackupReads/apps=1/history=32/LastGoodBackupRun                   	    5186	     52869 ns/op	    1696 B/op	      55 allocs/op
+BenchmarkStateBackupReads/apps=1/history=32/LastGoodBackupRun                   	   10000	     26252 ns/op	    1696 B/op	      55 allocs/op
+BenchmarkStateBackupReads/apps=1/history=32/LastGoodBackupRun                   	   10000	     37873 ns/op	    1696 B/op	      55 allocs/op
+BenchmarkStateBackupReads/apps=1/history=32/LastGoodBackupRun                   	    9321	     40720 ns/op	    1696 B/op	      55 allocs/op
+BenchmarkStateBackupReads/apps=25/history=32/LatestForApp                       	    8157	    115796 ns/op	    2592 B/op	      64 allocs/op
+BenchmarkStateBackupReads/apps=25/history=32/LatestForApp                       	    3694	     72264 ns/op	    2592 B/op	      64 allocs/op
+BenchmarkStateBackupReads/apps=25/history=32/LatestForApp                       	    4446	     91789 ns/op	    2592 B/op	      64 allocs/op
+BenchmarkStateBackupReads/apps=25/history=32/LatestForApp                       	    7525	     52673 ns/op	    2592 B/op	      64 allocs/op
+BenchmarkStateBackupReads/apps=25/history=32/LatestForApp                       	    4395	     87186 ns/op	    2592 B/op	      64 allocs/op
+BenchmarkStateBackupReads/apps=25/history=32/LatestForApp                       	    1870	    139600 ns/op	    2592 B/op	      64 allocs/op
+BenchmarkStateBackupReads/apps=25/history=32/LatestForApp                       	    7209	     44161 ns/op	    2592 B/op	      64 allocs/op
+BenchmarkStateBackupReads/apps=25/history=32/LatestForApp                       	    9630	     56943 ns/op	    2592 B/op	      64 allocs/op
+BenchmarkStateBackupReads/apps=25/history=32/LatestForApp                       	    7854	    135029 ns/op	    2592 B/op	      64 allocs/op
+BenchmarkStateBackupReads/apps=25/history=32/LatestForApp                       	    7962	    141471 ns/op	    2592 B/op	      64 allocs/op
+BenchmarkStateBackupReads/apps=25/history=32/AppHistory                         	    3344	    222727 ns/op	   22424 B/op	     390 allocs/op
+BenchmarkStateBackupReads/apps=25/history=32/AppHistory                         	    3828	    204770 ns/op	   22424 B/op	     390 allocs/op
+BenchmarkStateBackupReads/apps=25/history=32/AppHistory                         	    3669	    104651 ns/op	   22424 B/op	     390 allocs/op
+BenchmarkStateBackupReads/apps=25/history=32/AppHistory                         	    2136	    131181 ns/op	   22424 B/op	     390 allocs/op
+BenchmarkStateBackupReads/apps=25/history=32/AppHistory                         	    3181	    166538 ns/op	   22424 B/op	     390 allocs/op
+BenchmarkStateBackupReads/apps=25/history=32/AppHistory                         	    3928	    135704 ns/op	   22424 B/op	     390 allocs/op
+BenchmarkStateBackupReads/apps=25/history=32/AppHistory                         	    1920	    143144 ns/op	   22424 B/op	     390 allocs/op
+BenchmarkStateBackupReads/apps=25/history=32/AppHistory                         	    1702	    236540 ns/op	   22424 B/op	     390 allocs/op
+BenchmarkStateBackupReads/apps=25/history=32/AppHistory                         	    2847	    476562 ns/op	   22424 B/op	     390 allocs/op
+BenchmarkStateBackupReads/apps=25/history=32/AppHistory                         	    2100	    523550 ns/op	   22424 B/op	     390 allocs/op
+BenchmarkStateBackupReads/apps=25/history=32/FleetHistory                       	     812	   1625883 ns/op	   23080 B/op	     423 allocs/op
+BenchmarkStateBackupReads/apps=25/history=32/FleetHistory                       	     742	    528617 ns/op	   23080 B/op	     423 allocs/op
+BenchmarkStateBackupReads/apps=25/history=32/FleetHistory                       	     793	   1313780 ns/op	   23080 B/op	     423 allocs/op
+BenchmarkStateBackupReads/apps=25/history=32/FleetHistory                       	     426	   1912188 ns/op	   23080 B/op	     423 allocs/op
+BenchmarkStateBackupReads/apps=25/history=32/FleetHistory                       	     817	   1241755 ns/op	   23080 B/op	     423 allocs/op
+BenchmarkStateBackupReads/apps=25/history=32/FleetHistory                       	     312	    997276 ns/op	   23080 B/op	     423 allocs/op
+BenchmarkStateBackupReads/apps=25/history=32/FleetHistory                       	     391	   1577030 ns/op	   23080 B/op	     423 allocs/op
+BenchmarkStateBackupReads/apps=25/history=32/FleetHistory                       	     352	   1164896 ns/op	   23080 B/op	     423 allocs/op
+BenchmarkStateBackupReads/apps=25/history=32/FleetHistory                       	     170	   1507940 ns/op	   23080 B/op	     423 allocs/op
+BenchmarkStateBackupReads/apps=25/history=32/FleetHistory                       	     327	    993916 ns/op	   23080 B/op	     423 allocs/op
+BenchmarkStateBackupReads/apps=25/history=32/FleetBackupHistory                 	     316	   1121574 ns/op	   23336 B/op	     427 allocs/op
+BenchmarkStateBackupReads/apps=25/history=32/FleetBackupHistory                 	     378	    909295 ns/op	   23336 B/op	     427 allocs/op
+BenchmarkStateBackupReads/apps=25/history=32/FleetBackupHistory                 	     304	   1031606 ns/op	   23336 B/op	     427 allocs/op
+BenchmarkStateBackupReads/apps=25/history=32/FleetBackupHistory                 	     967	    697327 ns/op	   23336 B/op	     427 allocs/op
+BenchmarkStateBackupReads/apps=25/history=32/FleetBackupHistory                 	    1083	    442059 ns/op	   23336 B/op	     427 allocs/op
+BenchmarkStateBackupReads/apps=25/history=32/FleetBackupHistory                 	     789	   1053770 ns/op	   23336 B/op	     427 allocs/op
+BenchmarkStateBackupReads/apps=25/history=32/FleetBackupHistory                 	     256	   1087119 ns/op	   23336 B/op	     427 allocs/op
+BenchmarkStateBackupReads/apps=25/history=32/FleetBackupHistory                 	      87	   2980138 ns/op	   23336 B/op	     427 allocs/op
+BenchmarkStateBackupReads/apps=25/history=32/FleetBackupHistory                 	     508	   1145428 ns/op	   23336 B/op	     427 allocs/op
+BenchmarkStateBackupReads/apps=25/history=32/FleetBackupHistory                 	     799	   1560707 ns/op	   23336 B/op	     427 allocs/op
+BenchmarkStateBackupReads/apps=25/history=32/LastGoodBackupRun                  	   10000	     72076 ns/op	    1712 B/op	      56 allocs/op
+BenchmarkStateBackupReads/apps=25/history=32/LastGoodBackupRun                  	   10000	     60220 ns/op	    1712 B/op	      56 allocs/op
+BenchmarkStateBackupReads/apps=25/history=32/LastGoodBackupRun                  	    8606	     44555 ns/op	    1712 B/op	      56 allocs/op
+BenchmarkStateBackupReads/apps=25/history=32/LastGoodBackupRun                  	    5191	     57916 ns/op	    1712 B/op	      56 allocs/op
+BenchmarkStateBackupReads/apps=25/history=32/LastGoodBackupRun                  	   10000	     54437 ns/op	    1712 B/op	      56 allocs/op
+BenchmarkStateBackupReads/apps=25/history=32/LastGoodBackupRun                  	    9206	     71544 ns/op	    1712 B/op	      56 allocs/op
+BenchmarkStateBackupReads/apps=25/history=32/LastGoodBackupRun                  	   10000	    174478 ns/op	    1712 B/op	      56 allocs/op
+BenchmarkStateBackupReads/apps=25/history=32/LastGoodBackupRun                  	    2972	    208462 ns/op	    1712 B/op	      56 allocs/op
+BenchmarkStateBackupReads/apps=25/history=32/LastGoodBackupRun                  	   10000	     76426 ns/op	    1712 B/op	      56 allocs/op
+BenchmarkStateBackupReads/apps=25/history=32/LastGoodBackupRun                  	   10000	    128841 ns/op	    1712 B/op	      56 allocs/op
+BenchmarkStateBackupReads/apps=25/history=512/LatestForApp                      	    1971	    219501 ns/op	    2592 B/op	      64 allocs/op
+BenchmarkStateBackupReads/apps=25/history=512/LatestForApp                      	    3674	    224279 ns/op	    2592 B/op	      64 allocs/op
+BenchmarkStateBackupReads/apps=25/history=512/LatestForApp                      	    4713	    155244 ns/op	    2592 B/op	      64 allocs/op
+BenchmarkStateBackupReads/apps=25/history=512/LatestForApp                      	    6708	    150529 ns/op	    2592 B/op	      64 allocs/op
+BenchmarkStateBackupReads/apps=25/history=512/LatestForApp                      	    6674	    165085 ns/op	    2592 B/op	      64 allocs/op
+BenchmarkStateBackupReads/apps=25/history=512/LatestForApp                      	    2205	    172742 ns/op	    2592 B/op	      64 allocs/op
+BenchmarkStateBackupReads/apps=25/history=512/LatestForApp                      	    8485	     86816 ns/op	    2592 B/op	      64 allocs/op
+BenchmarkStateBackupReads/apps=25/history=512/LatestForApp                      	    8251	    138422 ns/op	    2592 B/op	      64 allocs/op
+BenchmarkStateBackupReads/apps=25/history=512/LatestForApp                      	    1824	    146841 ns/op	    2592 B/op	      64 allocs/op
+BenchmarkStateBackupReads/apps=25/history=512/LatestForApp                      	    3520	    195782 ns/op	    2592 B/op	      64 allocs/op
+BenchmarkStateBackupReads/apps=25/history=512/AppHistory                        	     741	   1047187 ns/op	   22520 B/op	     394 allocs/op
+BenchmarkStateBackupReads/apps=25/history=512/AppHistory                        	     672	   1058610 ns/op	   22520 B/op	     394 allocs/op
+BenchmarkStateBackupReads/apps=25/history=512/AppHistory                        	    1149	    873434 ns/op	   22520 B/op	     394 allocs/op
+BenchmarkStateBackupReads/apps=25/history=512/AppHistory                        	     824	    702074 ns/op	   22520 B/op	     394 allocs/op
+BenchmarkStateBackupReads/apps=25/history=512/AppHistory                        	    1437	   1310019 ns/op	   22520 B/op	     394 allocs/op
+BenchmarkStateBackupReads/apps=25/history=512/AppHistory                        	     840	    810253 ns/op	   22520 B/op	     394 allocs/op
+BenchmarkStateBackupReads/apps=25/history=512/AppHistory                        	     882	    918630 ns/op	   22520 B/op	     394 allocs/op
+BenchmarkStateBackupReads/apps=25/history=512/AppHistory                        	    1086	   1098370 ns/op	   22520 B/op	     394 allocs/op
+BenchmarkStateBackupReads/apps=25/history=512/AppHistory                        	     266	   1309569 ns/op	   22520 B/op	     394 allocs/op
+BenchmarkStateBackupReads/apps=25/history=512/AppHistory                        	     378	   1270527 ns/op	   22520 B/op	     394 allocs/op
+BenchmarkStateBackupReads/apps=25/history=512/FleetHistory                      	      34	  16716100 ns/op	   23080 B/op	     424 allocs/op
+BenchmarkStateBackupReads/apps=25/history=512/FleetHistory                      	     100	  14930274 ns/op	   23080 B/op	     424 allocs/op
+BenchmarkStateBackupReads/apps=25/history=512/FleetHistory                      	      60	   8597958 ns/op	   23080 B/op	     424 allocs/op
+BenchmarkStateBackupReads/apps=25/history=512/FleetHistory                      	      38	  13781247 ns/op	   23080 B/op	     424 allocs/op
+BenchmarkStateBackupReads/apps=25/history=512/FleetHistory                      	      37	  16845609 ns/op	   23080 B/op	     424 allocs/op
+BenchmarkStateBackupReads/apps=25/history=512/FleetHistory                      	      90	  11105274 ns/op	   23080 B/op	     424 allocs/op
+BenchmarkStateBackupReads/apps=25/history=512/FleetHistory                      	      21	  12352448 ns/op	   23080 B/op	     424 allocs/op
+BenchmarkStateBackupReads/apps=25/history=512/FleetHistory                      	       4	  75159885 ns/op	   23080 B/op	     424 allocs/op
+BenchmarkStateBackupReads/apps=25/history=512/FleetHistory                      	      33	  11860971 ns/op	   23080 B/op	     424 allocs/op
+BenchmarkStateBackupReads/apps=25/history=512/FleetHistory                      	      61	   9241607 ns/op	   23080 B/op	     424 allocs/op
+BenchmarkStateBackupReads/apps=25/history=512/FleetBackupHistory                	      90	   7114543 ns/op	   23336 B/op	     428 allocs/op
+BenchmarkStateBackupReads/apps=25/history=512/FleetBackupHistory                	      40	   9049414 ns/op	   23336 B/op	     428 allocs/op
+BenchmarkStateBackupReads/apps=25/history=512/FleetBackupHistory                	      26	  16140391 ns/op	   23336 B/op	     428 allocs/op
+BenchmarkStateBackupReads/apps=25/history=512/FleetBackupHistory                	      84	  12124751 ns/op	   23336 B/op	     428 allocs/op
+BenchmarkStateBackupReads/apps=25/history=512/FleetBackupHistory                	      38	  15294717 ns/op	   23336 B/op	     428 allocs/op
+BenchmarkStateBackupReads/apps=25/history=512/FleetBackupHistory                	      48	   9959259 ns/op	   23336 B/op	     428 allocs/op
+BenchmarkStateBackupReads/apps=25/history=512/FleetBackupHistory                	      30	  10050199 ns/op	   23336 B/op	     428 allocs/op
+BenchmarkStateBackupReads/apps=25/history=512/FleetBackupHistory                	      26	  29653431 ns/op	   23336 B/op	     428 allocs/op
+BenchmarkStateBackupReads/apps=25/history=512/FleetBackupHistory                	       6	  52780160 ns/op	   23336 B/op	     428 allocs/op
+BenchmarkStateBackupReads/apps=25/history=512/FleetBackupHistory                	      34	   8717469 ns/op	   23336 B/op	     428 allocs/op
+BenchmarkStateBackupReads/apps=25/history=512/LastGoodBackupRun                 	   10000	    131925 ns/op	    1712 B/op	      56 allocs/op
+BenchmarkStateBackupReads/apps=25/history=512/LastGoodBackupRun                 	   10000	     75869 ns/op	    1712 B/op	      56 allocs/op
+BenchmarkStateBackupReads/apps=25/history=512/LastGoodBackupRun                 	    7543	     96432 ns/op	    1712 B/op	      56 allocs/op
+BenchmarkStateBackupReads/apps=25/history=512/LastGoodBackupRun                 	   10000	     55565 ns/op	    1712 B/op	      56 allocs/op
+BenchmarkStateBackupReads/apps=25/history=512/LastGoodBackupRun                 	    9548	     85185 ns/op	    1712 B/op	      56 allocs/op
+BenchmarkStateBackupReads/apps=25/history=512/LastGoodBackupRun                 	   10000	     57413 ns/op	    1712 B/op	      56 allocs/op
+BenchmarkStateBackupReads/apps=25/history=512/LastGoodBackupRun                 	   10000	     83113 ns/op	    1712 B/op	      56 allocs/op
+BenchmarkStateBackupReads/apps=25/history=512/LastGoodBackupRun                 	   10000	     76201 ns/op	    1712 B/op	      56 allocs/op
+BenchmarkStateBackupReads/apps=25/history=512/LastGoodBackupRun                 	   10000	     56907 ns/op	    1712 B/op	      56 allocs/op
+BenchmarkStateBackupReads/apps=25/history=512/LastGoodBackupRun                 	    9542	     41846 ns/op	    1712 B/op	      56 allocs/op
+BenchmarkStateBackupReads/apps=100/history=512/LatestForApp                     	    7123	    180359 ns/op	    2592 B/op	      64 allocs/op
+BenchmarkStateBackupReads/apps=100/history=512/LatestForApp                     	    9459	     51662 ns/op	    2592 B/op	      64 allocs/op
+BenchmarkStateBackupReads/apps=100/history=512/LatestForApp                     	    7634	     75917 ns/op	    2592 B/op	      64 allocs/op
+BenchmarkStateBackupReads/apps=100/history=512/LatestForApp                     	    7792	    122956 ns/op	    2592 B/op	      64 allocs/op
+BenchmarkStateBackupReads/apps=100/history=512/LatestForApp                     	    1614	    178642 ns/op	    2592 B/op	      64 allocs/op
+BenchmarkStateBackupReads/apps=100/history=512/LatestForApp                     	    9380	    146123 ns/op	    2592 B/op	      64 allocs/op
+BenchmarkStateBackupReads/apps=100/history=512/LatestForApp                     	    7490	     59183 ns/op	    2592 B/op	      64 allocs/op
+BenchmarkStateBackupReads/apps=100/history=512/LatestForApp                     	    7512	     65910 ns/op	    2592 B/op	      64 allocs/op
+BenchmarkStateBackupReads/apps=100/history=512/LatestForApp                     	    8342	     72483 ns/op	    2592 B/op	      64 allocs/op
+BenchmarkStateBackupReads/apps=100/history=512/LatestForApp                     	    3618	    156658 ns/op	    2592 B/op	      64 allocs/op
+BenchmarkStateBackupReads/apps=100/history=512/AppHistory                       	    1328	    408535 ns/op	   22520 B/op	     394 allocs/op
+BenchmarkStateBackupReads/apps=100/history=512/AppHistory                       	     381	    774809 ns/op	   22520 B/op	     394 allocs/op
+BenchmarkStateBackupReads/apps=100/history=512/AppHistory                       	    1030	   1272588 ns/op	   22520 B/op	     394 allocs/op
+BenchmarkStateBackupReads/apps=100/history=512/AppHistory                       	     385	    880666 ns/op	   22520 B/op	     394 allocs/op
+BenchmarkStateBackupReads/apps=100/history=512/AppHistory                       	     889	    838076 ns/op	   22520 B/op	     394 allocs/op
+BenchmarkStateBackupReads/apps=100/history=512/AppHistory                       	    1608	    817070 ns/op	   22520 B/op	     394 allocs/op
+BenchmarkStateBackupReads/apps=100/history=512/AppHistory                       	     290	    871288 ns/op	   22520 B/op	     394 allocs/op
+BenchmarkStateBackupReads/apps=100/history=512/AppHistory                       	     428	   1037842 ns/op	   22520 B/op	     394 allocs/op
+BenchmarkStateBackupReads/apps=100/history=512/AppHistory                       	     705	    413746 ns/op	   22520 B/op	     394 allocs/op
+BenchmarkStateBackupReads/apps=100/history=512/AppHistory                       	    1486	    285066 ns/op	   22520 B/op	     394 allocs/op
+BenchmarkStateBackupReads/apps=100/history=512/FleetHistory                     	       3	  92346111 ns/op	   23080 B/op	     424 allocs/op
+BenchmarkStateBackupReads/apps=100/history=512/FleetHistory                     	       7	  68367702 ns/op	   23080 B/op	     424 allocs/op
+BenchmarkStateBackupReads/apps=100/history=512/FleetHistory                     	       4	  71952886 ns/op	   23080 B/op	     424 allocs/op
+BenchmarkStateBackupReads/apps=100/history=512/FleetHistory                     	      18	  73594850 ns/op	   23080 B/op	     424 allocs/op
+BenchmarkStateBackupReads/apps=100/history=512/FleetHistory                     	       4	  68445104 ns/op	   23080 B/op	     424 allocs/op
+BenchmarkStateBackupReads/apps=100/history=512/FleetHistory                     	      21	  34808966 ns/op	   23080 B/op	     424 allocs/op
+BenchmarkStateBackupReads/apps=100/history=512/FleetHistory                     	       7	  36521649 ns/op	   23080 B/op	     424 allocs/op
+BenchmarkStateBackupReads/apps=100/history=512/FleetHistory                     	      20	  49922617 ns/op	   23080 B/op	     424 allocs/op
+BenchmarkStateBackupReads/apps=100/history=512/FleetHistory                     	       7	  40024113 ns/op	   23080 B/op	     424 allocs/op
+BenchmarkStateBackupReads/apps=100/history=512/FleetHistory                     	       6	  90639208 ns/op	   23080 B/op	     424 allocs/op
+BenchmarkStateBackupReads/apps=100/history=512/FleetBackupHistory               	       7	  59914470 ns/op	   23336 B/op	     428 allocs/op
+BenchmarkStateBackupReads/apps=100/history=512/FleetBackupHistory               	       6	  48390153 ns/op	   23336 B/op	     428 allocs/op
+BenchmarkStateBackupReads/apps=100/history=512/FleetBackupHistory               	       6	  89990139 ns/op	   23336 B/op	     428 allocs/op
+BenchmarkStateBackupReads/apps=100/history=512/FleetBackupHistory               	       9	  72785208 ns/op	   23336 B/op	     428 allocs/op
+BenchmarkStateBackupReads/apps=100/history=512/FleetBackupHistory               	       6	  56620285 ns/op	   23336 B/op	     428 allocs/op
+BenchmarkStateBackupReads/apps=100/history=512/FleetBackupHistory               	       1	 610474833 ns/op	   23336 B/op	     428 allocs/op
+BenchmarkStateBackupReads/apps=100/history=512/FleetBackupHistory               	       1	 373007750 ns/op	   23336 B/op	     428 allocs/op
+BenchmarkStateBackupReads/apps=100/history=512/FleetBackupHistory               	       7	  38207476 ns/op	   23336 B/op	     428 allocs/op
+BenchmarkStateBackupReads/apps=100/history=512/FleetBackupHistory               	       2	 182191500 ns/op	   23336 B/op	     428 allocs/op
+BenchmarkStateBackupReads/apps=100/history=512/FleetBackupHistory               	       3	  84554014 ns/op	   23336 B/op	     428 allocs/op
+BenchmarkStateBackupReads/apps=100/history=512/LastGoodBackupRun                	    1998	    169753 ns/op	    1712 B/op	      56 allocs/op
+BenchmarkStateBackupReads/apps=100/history=512/LastGoodBackupRun                	   10000	    179079 ns/op	    1712 B/op	      56 allocs/op
+BenchmarkStateBackupReads/apps=100/history=512/LastGoodBackupRun                	   10000	     85143 ns/op	    1712 B/op	      56 allocs/op
+BenchmarkStateBackupReads/apps=100/history=512/LastGoodBackupRun                	   10000	     66629 ns/op	    1712 B/op	      56 allocs/op
+BenchmarkStateBackupReads/apps=100/history=512/LastGoodBackupRun                	   10000	     88752 ns/op	    1712 B/op	      56 allocs/op
+BenchmarkStateBackupReads/apps=100/history=512/LastGoodBackupRun                	   10000	     86579 ns/op	    1712 B/op	      56 allocs/op
+BenchmarkStateBackupReads/apps=100/history=512/LastGoodBackupRun                	   10000	    107497 ns/op	    1712 B/op	      56 allocs/op
+BenchmarkStateBackupReads/apps=100/history=512/LastGoodBackupRun                	   10000	     54022 ns/op	    1712 B/op	      56 allocs/op
+BenchmarkStateBackupReads/apps=100/history=512/LastGoodBackupRun                	    9520	     80716 ns/op	    1712 B/op	      56 allocs/op
+BenchmarkStateBackupReads/apps=100/history=512/LastGoodBackupRun                	    5941	     84574 ns/op	    1712 B/op	      56 allocs/op
+PASS
+ok  	github.com/kylebegeman/helios/internal/state	230.997s
+goos: darwin
+goarch: arm64
+pkg: github.com/kylebegeman/helios/internal/manifest
+cpu: Apple M5 Pro
+BenchmarkParse/Workloads1         	    1992	    642252 ns/op	   2.57 MB/s	   50129 B/op	     942 allocs/op
+BenchmarkParse/Workloads1         	    1496	    450462 ns/op	   3.67 MB/s	   50128 B/op	     942 allocs/op
+BenchmarkParse/Workloads1         	    2955	    516266 ns/op	   3.20 MB/s	   50129 B/op	     942 allocs/op
+BenchmarkParse/Workloads1         	    2396	    485908 ns/op	   3.40 MB/s	   50129 B/op	     942 allocs/op
+BenchmarkParse/Workloads1         	     561	    446540 ns/op	   3.70 MB/s	   50127 B/op	     942 allocs/op
+BenchmarkParse/Workloads1         	    1407	    328784 ns/op	   5.02 MB/s	   50128 B/op	     942 allocs/op
+BenchmarkParse/Workloads1         	    1792	    410651 ns/op	   4.02 MB/s	   50128 B/op	     942 allocs/op
+BenchmarkParse/Workloads1         	    2546	    405654 ns/op	   4.07 MB/s	   50128 B/op	     942 allocs/op
+BenchmarkParse/Workloads1         	     100	   2563617 ns/op	   0.64 MB/s	   50128 B/op	     942 allocs/op
+BenchmarkParse/Workloads1         	    2061	    333492 ns/op	   4.95 MB/s	   50128 B/op	     942 allocs/op
+BenchmarkParse/Workloads8         	     100	   2532063 ns/op	   2.97 MB/s	  187799 B/op	    3849 allocs/op
+BenchmarkParse/Workloads8         	     346	   1466275 ns/op	   5.13 MB/s	  187804 B/op	    3849 allocs/op
+BenchmarkParse/Workloads8         	     346	   1653221 ns/op	   4.55 MB/s	  187801 B/op	    3849 allocs/op
+BenchmarkParse/Workloads8         	     261	   1026728 ns/op	   7.33 MB/s	  187800 B/op	    3849 allocs/op
+BenchmarkParse/Workloads8         	     546	    530305 ns/op	  14.18 MB/s	  187803 B/op	    3849 allocs/op
+BenchmarkParse/Workloads8         	     580	    573122 ns/op	  13.12 MB/s	  187800 B/op	    3849 allocs/op
+BenchmarkParse/Workloads8         	     297	   1009645 ns/op	   7.45 MB/s	  187799 B/op	    3849 allocs/op
+BenchmarkParse/Workloads8         	     460	   1981711 ns/op	   3.80 MB/s	  187799 B/op	    3849 allocs/op
+BenchmarkParse/Workloads8         	     370	   1558819 ns/op	   4.83 MB/s	  187803 B/op	    3849 allocs/op
+BenchmarkParse/Workloads8         	     459	   1361556 ns/op	   5.52 MB/s	  187802 B/op	    3849 allocs/op
+BenchmarkParse/Workloads32        	     100	   4049676 ns/op	   6.87 MB/s	  673823 B/op	   13939 allocs/op
+BenchmarkParse/Workloads32        	     100	   5197092 ns/op	   5.35 MB/s	  673810 B/op	   13939 allocs/op
+BenchmarkParse/Workloads32        	      81	   8413930 ns/op	   3.31 MB/s	  673811 B/op	   13939 allocs/op
+BenchmarkParse/Workloads32        	     140	   1979091 ns/op	  14.06 MB/s	  673821 B/op	   13939 allocs/op
+BenchmarkParse/Workloads32        	     170	   2758447 ns/op	  10.08 MB/s	  673812 B/op	   13939 allocs/op
+BenchmarkParse/Workloads32        	     100	   5250806 ns/op	   5.30 MB/s	  673811 B/op	   13939 allocs/op
+BenchmarkParse/Workloads32        	     100	   2988020 ns/op	   9.31 MB/s	  673810 B/op	   13939 allocs/op
+BenchmarkParse/Workloads32        	     100	   7061130 ns/op	   3.94 MB/s	  673811 B/op	   13939 allocs/op
+BenchmarkParse/Workloads32        	     100	   5083738 ns/op	   5.47 MB/s	  673810 B/op	   13939 allocs/op
+BenchmarkParse/Workloads32        	     100	   4611893 ns/op	   6.03 MB/s	  673811 B/op	   13939 allocs/op
+BenchmarkValidate/Workloads1      	   10000	     39949 ns/op	    2184 B/op	      79 allocs/op
+BenchmarkValidate/Workloads1      	   20050	     13380 ns/op	    2184 B/op	      79 allocs/op
+BenchmarkValidate/Workloads1      	   22484	     17362 ns/op	    2184 B/op	      79 allocs/op
+BenchmarkValidate/Workloads1      	   13404	     18906 ns/op	    2184 B/op	      79 allocs/op
+BenchmarkValidate/Workloads1      	   10000	     35205 ns/op	    2184 B/op	      79 allocs/op
+BenchmarkValidate/Workloads1      	   20534	     14221 ns/op	    2184 B/op	      79 allocs/op
+BenchmarkValidate/Workloads1      	   33968	     10813 ns/op	    2184 B/op	      79 allocs/op
+BenchmarkValidate/Workloads1      	   35642	      8035 ns/op	    2184 B/op	      79 allocs/op
+BenchmarkValidate/Workloads1      	   10000	     43983 ns/op	    2184 B/op	      79 allocs/op
+BenchmarkValidate/Workloads1      	   14611	     17329 ns/op	    2184 B/op	      79 allocs/op
+BenchmarkValidate/Workloads8      	   10000	     65856 ns/op	    7513 B/op	     214 allocs/op
+BenchmarkValidate/Workloads8      	   10000	     85714 ns/op	    7513 B/op	     214 allocs/op
+BenchmarkValidate/Workloads8      	    8702	     65198 ns/op	    7513 B/op	     214 allocs/op
+BenchmarkValidate/Workloads8      	   10000	    135131 ns/op	    7513 B/op	     214 allocs/op
+BenchmarkValidate/Workloads8      	    8332	    107784 ns/op	    7513 B/op	     214 allocs/op
+BenchmarkValidate/Workloads8      	   10000	    117568 ns/op	    7513 B/op	     214 allocs/op
+BenchmarkValidate/Workloads8      	   10000	     97676 ns/op	    7513 B/op	     214 allocs/op
+BenchmarkValidate/Workloads8      	   10000	    101039 ns/op	    7513 B/op	     214 allocs/op
+BenchmarkValidate/Workloads8      	   10000	    145770 ns/op	    7513 B/op	     214 allocs/op
+BenchmarkValidate/Workloads8      	   10000	    115056 ns/op	    7513 B/op	     214 allocs/op
+BenchmarkValidate/Workloads32     	    2462	    372567 ns/op	   33005 B/op	     716 allocs/op
+BenchmarkValidate/Workloads32     	    2044	    326004 ns/op	   33005 B/op	     716 allocs/op
+BenchmarkValidate/Workloads32     	    2842	    356801 ns/op	   33005 B/op	     716 allocs/op
+BenchmarkValidate/Workloads32     	     517	    821165 ns/op	   33004 B/op	     716 allocs/op
+BenchmarkValidate/Workloads32     	    2430	    490239 ns/op	   33004 B/op	     716 allocs/op
+BenchmarkValidate/Workloads32     	    2248	    398417 ns/op	   33005 B/op	     716 allocs/op
+BenchmarkValidate/Workloads32     	    2301	    478403 ns/op	   33005 B/op	     716 allocs/op
+BenchmarkValidate/Workloads32     	    1534	    424278 ns/op	   33005 B/op	     716 allocs/op
+BenchmarkValidate/Workloads32     	    2214	    401828 ns/op	   33005 B/op	     716 allocs/op
+BenchmarkValidate/Workloads32     	    1868	    382538 ns/op	   33005 B/op	     716 allocs/op
+BenchmarkRouteFor/Workloads1/Hit  	 1000000	       434.4 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRouteFor/Workloads1/Hit  	 1000000	       433.1 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRouteFor/Workloads1/Hit  	 1000000	       870.0 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRouteFor/Workloads1/Hit  	 1000000	       642.4 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRouteFor/Workloads1/Hit  	 1000000	       644.0 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRouteFor/Workloads1/Hit  	 1000000	       526.8 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRouteFor/Workloads1/Hit  	  643716	       570.4 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRouteFor/Workloads1/Hit  	 1000000	       643.3 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRouteFor/Workloads1/Hit  	 1000000	       326.6 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRouteFor/Workloads1/Hit  	 1000000	       555.2 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRouteFor/Workloads1/MissHost         	  504547	       517.6 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRouteFor/Workloads1/MissHost         	 1000000	       282.1 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRouteFor/Workloads1/MissHost         	 1000000	       295.7 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRouteFor/Workloads1/MissHost         	 1143957	       417.8 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRouteFor/Workloads1/MissHost         	  976906	       270.0 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRouteFor/Workloads1/MissHost         	 1000000	       340.8 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRouteFor/Workloads1/MissHost         	 3454858	       367.1 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRouteFor/Workloads1/MissHost         	 2617000	        98.34 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRouteFor/Workloads1/MissHost         	 5055987	        83.20 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRouteFor/Workloads1/MissHost         	 1973313	       142.2 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRouteFor/Workloads1/MissPath         	 2927100	       483.6 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRouteFor/Workloads1/MissPath         	 1000000	       257.7 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRouteFor/Workloads1/MissPath         	  782097	       519.9 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRouteFor/Workloads1/MissPath         	 3540726	       169.3 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRouteFor/Workloads1/MissPath         	 3084301	       216.8 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRouteFor/Workloads1/MissPath         	 3708344	       111.8 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRouteFor/Workloads1/MissPath         	 4015413	       273.4 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRouteFor/Workloads1/MissPath         	 1000000	       291.0 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRouteFor/Workloads1/MissPath         	 3549063	       449.6 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRouteFor/Workloads1/MissPath         	  488082	       958.8 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRouteFor/Workloads8/Hit              	 1000000	       393.2 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRouteFor/Workloads8/Hit              	 1387243	       210.8 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRouteFor/Workloads8/Hit              	 1000000	       255.5 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRouteFor/Workloads8/Hit              	 1000000	       627.2 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRouteFor/Workloads8/Hit              	 1000000	       730.4 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRouteFor/Workloads8/Hit              	  376196	      1753 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRouteFor/Workloads8/Hit              	  368510	      1834 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRouteFor/Workloads8/Hit              	  466880	      2235 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRouteFor/Workloads8/Hit              	  415112	      2384 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRouteFor/Workloads8/Hit              	  263283	      1597 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRouteFor/Workloads8/MissHost         	 1000000	       539.8 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRouteFor/Workloads8/MissHost         	  501730	       776.4 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRouteFor/Workloads8/MissHost         	 1000000	       569.3 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRouteFor/Workloads8/MissHost         	 1000000	       588.0 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRouteFor/Workloads8/MissHost         	  914924	       575.4 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRouteFor/Workloads8/MissHost         	 1000000	       600.2 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRouteFor/Workloads8/MissHost         	 1000000	       458.9 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRouteFor/Workloads8/MissHost         	 1084050	       427.7 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRouteFor/Workloads8/MissHost         	  903024	       307.1 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRouteFor/Workloads8/MissHost         	 1312382	       538.0 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRouteFor/Workloads8/MissPath         	 1000000	      1349 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRouteFor/Workloads8/MissPath         	  291734	       869.5 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRouteFor/Workloads8/MissPath         	  507936	      1170 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRouteFor/Workloads8/MissPath         	  900565	       593.5 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRouteFor/Workloads8/MissPath         	  734224	      1095 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRouteFor/Workloads8/MissPath         	 1000000	       844.9 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRouteFor/Workloads8/MissPath         	 1000000	       655.7 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRouteFor/Workloads8/MissPath         	 1000000	       822.8 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRouteFor/Workloads8/MissPath         	 1000000	       615.4 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRouteFor/Workloads8/MissPath         	 1000000	       626.9 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRouteFor/Workloads32/Hit             	  537364	      3115 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRouteFor/Workloads32/Hit             	  492007	      3260 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRouteFor/Workloads32/Hit             	  110348	      2277 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRouteFor/Workloads32/Hit             	   42898	      6260 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRouteFor/Workloads32/Hit             	  529053	      2826 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRouteFor/Workloads32/Hit             	  480919	      1497 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRouteFor/Workloads32/Hit             	   10000	     26656 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRouteFor/Workloads32/Hit             	  165210	      7208 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRouteFor/Workloads32/Hit             	  448776	      1776 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRouteFor/Workloads32/Hit             	  343890	       991.6 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRouteFor/Workloads32/MissHost        	 1000000	       753.3 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRouteFor/Workloads32/MissHost        	 1000000	      1684 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRouteFor/Workloads32/MissHost        	  498104	      1901 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRouteFor/Workloads32/MissHost        	  290168	      1094 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRouteFor/Workloads32/MissHost        	 1000000	      1119 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRouteFor/Workloads32/MissHost        	  444230	      1477 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRouteFor/Workloads32/MissHost        	 1000000	      1221 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRouteFor/Workloads32/MissHost        	  153670	      1717 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRouteFor/Workloads32/MissHost        	 1000000	      1270 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRouteFor/Workloads32/MissHost        	  776196	      1000 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRouteFor/Workloads32/MissPath        	  258813	      2593 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRouteFor/Workloads32/MissPath        	  265008	      1624 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRouteFor/Workloads32/MissPath        	  546219	      2094 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRouteFor/Workloads32/MissPath        	  463986	      1417 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRouteFor/Workloads32/MissPath        	  504087	      1547 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRouteFor/Workloads32/MissPath        	  498073	      2208 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRouteFor/Workloads32/MissPath        	  304917	       996.0 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRouteFor/Workloads32/MissPath        	  428590	      1248 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRouteFor/Workloads32/MissPath        	  424983	      1319 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRouteFor/Workloads32/MissPath        	  285098	       897.1 ns/op	       0 B/op	       0 allocs/op
+PASS
+ok  	github.com/kylebegeman/helios/internal/manifest	103.446s
+goos: darwin
+goarch: arm64
+pkg: github.com/kylebegeman/helios/internal/app
+cpu: Apple M5 Pro
+BenchmarkCheckRouteConflicts/Apps1/Workloads2         	   10000	    136329 ns/op	   14023 B/op	     128 allocs/op
+BenchmarkCheckRouteConflicts/Apps1/Workloads2         	   10000	    153004 ns/op	   13978 B/op	     128 allocs/op
+BenchmarkCheckRouteConflicts/Apps1/Workloads2         	    8887	     62465 ns/op	   14035 B/op	     128 allocs/op
+BenchmarkCheckRouteConflicts/Apps1/Workloads2         	    2751	    104764 ns/op	   13959 B/op	     127 allocs/op
+BenchmarkCheckRouteConflicts/Apps1/Workloads2         	   10000	     63266 ns/op	   13959 B/op	     127 allocs/op
+BenchmarkCheckRouteConflicts/Apps1/Workloads2         	   10000	     41847 ns/op	   13959 B/op	     127 allocs/op
+BenchmarkCheckRouteConflicts/Apps1/Workloads2         	    4905	     77411 ns/op	   13959 B/op	     127 allocs/op
+BenchmarkCheckRouteConflicts/Apps1/Workloads2         	   10000	     81959 ns/op	   13959 B/op	     127 allocs/op
+BenchmarkCheckRouteConflicts/Apps1/Workloads2         	   10000	    119183 ns/op	   13960 B/op	     127 allocs/op
+BenchmarkCheckRouteConflicts/Apps1/Workloads2         	    8808	    104829 ns/op	   13959 B/op	     127 allocs/op
+BenchmarkCheckRouteConflicts/Apps25/Workloads8        	     619	   2319130 ns/op	  284640 B/op	    2018 allocs/op
+BenchmarkCheckRouteConflicts/Apps25/Workloads8        	     554	   1574432 ns/op	  284640 B/op	    2018 allocs/op
+BenchmarkCheckRouteConflicts/Apps25/Workloads8        	     313	   1170384 ns/op	  284639 B/op	    2018 allocs/op
+BenchmarkCheckRouteConflicts/Apps25/Workloads8        	     614	    672669 ns/op	  284638 B/op	    2018 allocs/op
+BenchmarkCheckRouteConflicts/Apps25/Workloads8        	     572	   1443187 ns/op	  284638 B/op	    2017 allocs/op
+BenchmarkCheckRouteConflicts/Apps25/Workloads8        	     244	   2833195 ns/op	  284641 B/op	    2018 allocs/op
+BenchmarkCheckRouteConflicts/Apps25/Workloads8        	     613	    899780 ns/op	  284640 B/op	    2018 allocs/op
+BenchmarkCheckRouteConflicts/Apps25/Workloads8        	     434	    626416 ns/op	  284637 B/op	    2017 allocs/op
+BenchmarkCheckRouteConflicts/Apps25/Workloads8        	     429	   1142508 ns/op	  284641 B/op	    2018 allocs/op
+BenchmarkCheckRouteConflicts/Apps25/Workloads8        	     249	   1489306 ns/op	  284640 B/op	    2018 allocs/op
+BenchmarkCheckRouteConflicts/Apps100/Workloads32      	     100	   5758022 ns/op	 1138794 B/op	    7936 allocs/op
+BenchmarkCheckRouteConflicts/Apps100/Workloads32      	      78	   4647572 ns/op	 1138793 B/op	    7936 allocs/op
+BenchmarkCheckRouteConflicts/Apps100/Workloads32      	      40	   8327253 ns/op	 1138811 B/op	    7936 allocs/op
+BenchmarkCheckRouteConflicts/Apps100/Workloads32      	     100	   3840943 ns/op	 1138788 B/op	    7936 allocs/op
+BenchmarkCheckRouteConflicts/Apps100/Workloads32      	     100	   8830763 ns/op	 1138795 B/op	    7936 allocs/op
+BenchmarkCheckRouteConflicts/Apps100/Workloads32      	     100	   7258498 ns/op	 1138795 B/op	    7936 allocs/op
+BenchmarkCheckRouteConflicts/Apps100/Workloads32      	     100	   6221215 ns/op	 1138793 B/op	    7936 allocs/op
+BenchmarkCheckRouteConflicts/Apps100/Workloads32      	     100	   4992843 ns/op	 1138793 B/op	    7936 allocs/op
+BenchmarkCheckRouteConflicts/Apps100/Workloads32      	     100	   8285561 ns/op	 1138798 B/op	    7936 allocs/op
+BenchmarkCheckRouteConflicts/Apps100/Workloads32      	     100	   6296045 ns/op	 1138789 B/op	    7936 allocs/op
+PASS
+ok  	github.com/kylebegeman/helios/internal/app	22.807s
+goos: darwin
+goarch: arm64
+pkg: github.com/kylebegeman/helios/internal/daemon
+cpu: Apple M5 Pro
+BenchmarkSchedulerFirstDeploy/Revisions1         	   10000	     25296 ns/op	    1158 B/op	      25 allocs/op
+BenchmarkSchedulerFirstDeploy/Revisions1         	   14386	     26771 ns/op	     961 B/op	      25 allocs/op
+BenchmarkSchedulerFirstDeploy/Revisions1         	   12160	     21675 ns/op	     989 B/op	      24 allocs/op
+BenchmarkSchedulerFirstDeploy/Revisions1         	   29169	     17558 ns/op	     935 B/op	      24 allocs/op
+BenchmarkSchedulerFirstDeploy/Revisions1         	   15080	     22574 ns/op	     935 B/op	      24 allocs/op
+BenchmarkSchedulerFirstDeploy/Revisions1         	   29244	     12453 ns/op	    1012 B/op	      25 allocs/op
+BenchmarkSchedulerFirstDeploy/Revisions1         	   19120	     24548 ns/op	     936 B/op	      24 allocs/op
+BenchmarkSchedulerFirstDeploy/Revisions1         	   13272	     20547 ns/op	     934 B/op	      24 allocs/op
+BenchmarkSchedulerFirstDeploy/Revisions1         	   26773	     13694 ns/op	     935 B/op	      24 allocs/op
+BenchmarkSchedulerFirstDeploy/Revisions1         	   17308	     24576 ns/op	     935 B/op	      24 allocs/op
+BenchmarkSchedulerFirstDeploy/Revisions100       	   10000	     76951 ns/op	     935 B/op	      24 allocs/op
+BenchmarkSchedulerFirstDeploy/Revisions100       	   10000	     98496 ns/op	     935 B/op	      24 allocs/op
+BenchmarkSchedulerFirstDeploy/Revisions100       	   10000	     58260 ns/op	     934 B/op	      24 allocs/op
+BenchmarkSchedulerFirstDeploy/Revisions100       	   10000	     37215 ns/op	     935 B/op	      24 allocs/op
+BenchmarkSchedulerFirstDeploy/Revisions100       	    7820	    104683 ns/op	     934 B/op	      24 allocs/op
+BenchmarkSchedulerFirstDeploy/Revisions100       	   10000	    110196 ns/op	     935 B/op	      24 allocs/op
+BenchmarkSchedulerFirstDeploy/Revisions100       	   10000	     91205 ns/op	     935 B/op	      24 allocs/op
+BenchmarkSchedulerFirstDeploy/Revisions100       	   10000	     86199 ns/op	     935 B/op	      24 allocs/op
+BenchmarkSchedulerFirstDeploy/Revisions100       	    8948	     42576 ns/op	     934 B/op	      24 allocs/op
+BenchmarkSchedulerFirstDeploy/Revisions100       	   10000	     59235 ns/op	     935 B/op	      24 allocs/op
+BenchmarkSchedulerFirstDeploy/Revisions1000      	    1476	    294433 ns/op	     935 B/op	      24 allocs/op
+BenchmarkSchedulerFirstDeploy/Revisions1000      	    1142	    315928 ns/op	     935 B/op	      24 allocs/op
+BenchmarkSchedulerFirstDeploy/Revisions1000      	     657	    434080 ns/op	     935 B/op	      24 allocs/op
+BenchmarkSchedulerFirstDeploy/Revisions1000      	    1500	    299382 ns/op	     935 B/op	      24 allocs/op
+BenchmarkSchedulerFirstDeploy/Revisions1000      	    1146	    684279 ns/op	     935 B/op	      24 allocs/op
+BenchmarkSchedulerFirstDeploy/Revisions1000      	    1306	    503385 ns/op	     935 B/op	      24 allocs/op
+BenchmarkSchedulerFirstDeploy/Revisions1000      	    1550	    396635 ns/op	     934 B/op	      24 allocs/op
+BenchmarkSchedulerFirstDeploy/Revisions1000      	    1671	    425852 ns/op	     935 B/op	      24 allocs/op
+BenchmarkSchedulerFirstDeploy/Revisions1000      	     528	    476608 ns/op	     935 B/op	      24 allocs/op
+BenchmarkSchedulerFirstDeploy/Revisions1000      	     524	    499452 ns/op	     934 B/op	      24 allocs/op
+PASS
+ok  	github.com/kylebegeman/helios/internal/daemon	19.793s

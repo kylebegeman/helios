@@ -1,0 +1,11 @@
+All six Go test processes completed with PASS; all 71 benchmark cases have ten
+samples. The outer shell exited 2 after the Go pipeline finished:
+  scripts/benchmark.sh: line 43: unexpected EOF while looking for matching `"'
+Cause: the running shell script was edited in place while its long-lived Go
+pipeline was active. Its next read encountered shifted source. No production or
+benchmark fixture changed during timing, and the raw output was not overwritten.
+The completed raw baseline and sweep inventories were independently validated
+with scripts/check-benchmark-results.py --count 10.
+The full grouped sweep also showed major timing drift in unchanged controls, so
+it is retained for allocation evidence and diagnosis. Final accepted runtime
+comparisons use the frozen alternating-version runner.

@@ -39,7 +39,9 @@ Run `make bench` on an otherwise idle machine for ten serial samples of the
 metrics, edge, state, manifest, route-preflight and scheduler benchmarks. Raw
 results and environment metadata are saved under `bin/benchmarks/`. Use
 `BENCH_OUT`, `BENCH_COUNT`, `BENCH_TIME` and `BENCH_PATTERN` to select the output
-and measurement budget. See [the performance guide](docs/technical/performance.md)
+and measurement budget. `make bench-smoke` checks every fixture with one iteration;
+CI runs that check without hardware-dependent timing thresholds. See
+[the performance guide](docs/technical/performance.md)
 for workloads, profiling, comparison and acceptance criteria.
 
 ## What a change looks like

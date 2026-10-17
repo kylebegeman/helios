@@ -2,6 +2,8 @@
 # Run serially on an otherwise idle machine; retain raw Go output for benchstat.
 set -euo pipefail
 cd "$(dirname "$0")/.."
+root=$PWD
+export GOWORK=off
 
 if [[ $# -gt 1 ]]; then
   printf 'usage: %s [new-output-directory]\n' "$0" >&2
@@ -15,7 +17,14 @@ if [[ -e "$out" ]]; then
   printf 'Refusing to overwrite existing benchmark output: %s\n' "$out" >&2
   exit 1
 fi
-mkdir -p "$out"
+mkdir -p "$root/bin/benchmarks" "$(dirname "$out")"
+lock="$root/bin/benchmarks/.measurement-lock"
+if ! mkdir "$lock" 2>/dev/null; then
+  printf 'Another benchmark runner holds %s; wait for it to finish.\n' "$lock" >&2
+  exit 1
+fi
+trap 'rmdir "$lock"' EXIT
+mkdir "$out"
 {
   printf 'utc: %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   printf 'commit: %s\n' "$(git rev-parse HEAD)"
@@ -25,10 +34,13 @@ mkdir -p "$out"
   printf 'tracked-worktree-status:\n'
   git status --short --untracked-files=no
   go version
-  go env GOOS GOARCH CGO_ENABLED
+  go env -json GOOS GOARCH CGO_ENABLED GOEXPERIMENT GOFLAGS GOWORK GOTOOLCHAIN
+  printf 'GOGC: %s\nGOMEMLIMIT: %s\n' "${GOGC:-default}" "${GOMEMLIMIT:-default}"
   printf 'benchmark: -run=^$ -bench=%s -benchmem -count=%s -benchtime=%s -cpu=1 -p=1\n' "$pattern" "$count" "$benchtime"
 } > "$out/environment.txt"
 go test -run='^$' -bench="$pattern" -benchmem -count="$count" \
   -benchtime="$benchtime" -cpu=1 -p=1 \
   ./internal/signals ./internal/edge ./internal/state ./internal/manifest ./internal/app ./internal/daemon \
   | tee "$out/bench.txt"
+
+python3 scripts/check-benchmark-results.py --count "$count" "$out/bench.txt"

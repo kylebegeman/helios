@@ -48,13 +48,38 @@ go run golang.org/x/perf/cmd/benchstat@v0.0.0-20261009192801-be2c69fb417e \
 ```
 
 The comparison tool is pinned developer tooling and adds no production dependency.
+Both runners reserve output directories atomically and share a per-checkout lock
+to prevent overlapping measurements. They reject empty, incomplete or mismatched
+benchmark inventories rather than treating a successful process exit as sufficient.
 The runner refuses to overwrite an existing output directory. Each run records
 UTC time, source commit/tree, tracked-diff hash/status, Go version, target platform,
-cgo configuration and benchmark flags beside the raw Go output. Commit benchmark
+cgo configuration, Go build flags, workspace mode, GC/memory settings and benchmark
+flags beside the raw Go output. New runs set `GOWORK=off` to use the archived module. Commit benchmark
 fixtures before a baseline; untracked source is not covered by the tracked-diff
 hash. Keep raw results and metadata when reporting a gain. `BENCH_COUNT`,
 `BENCH_TIME` and `BENCH_PATTERN` allow shorter smoke runs or focused sweeps; compare
 only matching settings and workloads.
+
+## Check machine drift with paired samples
+
+When unchanged controls move or a large case looks slower despite reduced work,
+compare committed versions in alternating order. The paired runner builds test
+binaries for both commits before timing, from temporary source archives under
+`bin/benchmarks/`. It leaves the checkout untouched and removes its source copies
+and binaries on exit. Each package alternates baseline/candidate then
+candidate/baseline for ten rounds. Raw samples, immutable source IDs, flags and
+execution order are retained. The same `BENCH_COUNT`, `BENCH_TIME` and
+`BENCH_PATTERN` overrides apply.
+
+```sh
+scripts/benchmark-compare.sh BASELINE_COMMIT CANDIDATE_COMMIT bin/benchmarks/paired
+go run golang.org/x/perf/cmd/benchstat@v0.0.0-20261009192801-be2c69fb417e \
+  bin/benchmarks/paired/baseline.txt bin/benchmarks/paired/candidate.txt
+```
+
+Paired order reduces drift; it does not make a shared workstation a controlled
+performance lab. Inspect unchanged controls, sample spread and allocation counts.
+Recheck suspected runtime regressions rather than discarding inconvenient samples.
 
 ## Profile before changing code
 
@@ -70,8 +95,8 @@ go tool pprof -sample_index=alloc_space -top bin/signals.mem
 Change one cause at a time. Rerun its correctness tests, collect repeated samples,
 and retain or reject the change from the evidence. Finish with a full sweep to
 expose interactions. Avoid hardware-specific hard timing gates in ordinary CI;
-run fixture smoke checks and behavioral tests there, and compare timing on the
-same idle machine.
+CI runs `make bench-smoke` to exercise each fixture once, alongside behavioral
+tests. Compare timing on the same idle machine.
 
 ## Operational measurements still needed
 
