@@ -19,17 +19,23 @@ func CheckRouteConflicts(ctx context.Context, store *state.Store, m *manifest.Ma
 	}
 	type ownedRoute struct {
 		workload string
-		route    manifest.Route
+		host     string
 		path     string
+		dns      manifest.DNSMode
 	}
 	// Keep candidate and existing routes in workload order so diagnostics stay
 	// stable. Index existing routes by host once per app, instead of sorting
 	// and visiting every existing workload for every candidate route.
-	var mine []ownedRoute
+	names := m.WorkloadNames()
+	count := 0
+	for _, name := range names {
+		count += len(m.Workloads[name].Routes)
+	}
+	mine := make([]ownedRoute, 0, count)
 	hosts := map[string]bool{}
-	for _, name := range m.WorkloadNames() {
+	for _, name := range names {
 		for _, r := range m.Workloads[name].Routes {
-			mine = append(mine, ownedRoute{name, r, r.NormalizedPath()})
+			mine = append(mine, ownedRoute{name, r.Host, r.NormalizedPath(), r.DNS})
 			hosts[r.Host] = true
 		}
 	}
@@ -53,16 +59,16 @@ func CheckRouteConflicts(ctx context.Context, store *state.Store, m *manifest.Ma
 		for _, name := range other.WorkloadNames() {
 			for _, r := range other.Workloads[name].Routes {
 				if hosts[r.Host] {
-					byHost[r.Host] = append(byHost[r.Host], ownedRoute{name, r, r.NormalizedPath()})
+					byHost[r.Host] = append(byHost[r.Host], ownedRoute{name, r.Host, r.NormalizedPath(), r.DNS})
 				}
 			}
 		}
 		for _, candidate := range mine {
-			for _, existing := range byHost[candidate.route.Host] {
+			for _, existing := range byHost[candidate.host] {
 				if candidate.path == existing.path {
-					clashes = append(clashes, fmt.Sprintf("%s%s for %s is already routed to %s's %s", candidate.route.Host, candidate.path, candidate.workload, other.App, existing.workload))
-				} else if candidate.route.DNS != existing.route.DNS {
-					clashes = append(clashes, fmt.Sprintf("%s uses dns %q here and %q in %s; routes sharing a host must use one DNS mode", candidate.route.Host, candidate.route.DNS, existing.route.DNS, other.App))
+					clashes = append(clashes, fmt.Sprintf("%s%s for %s is already routed to %s's %s", candidate.host, candidate.path, candidate.workload, other.App, existing.workload))
+				} else if candidate.dns != existing.dns {
+					clashes = append(clashes, fmt.Sprintf("%s uses dns %q here and %q in %s; routes sharing a host must use one DNS mode", candidate.host, candidate.dns, existing.dns, other.App))
 				}
 			}
 		}
