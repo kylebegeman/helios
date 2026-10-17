@@ -1,0 +1,22 @@
+File: daemon.test
+Type: alloc_space
+Time: 2026-10-17 15:04:38 EDT
+Showing nodes accounting for 1001.22MB, 98.64% of 1014.98MB total
+Dropped 51 nodes (cum <= 5.07MB)
+Showing top 15 nodes out of 27
+      flat  flat%   sum%        cum   cum%
+  270.07MB 26.61% 26.61%   270.07MB 26.61%  reflect.mapassign_faststr0
+  250.53MB 24.68% 51.29%   598.60MB 58.98%  github.com/kylebegeman/helios/internal/state.scanRevision
+  233.10MB 22.97% 74.26%   999.72MB 98.50%  github.com/kylebegeman/helios/internal/state.(*Store).Revisions
+  112.51MB 11.08% 85.34%   112.51MB 11.08%  modernc.org/sqlite.(*conn).columnText
+   55.50MB  5.47% 90.81%   168.01MB 16.55%  modernc.org/sqlite.(*rows).Next
+      42MB  4.14% 94.95%       42MB  4.14%  reflect.makemap
+   36.50MB  3.60% 98.54%    36.50MB  3.60%  reflect.unsafe_New
+       1MB 0.099% 98.64%  1002.22MB 98.74%  github.com/kylebegeman/helios/internal/daemon.BenchmarkSchedulerFirstDeploy.func1
+         0     0% 98.64%   168.01MB 16.55%  database/sql.(*Rows).Next
+         0     0% 98.64%   168.01MB 16.55%  database/sql.(*Rows).Next.func1
+         0     0% 98.64%   168.01MB 16.55%  database/sql.(*Rows).nextLocked
+         0     0% 98.64%   348.08MB 34.29%  encoding/json.Unmarshal (inline)
+         0     0% 98.64%   348.08MB 34.29%  encoding/json/v2.Unmarshal
+         0     0% 98.64%   348.08MB 34.29%  encoding/json/v2.makeMapArshaler.func3
+         0     0% 98.64%    36.50MB  3.60%  encoding/json/v2.newAddressableValue

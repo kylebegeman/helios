@@ -1,0 +1,22 @@
+File: edge.test
+Type: alloc_space
+Time: 2026-10-17 15:04:34 EDT
+Showing nodes accounting for 1192.78MB, 99.16% of 1202.86MB total
+Dropped 47 nodes (cum <= 6.01MB)
+Showing top 15 nodes out of 23
+      flat  flat%   sum%        cum   cum%
+  335.26MB 27.87% 27.87%   339.15MB 28.20%  encoding/json/jsontext.AppendFormat[go.shape.[]uint8]
+  243.05MB 20.21% 48.08%   243.05MB 20.21%  github.com/kylebegeman/helios/internal/edge.guardHandler
+  226.05MB 18.79% 66.87%   226.05MB 18.79%  github.com/kylebegeman/helios/internal/edge.proxyTo (inline)
+  176.08MB 14.64% 81.51%  1200.67MB 99.82%  github.com/kylebegeman/helios/internal/edge.ConfigBehind
+     132MB 10.97% 92.48%      132MB 10.97%  reflect.unsafe_New
+   80.33MB  6.68% 99.16%    80.33MB  6.68%  bytes.Clone (inline)
+         0     0% 99.16%   212.33MB 17.65%  encoding/json.Marshal (inline)
+         0     0% 99.16%   551.48MB 45.85%  encoding/json.MarshalIndent
+         0     0% 99.16%   339.15MB 28.20%  encoding/json.appendIndent
+         0     0% 99.16%   212.33MB 17.65%  encoding/json/v2.Marshal
+         0     0% 99.16%      132MB 10.97%  encoding/json/v2.makeInterfaceArshaler.func1
+         0     0% 99.16%      132MB 10.97%  encoding/json/v2.makeMapArshaler.func2
+         0     0% 99.16%      132MB 10.97%  encoding/json/v2.makeSliceArshaler.func2
+         0     0% 99.16%      132MB 10.97%  encoding/json/v2.marshalEncode
+         0     0% 99.16%      132MB 10.97%  encoding/json/v2.marshalObjectAny

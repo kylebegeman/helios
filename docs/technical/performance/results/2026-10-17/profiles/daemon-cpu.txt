@@ -1,0 +1,22 @@
+File: daemon.test
+Type: cpu
+Time: 2026-10-17 15:04:37 EDT
+Duration: 1.23s, Total samples = 1.03s (83.70%)
+Showing nodes accounting for 0.83s, 80.58% of 1.03s total
+Showing top 15 nodes out of 234
+      flat  flat%   sum%        cum   cum%
+     0.32s 31.07% 31.07%      0.32s 31.07%  syscall.rawsyscalln
+     0.30s 29.13% 60.19%      0.30s 29.13%  runtime.kevent
+     0.05s  4.85% 65.05%      0.05s  4.85%  runtime.madvise
+     0.03s  2.91% 67.96%      0.03s  2.91%  runtime.(*mspan).moveInlineMarks
+     0.02s  1.94% 69.90%      0.02s  1.94%  runtime.tryDeferToSpanScan
+     0.02s  1.94% 71.84%      0.02s  1.94%  runtime.wbBufFlush1
+     0.01s  0.97% 72.82%      0.01s  0.97%  database/sql.convertAssignRows
+     0.01s  0.97% 73.79%      0.01s  0.97%  encoding/json/internal/jsonwire.ConsumeSimpleString (inline)
+     0.01s  0.97% 74.76%      0.01s  0.97%  encoding/json/internal/jsonwire.ConsumeWhitespace (inline)
+     0.01s  0.97% 75.73%      0.02s  1.94%  encoding/json/jsontext.(*decoderState).CheckNextValue
+     0.01s  0.97% 76.70%      0.02s  1.94%  encoding/json/jsontext.(*decoderState).ReadValue
+     0.01s  0.97% 77.67%      0.02s  1.94%  encoding/json/jsontext.(*decoderState).reset
+     0.01s  0.97% 78.64%      0.01s  0.97%  internal/runtime/atomic.(*UnsafePointer).Load
+     0.01s  0.97% 79.61%      0.01s  0.97%  modernc.org/libc.X__builtin___memcpy_chk
+     0.01s  0.97% 80.58%      0.02s  1.94%  modernc.org/sqlite/lib.Xsqlite3_mutex_enter

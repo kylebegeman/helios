@@ -1,0 +1,22 @@
+File: edge.test
+Type: cpu
+Time: 2026-10-17 15:04:32 EDT
+Duration: 1.36s, Total samples = 1.08s (79.31%)
+Showing nodes accounting for 0.90s, 83.33% of 1.08s total
+Showing top 15 nodes out of 131
+      flat  flat%   sum%        cum   cum%
+     0.46s 42.59% 42.59%      0.46s 42.59%  runtime.kevent
+     0.18s 16.67% 59.26%      0.18s 16.67%  runtime.madvise
+     0.06s  5.56% 64.81%      0.06s  5.56%  internal/runtime/atomic.(*UnsafePointer).Load (inline)
+     0.04s  3.70% 68.52%      0.04s  3.70%  runtime.memmove
+     0.03s  2.78% 71.30%      0.07s  6.48%  encoding/json/jsontext.(*encoderState).reformatObject
+     0.02s  1.85% 73.15%      0.03s  2.78%  encoding/json/internal/jsonwire.AppendQuote
+     0.02s  1.85% 75.00%      0.27s 25.00%  encoding/json/v2.makeMapArshaler.func2
+     0.02s  1.85% 76.85%      0.03s  2.78%  runtime.mallocgcSmallScanSlowPath
+     0.01s  0.93% 77.78%      0.06s  5.56%  encoding/json/jsontext.(*encoderState).WriteToken
+     0.01s  0.93% 78.70%      0.01s  0.93%  encoding/json/jsontext.stateMachine.MayAppendDelim (inline)
+     0.01s  0.93% 79.63%      0.27s 25.00%  encoding/json/v2.marshalValueAny
+     0.01s  0.93% 80.56%      0.01s  0.93%  internal/abi.(*Type).IsDirectIface (inline)
+     0.01s  0.93% 81.48%      0.01s  0.93%  internal/chacha8rand.block
+     0.01s  0.93% 82.41%      0.01s  0.93%  internal/runtime/maps.(*Iter).Next
+     0.01s  0.93% 83.33%      0.01s  0.93%  internal/runtime/maps.(*Map).getWithoutKeySmallFastStr

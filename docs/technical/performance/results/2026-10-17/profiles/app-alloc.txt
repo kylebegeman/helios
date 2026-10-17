@@ -1,0 +1,22 @@
+File: app.test
+Type: alloc_space
+Time: 2026-10-17 15:04:36 EDT
+Showing nodes accounting for 616.82MB, 97.90% of 630.08MB total
+Dropped 81 nodes (cum <= 3.15MB)
+Showing top 15 nodes out of 35
+      flat  flat%   sum%        cum   cum%
+  292.52MB 46.43% 46.43%   292.52MB 46.43%  github.com/kylebegeman/helios/internal/manifest.(*Manifest).WorkloadNames
+   73.10MB 11.60% 58.03%    97.10MB 15.41%  github.com/kylebegeman/helios/internal/state.scanRevision
+   63.01MB 10.00% 68.03%    63.01MB 10.00%  reflect.growslice
+   61.02MB  9.68% 77.71%    61.02MB  9.68%  reflect.mapassign0
+   59.10MB  9.38% 87.09%    59.10MB  9.38%  modernc.org/sqlite.(*conn).columnText
+   19.51MB  3.10% 90.19%    19.51MB  3.10%  reflect.mapassign_faststr0
+   17.51MB  2.78% 92.97%    17.51MB  2.78%  reflect.unsafe_New
+      11MB  1.75% 94.71%       11MB  1.75%  encoding/json/v2.makeString
+   10.66MB  1.69% 96.40%   169.86MB 26.96%  github.com/kylebegeman/helios/internal/state.(*Store).ActiveRevisions
+    4.50MB  0.71% 97.12%   616.92MB 97.91%  github.com/kylebegeman/helios/internal/app.CheckRouteConflicts
+       3MB  0.48% 97.59%    62.10MB  9.86%  modernc.org/sqlite.(*rows).Next
+    1.90MB   0.3% 97.90%     5.79MB  0.92%  modernc.org/libc/honnef.co/go/netdb.init.0
+         0     0% 97.90%    62.10MB  9.86%  database/sql.(*Rows).Next
+         0     0% 97.90%    62.10MB  9.86%  database/sql.(*Rows).Next.func1
+         0     0% 97.90%    62.10MB  9.86%  database/sql.(*Rows).nextLocked

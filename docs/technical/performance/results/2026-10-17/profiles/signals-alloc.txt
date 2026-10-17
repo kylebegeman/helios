@@ -1,0 +1,16 @@
+File: signals.test
+Type: alloc_space
+Time: 2026-10-17 15:04:32 EDT
+Showing nodes accounting for 2027.83MB, 99.44% of 2039.35MB total
+Dropped 56 nodes (cum <= 10.20MB)
+      flat  flat%   sum%        cum   cum%
+ 1120.70MB 54.95% 54.95%  2030.33MB 99.56%  github.com/kylebegeman/helios/internal/signals.ParseMetrics
+  346.08MB 16.97% 71.92%   762.11MB 37.37%  github.com/kylebegeman/helios/internal/signals.parseLine
+     200MB  9.81% 81.73%      200MB  9.81%  unicode/utf8.AppendRune (inline)
+  191.52MB  9.39% 91.12%   391.52MB 19.20%  github.com/kylebegeman/helios/internal/signals.splitLabels
+  147.52MB  7.23% 98.36%   147.52MB  7.23%  bufio.(*Scanner).Text (inline)
+      22MB  1.08% 99.44%       22MB  1.08%  strings.Fields
+         0     0% 99.44%  2032.46MB 99.66%  github.com/kylebegeman/helios/internal/signals.BenchmarkParseMetrics.func1
+         0     0% 99.44%      200MB  9.81%  strings.(*Builder).WriteRune
+         0     0% 99.44%  2032.46MB 99.66%  testing.(*B).run1.func1
+         0     0% 99.44%  2032.46MB 99.66%  testing.(*B).runN
