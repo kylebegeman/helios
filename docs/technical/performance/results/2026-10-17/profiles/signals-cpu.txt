@@ -1,0 +1,22 @@
+File: signals.test
+Type: cpu
+Time: 2026-10-17 15:04:30 EDT
+Duration: 1.47s, Total samples = 1.15s (78.24%)
+Showing nodes accounting for 1.07s, 93.04% of 1.15s total
+Showing top 15 nodes out of 80
+      flat  flat%   sum%        cum   cum%
+     0.74s 64.35% 64.35%      0.74s 64.35%  runtime.kevent
+     0.08s  6.96% 71.30%      0.08s  6.96%  runtime.madvise
+     0.05s  4.35% 75.65%      0.05s  4.35%  runtime.tryDeferToSpanScan
+     0.03s  2.61% 78.26%      0.03s  2.61%  internal/bytealg.IndexByteString
+     0.03s  2.61% 80.87%      0.07s  6.09%  runtime.wbBufFlush1
+     0.02s  1.74% 82.61%      0.13s 11.30%  github.com/kylebegeman/helios/internal/signals.splitLabels
+     0.02s  1.74% 84.35%      0.02s  1.74%  internal/runtime/atomic.(*UnsafePointer).Load
+     0.02s  1.74% 86.09%      0.02s  1.74%  runtime.(*mspan).moveInlineMarks
+     0.02s  1.74% 87.83%      0.02s  1.74%  strings.TrimSpace
+     0.01s  0.87% 88.70%      0.08s  6.96%  gcWriteBarrier
+     0.01s  0.87% 89.57%      0.02s  1.74%  internal/runtime/maps.(*Map).getWithoutKeySmallFastStr
+     0.01s  0.87% 90.43%      0.01s  0.87%  internal/runtime/maps.memHashAES
+     0.01s  0.87% 91.30%      0.01s  0.87%  runtime.(*spanSet).push
+     0.01s  0.87% 92.17%      0.03s  2.61%  runtime.(*sweepLocked).sweep
+     0.01s  0.87% 93.04%      0.02s  1.74%  runtime.bgsweep

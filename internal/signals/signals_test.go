@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"math"
 	"net/http"
 	"net/http/httptest"
@@ -225,5 +226,193 @@ func TestSampleDoesNotAttributeSharedHostTrafficToOneApp(t *testing.T) {
 	rows, err := store.Signals(ctx, "", now.Add(-time.Hour))
 	if err != nil || len(rows) != 0 {
 		t.Fatalf("shared traffic was assigned to one app: %+v, %v", rows, err)
+	}
+}
+
+func TestMetricsPreserveLabelsAndIgnoreSampleTimestamps(t *testing.T) {
+	input := " \t# a comment\n\n" +
+		" plain_metric\u2003-1.25e+2\t1790812800000 \n" +
+		`labeled_metric{ host = "app.example.com",path="/api/a,b?next=\"value\"",note="slash\\and\nline",}` + "\t2.5 1790812800000\n" +
+		"empty_labels{} 3\n" +
+		"missing_value\n"
+	got := ParseMetrics(input)
+	if len(got) != 3 {
+		t.Fatalf("got %d samples, want 3: %+v", len(got), got)
+	}
+	if got[0].Name != "plain_metric" || got[0].Value != -125 || got[0].Labels == nil || len(got[0].Labels) != 0 {
+		t.Fatalf("plain sample with Unicode whitespace: %+v", got[0])
+	}
+	if got[1].Name != "labeled_metric" || got[1].Value != 2.5 || len(got[1].Labels) != 3 ||
+		got[1].Labels["host"] != "app.example.com" || got[1].Labels["path"] != "/api/a,b?next=\"value\"" || got[1].Labels["note"] != "slash\\and\nline" {
+		t.Fatalf("escaped sample with a timestamp: %+v", got[1])
+	}
+	if got[2].Name != "empty_labels" || got[2].Value != 3 || got[2].Labels == nil || len(got[2].Labels) != 0 {
+		t.Fatalf("empty label set: %+v", got[2])
+	}
+}
+
+func TestMetricsRejectMalformedLabelsWithoutDroppingLaterSamples(t *testing.T) {
+	for _, input := range []string{
+		`metric{label="unfinished} 1`,
+		`metric{label="escaped\"} 1`,
+		`metric{label="bad\qescape"} 1`,
+		`metric{label="one"label="two"} 1`,
+		`metric{label="one", label = "two"} 1`,
+		`metric{= "value"} 1`,
+		`metric{label} 1`,
+		`metric{,label="value"} 1`,
+		`metric{label="value",,other="value"} 1`,
+		`metric{label="value" 1`,
+		`metric{label="value"}`,
+	} {
+		t.Run(input, func(t *testing.T) {
+			got := ParseMetrics(input + "\nafter 7\n")
+			if len(got) != 1 || got[0].Name != "after" || got[0].Value != 7 {
+				t.Fatalf("malformed sample affected later samples: %+v", got)
+			}
+		})
+	}
+}
+
+func TestMetricsAcceptLongLinesWithinTheExistingLimit(t *testing.T) {
+	value := strings.Repeat("x", 128<<10)
+	input := "long_metric{label=\"" + value + "\"} 42\nafter 7\n"
+	got := ParseMetrics(input)
+	if len(got) != 2 || got[0].Name != "long_metric" || got[0].Value != 42 || got[0].Labels["label"] != value || got[1].Name != "after" {
+		t.Fatalf("valid long line was truncated or skipped: %d samples", len(got))
+	}
+}
+
+func TestMetricsStopAtOversizedLines(t *testing.T) {
+	input := "before 1\nlong_metric{label=\"" + strings.Repeat("x", 1<<20) + "\"} 42\nafter 7\n"
+	got := ParseMetrics(input)
+	if len(got) != 1 || got[0].Name != "before" || got[0].Value != 1 {
+		t.Fatalf("oversized line changed the existing scrape limit: %d samples", len(got))
+	}
+}
+
+func TestMetricSeriesKeysPreserveAllLabelsIndependentlyOfMapOrder(t *testing.T) {
+	first := Series{Name: "metric", Labels: map[string]string{
+		"host": "app.example.com", "handler": "subroute", "extra": "one\x00,two=three\"four\\five",
+	}}
+	second := Series{Name: "metric", Labels: map[string]string{}}
+	for _, key := range []string{"extra", "handler", "host"} {
+		second.Labels[key] = first.Labels[key]
+	}
+	want := first.key()
+	for range 100 {
+		if got := second.key(); got != want {
+			t.Fatal("the same labels in a different map order changed series identity")
+		}
+	}
+	second.Labels["extra"] += "different"
+	if second.key() == want {
+		t.Fatal("an extra label was omitted from series identity")
+	}
+	// More labels than the usual Caddy set must still all participate.
+	for i := range 20 {
+		first.Labels[fmt.Sprintf("extra_%d", i)] = fmt.Sprint(i)
+	}
+	second.Labels = make(map[string]string, len(first.Labels))
+	for key, value := range first.Labels {
+		second.Labels[key] = value
+	}
+	if first.key() != second.key() {
+		t.Fatal("a large label set changed identity with map order")
+	}
+	second.Labels["extra_19"] = "changed"
+	if first.key() == second.key() {
+		t.Fatal("a label outside the usual Caddy set was omitted")
+	}
+}
+
+func TestMetricSeriesKeysCannotCollideOnNamesOrArbitraryLabelBytes(t *testing.T) {
+	for _, pair := range [][2]Series{
+		{{Name: "metric", Labels: nil}, {Name: "metric", Labels: map[string]string{}}},
+		{{Name: "a", Labels: map[string]string{"bc": "d"}}, {Name: "ab", Labels: map[string]string{"c": "d"}}},
+		{{Name: "metric\x00a", Labels: map[string]string{"b": "c"}}, {Name: "metric", Labels: map[string]string{"a\x00b": "c"}}},
+		{{Name: "metric", Labels: map[string]string{"key\x00value": ""}}, {Name: "metric", Labels: map[string]string{"key": "value\x00"}}},
+		{{Name: "metric", Labels: map[string]string{"key": "value,other=label"}}, {Name: "metric", Labels: map[string]string{"key": "value", "other": "label"}}},
+		{{Name: "metric{\"key\":\"value\"}", Labels: map[string]string{}}, {Name: "metric", Labels: map[string]string{"key": "value{}"}}},
+		{{Name: strings.Repeat("name", 40), Labels: map[string]string{strings.Repeat("key", 50): strings.Repeat("value", 4000)}}, {Name: strings.Repeat("name", 40), Labels: map[string]string{strings.Repeat("key", 50): strings.Repeat("value", 4000) + "x"}}},
+		{{Name: "metric", Labels: map[string]string{"key": "\xfe"}}, {Name: "metric", Labels: map[string]string{"key": "\xff"}}},
+	} {
+		if pair[0].key() == pair[1].key() {
+			t.Fatalf("distinct metric identities collided: %#v and %#v", pair[0], pair[1])
+		}
+	}
+}
+
+func TestTrafficSkipsMetricsThatDoNotProduceRollups(t *testing.T) {
+	labels := func() map[string]string {
+		return map[string]string{"host": "app.example.com", "handler": "subroute"}
+	}
+	series := []Series{{Name: "caddy_http_requests_total", Labels: labels(), Value: 10}}
+	for _, name := range []string{
+		"caddy_http_response_size_bytes_count", "caddy_http_response_size_bytes_bucket",
+		"caddy_http_requests_in_flight", "caddy_http_unknown_total", "go_goroutines",
+	} {
+		series = append(series, Series{Name: name, Labels: labels(), Value: 10})
+	}
+	for _, bound := range []string{"", "+Inf", "NaN", "-1", "invalid"} {
+		m := labels()
+		m["le"] = bound
+		series = append(series, Series{Name: "caddy_http_request_duration_seconds_bucket", Labels: m, Value: 10})
+	}
+	validBucket := labels()
+	validBucket["le"] = "0.25"
+	series = append(series, Series{Name: "caddy_http_request_duration_seconds_bucket", Labels: validBucket, Value: 10})
+	sampler := &Sampler{}
+	hostApps := map[string]string{"app.example.com": "app"}
+	if err := sampler.traffic(context.Background(), time.Now(), series, hostApps); err != nil {
+		t.Fatal(err)
+	}
+	if len(sampler.counters) != 2 {
+		t.Fatalf("retained %d counters, want only the request counter and finite duration bucket", len(sampler.counters))
+	}
+	// Unsupported metrics may change freely without producing a write. The
+	// request and valid duration bucket remain unchanged, so no Store is used.
+	for i := 1; i < len(series)-1; i++ {
+		series[i].Value++
+	}
+	if err := sampler.traffic(context.Background(), time.Now(), series, hostApps); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestTrafficTracksExtraLabelsResetsAndEviction(t *testing.T) {
+	ctx := context.Background()
+	store, err := state.Open(filepath.Join(t.TempDir(), "state.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	now := time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)
+	sampler := &Sampler{Store: store}
+	hosts := map[string]string{"app.example.com": "app"}
+	sample := func(source string, value float64) Series {
+		return Series{Name: "caddy_http_requests_total", Labels: map[string]string{
+			"host": "app.example.com", "handler": "subroute", "extra_source": source,
+		}, Value: value}
+	}
+	for i, round := range [][]Series{
+		{sample("one\x00,=", 10), sample("two", 20)}, // Prime both identities.
+		{sample("two", 25), sample("one\x00,=", 15)}, // Each increases by five.
+		{sample("one\x00,=", 3), sample("three", 7)}, // Reset, new series, evict two.
+		{sample("two", 4), sample("one\x00,=", 5)},   // Reappearing two counts in full.
+	} {
+		if err := sampler.traffic(ctx, now.Add(time.Duration(i)*time.Minute), round, hosts); err != nil {
+			t.Fatal(err)
+		}
+		if len(sampler.counters) != 2 {
+			t.Fatalf("round %d retained %d counters, want 2 present series", i, len(sampler.counters))
+		}
+	}
+	rows, err := store.Signals(ctx, "app", now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 1 || rows[0].Metric != state.SignalRequests || rows[0].Value != 26 || rows[0].Samples != 3 {
+		t.Fatalf("extra labels, resets or eviction changed deltas: %+v", rows)
 	}
 }

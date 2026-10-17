@@ -85,19 +85,30 @@ const clientIP = "{http.vars.client_ip}"
 // address each, whatever the request carried. Caddy's own X-Forwarded-For
 // would keep what a client wrote in front of the proxy's entry, where an
 // app reading the first address would take it at its word.
-var clientHeaders = map[string][]string{
-	"X-Forwarded-For": {clientIP},
-	"X-Real-IP":       {clientIP},
-}
+var clientHeaders = func() caddyHeaders {
+	var headers caddyHeaders
+	headers.Request.Set.XForwardedFor = [1]string{clientIP}
+	headers.Request.Set.XRealIP = [1]string{clientIP}
+	return headers
+}()
+
+var guardHeaders = func() caddyHeaders {
+	headers := clientHeaders
+	headers.Request.Set.XForwardedHost = []string{"{http.request.host}"}
+	headers.Request.Set.XForwardedMethod = []string{"{http.request.method}"}
+	headers.Request.Set.XForwardedURI = []string{"{http.request.uri}"}
+	return headers
+}()
 
 // proxyTo is a reverse_proxy to one upstream that says who the visitor is.
-func proxyTo(dial string) map[string]any {
-	return map[string]any{
-		"handler":            "reverse_proxy",
-		"upstreams":          []map[string]any{{"dial": dial}},
-		"headers":            map[string]any{"request": map[string]any{"set": clientHeaders}},
-		"stream_close_delay": StreamCloseDelay,
+func proxyTo(dial string) caddyHandler {
+	proxy := caddyHandler{
+		Handler:          "reverse_proxy",
+		Headers:          &clientHeaders,
+		StreamCloseDelay: StreamCloseDelay,
+		Upstreams:        []caddyUpstream{{Dial: dial}},
 	}
+	return proxy
 }
 
 // ConfigBehind is Config for an edge that some requests reach through a
@@ -115,14 +126,14 @@ func ConfigBehind(routes []Route, proxies []string) ([]byte, error) {
 	}
 	sort.Strings(hosts)
 
-	var serverRoutes []map[string]any
-	for _, host := range hosts {
+	serverRoutes := make([]caddyRoute, len(hosts))
+	for hostIndex, host := range hosts {
 		rs := byHost[host]
 		// Longest prefix first; the catch-all last, without a path matcher.
 		sort.Slice(rs, func(i, j int) bool { return len(rs[i].Path) > len(rs[j].Path) })
-		var sub []map[string]any
-		for _, r := range rs {
-			handle := []map[string]any{proxyTo(r.Dial)}
+		sub := make([]caddyRoute, len(rs))
+		for routeIndex, r := range rs {
+			handle := proxyTo(r.Dial)
 			if r.Guard != nil {
 				// A guard that decides on the status alone can be talked
 				// into a yes by any server that answers 200 for a path it
@@ -132,57 +143,40 @@ func ConfigBehind(routes []Route, proxies []string) ([]byte, error) {
 				if r.Guard.HeaderName == "" {
 					return nil, fmt.Errorf("the guard on %s%s names no header to require; a status alone can be answered by anything", r.Host, r.Path)
 				}
-				handle = []map[string]any{guardHandler(r.Guard, handle)}
+				handle = guardHandler(r.Guard, handle)
 			}
-			if r.Path == "/" {
-				sub = append(sub, map[string]any{"handle": handle})
-				continue
+			sub[routeIndex].Handle[0] = handle
+			if r.Path != "/" {
+				prefix := strings.TrimSuffix(r.Path, "/")
+				sub[routeIndex].Match = []caddyMatcher{{Path: []string{prefix, prefix + "/*"}}}
 			}
-			prefix := strings.TrimSuffix(r.Path, "/")
-			sub = append(sub, map[string]any{
-				"match":  []map[string]any{{"path": []string{prefix, prefix + "/*"}}},
-				"handle": handle,
-			})
 		}
-		serverRoutes = append(serverRoutes, map[string]any{
-			"match":    []map[string]any{{"host": []string{host}}},
-			"handle":   []map[string]any{{"handler": "subroute", "routes": sub}},
-			"terminal": true,
-		})
+		serverRoutes[hostIndex] = caddyRoute{
+			Handle:   [1]caddyHandler{{Handler: "subroute", Routes: sub}},
+			Match:    []caddyMatcher{{Host: []string{host}}},
+			Terminal: true,
+		}
 	}
-	if serverRoutes == nil {
-		serverRoutes = []map[string]any{}
-	}
-	server := map[string]any{
-		"listen": []string{":80", ":443"},
-		"routes": serverRoutes,
-		"logs":   map[string]any{},
-	}
+	server := caddyServer{Listen: [2]string{":80", ":443"}, Routes: serverRoutes}
 	if len(proxies) > 0 {
-		server["trusted_proxies"] = map[string]any{"source": "static", "ranges": proxies}
+		server.TrustedProxies = &caddyTrustedProxies{Ranges: proxies, Source: "static"}
 		// Cloudflare sets CF-Connecting-IP to the visitor and nothing
 		// else. X-Forwarded-For is read right to left, past the proxies,
 		// so what a client wrote at its start is never taken.
-		server["client_ip_headers"] = []string{"CF-Connecting-IP", "X-Forwarded-For"}
-		server["trusted_proxies_strict"] = 1
+		server.ClientIPHeaders = []string{"CF-Connecting-IP", "X-Forwarded-For"}
+		server.TrustedProxiesStrict = 1
 	}
-	cfg := map[string]any{
-		// The admin API is a socket in a directory only this machine and
-		// the edge share. helios keeps the configuration itself (BootFile),
-		// so Caddy's own copy is off.
-		"admin": map[string]any{"listen": adminListen, "config": map[string]any{"persist": false}},
-		"logging": map[string]any{"logs": map[string]any{
-			"default": map[string]any{"writer": map[string]any{"output": "stdout"}, "encoder": map[string]any{"format": "json"}},
-		}},
-		"apps": map[string]any{
-			"http": map[string]any{
-				// Per-host counters and latency histograms on the admin
-				// API's /metrics: the traffic signals helios keeps per app.
-				"metrics": map[string]any{"per_host": true},
-				"servers": map[string]any{"bedrock": server},
-			},
-		},
-	}
+	var cfg caddyConfig
+	// The admin API is a socket in a directory only this machine and
+	// the edge share. helios keeps the configuration itself (BootFile),
+	// so Caddy's own copy is off.
+	cfg.Admin.Listen = adminListen
+	// Per-host counters and latency histograms on the admin API's /metrics:
+	// the traffic signals helios keeps per app.
+	cfg.Apps.HTTP.Metrics.PerHost = true
+	cfg.Apps.HTTP.Servers.Bedrock = server
+	cfg.Logging.Logs.Default.Encoder.Format = "json"
+	cfg.Logging.Logs.Default.Writer.Output = "stdout"
 	return json.MarshalIndent(cfg, "", "  ")
 }
 
@@ -201,37 +195,24 @@ func Initial() []byte {
 // handlers nested under a 2xx match. Anything the guard answers that is not
 // a 2xx is copied back to the browser untouched, which is how a 302 to a
 // sign-in page reaches the person rather than the app.
-func guardHandler(g *Guard, allowed []map[string]any) map[string]any {
-	upstream := map[string]any{"dial": g.Dial}
-	allow := map[string]any{"status_code": []int{2}}
-	if g.HeaderName != "" {
-		allow["headers"] = map[string]any{g.HeaderName: []string{g.HeaderValue}}
+func guardHandler(g *Guard, allowed caddyHandler) caddyHandler {
+	var response caddyResponse
+	response.Match.Headers = map[string][]string{g.HeaderName: {g.HeaderValue}}
+	response.Match.StatusCode = [1]int{2}
+	response.Routes[0].Handle[0] = allowed
+	proxy := caddyHandler{
+		HandleResponse: []caddyResponse{response},
+		Handler:        "reverse_proxy",
+		Headers:        &guardHeaders,
+		Upstreams:      []caddyUpstream{{Dial: g.Dial}},
 	}
-	proxy := map[string]any{
-		"handler":   "reverse_proxy",
-		"upstreams": []map[string]any{upstream},
-		// The probe carries no body and asks about, rather than performs,
-		// the request; the original method and target travel as headers so
-		// the guard can decide on them.
-		"rewrite": map[string]any{"method": "GET", "uri": g.Path},
-		"headers": map[string]any{"request": map[string]any{"set": map[string]any{
-			"X-Forwarded-Method": []string{"{http.request.method}"},
-			"X-Forwarded-Uri":    []string{"{http.request.uri}"},
-			"X-Forwarded-Host":   []string{"{http.request.host}"},
-			"X-Forwarded-For":    clientHeaders["X-Forwarded-For"],
-			"X-Real-IP":          clientHeaders["X-Real-IP"],
-		}}},
-		"handle_response": []map[string]any{{
-			"match":  allow,
-			"routes": []map[string]any{{"handle": allowed}},
-		}},
-	}
+	// The probe carries no body and asks about, rather than performs,
+	// the request; the original method and target travel as headers so
+	// the guard can decide on them.
+	proxy.Rewrite = &caddyRewrite{Method: "GET", URI: g.Path}
 	if g.TLS {
-		tls := map[string]any{}
-		if g.ServerName != "" {
-			tls["server_name"] = g.ServerName
-		}
-		proxy["transport"] = map[string]any{"protocol": "http", "tls": tls}
+		proxy.Transport = &caddyTransport{Protocol: "http"}
+		proxy.Transport.TLS.ServerName = g.ServerName
 	}
 	return proxy
 }

@@ -1,4 +1,4 @@
-.PHONY: build test check linux lane-check lane-up lane-down lane-proof lane-reset lane-status
+.PHONY: build test check bench bench-smoke linux lane-check lane-up lane-down lane-proof lane-reset lane-status
 
 build:
 	CGO_ENABLED=0 go build -trimpath -o bin/helios ./cmd/helios
@@ -10,6 +10,13 @@ linux:
 
 test:
 	go test ./...
+
+# Repeated serial performance samples; see docs/technical/performance.md.
+bench:
+	scripts/benchmark.sh $(BENCH_OUT)
+
+bench-smoke:
+	BENCH_COUNT=1 BENCH_TIME=1x scripts/benchmark.sh $(BENCH_OUT)
 
 check: lane-check
 	test -z "$$(gofmt -l .)" || { gofmt -l .; exit 1; }

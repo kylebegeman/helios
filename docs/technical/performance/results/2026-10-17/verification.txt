@@ -1,0 +1,30 @@
+Local validation of optimized production source (through 56f1ffc):
+- make check: PASS after sweep 1 and again after sweep 2.
+  Includes 80 lane target-safety tests, gofmt, go vet ./..., go test ./....
+- CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o /dev/null ./cmd/helios: PASS after both sweeps.
+- CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -trimpath -o /dev/null ./cmd/helios: PASS after both sweeps.
+- make bench-smoke BENCH_OUT=bin/benchmarks/final-smoke: PASS for all 71 fixtures (one iteration; timings not used).
+- Alternating-source runner smoke: PASS for all 71 baseline/candidate cases, one iteration each; temporary source archives removed.
+- Benchmark inventory validator: matching cases accepted; empty output, mismatched cases and incomplete counts rejected.
+- Runner lock: a second runner was rejected while the paired smoke held the shared lock; no output was created for the rejected run.
+- bash -n scripts/benchmark.sh scripts/benchmark-compare.sh: PASS.
+- Independent production reviews: no actionable findings after either sweep.
+
+Grouped sweep 1: all Go benchmark processes PASS and all 710 samples complete;
+outer shell exited 2 due to editing its active script. See sweep-1/run-status.txt.
+The script stayed unchanged throughout the subsequent paired runs.
+
+Not run locally: disposable Linux VM operational proof, live Caddy reload,
+Docker workload/backup benchmarks, production measurements or deployment.
+
+Declared minimum Go toolchain checked after timing completed:
+- GOTOOLCHAIN=go1.26.0 go test ./internal/edge ./internal/manifest ./internal/signals ./internal/state ./internal/mail: PASS.
+This also verifies the byte-equivalent edge encoder under Go 1.26's JSON encoder.
+- Mail followup: go test ./internal/mail under Go 1.27.1: PASS; configured From
+  remains unchanged by rendering; SMTP fallback and Message-ID tag use Helios.
+The mail identity followup does not change any benchmarked path.
+
+Report validation:
+- Independently recomputed all 71 case medians, 213 comparison rows, eight target flags, embedded HTML data and relative links: PASS.
+- T3 HTML preview at 728px and 360px: PASS; 1759/1953px content heights, no horizontal overflow or console errors.
+- All three metric controls, eight chart rows and 71 detailed rows checked in the collaborative browser: PASS.

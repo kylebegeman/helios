@@ -1,0 +1,22 @@
+File: app.test
+Type: cpu
+Time: 2026-10-17 15:04:34 EDT
+Duration: 1.36s, Total samples = 1.15s (84.34%)
+Showing nodes accounting for 1.01s, 87.83% of 1.15s total
+Showing top 15 nodes out of 231
+      flat  flat%   sum%        cum   cum%
+     0.55s 47.83% 47.83%      0.55s 47.83%  syscall.rawsyscalln
+     0.22s 19.13% 66.96%      0.22s 19.13%  runtime.kevent
+     0.05s  4.35% 71.30%      0.05s  4.35%  runtime.madvise
+     0.03s  2.61% 73.91%      0.86s 74.78%  github.com/kylebegeman/helios/internal/app.CheckRouteConflicts
+     0.03s  2.61% 76.52%      0.03s  2.61%  internal/runtime/atomic.(*UnsafePointer).Load (inline)
+     0.02s  1.74% 78.26%      0.02s  1.74%  encoding/json/jsontext.(*decoderState).consumeValue
+     0.02s  1.74% 80.00%      0.02s  1.74%  runtime.(*mspan).moveInlineMarks
+     0.02s  1.74% 81.74%      0.03s  2.61%  runtime.mapaccess1
+     0.01s  0.87% 82.61%      0.01s  0.87%  encoding/json/jsontext.export.Decoder (inline)
+     0.01s  0.87% 83.48%      0.02s  1.74%  gcWriteBarrier
+     0.01s  0.87% 84.35%      0.01s  0.87%  internal/abi.(*MapType).IndirectKey (inline)
+     0.01s  0.87% 85.22%      0.02s  1.74%  internal/runtime/maps.(*Iter).Next
+     0.01s  0.87% 86.09%      0.01s  0.87%  internal/runtime/maps.(*Map).getWithoutKeySmallFastStr
+     0.01s  0.87% 86.96%      0.01s  0.87%  internal/runtime/maps.memHashAES
+     0.01s  0.87% 87.83%      0.01s  0.87%  modernc.org/sqlite/lib._yy_shift

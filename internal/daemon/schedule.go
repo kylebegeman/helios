@@ -132,11 +132,11 @@ func (s *Scheduler) due(ctx context.Context, appName, kind, schedule string, sin
 // firstDeploy is when an app first arrived, so a new app's first backup
 // waits for the schedule rather than running the moment it is deployed.
 func (s *Scheduler) firstDeploy(ctx context.Context, appName string) time.Time {
-	revs, err := s.Store.Revisions(ctx, appName)
-	if err != nil || len(revs) == 0 {
+	first, err := s.Store.FirstRevisionCreatedAt(ctx, appName)
+	if err != nil {
 		return time.Time{}
 	}
-	return revs[len(revs)-1].CreatedAt
+	return first
 }
 
 func (s *Scheduler) run(ctx context.Context, kind string, input any, what string) {

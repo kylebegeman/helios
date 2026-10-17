@@ -67,3 +67,48 @@ func TestRoutePlanFixtureWithoutAStoreHasNoExistingRoutes(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestRoutePreflightKeepsEveryConflictInStableOrder(t *testing.T) {
+	store, err := state.Open(filepath.Join(t.TempDir(), "state.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	existing := &manifest.Manifest{App: "existing", Workloads: map[string]manifest.Workload{
+		"zeta": {Routes: []manifest.Route{{Host: "shared.example.com", Path: "/a/", DNS: manifest.DNSDirect}}},
+		"alpha": {Routes: []manifest.Route{
+			{Host: "unrelated.example.com", Path: "/", DNS: manifest.DNSProxied},
+			{Host: "shared.example.com", Path: "/a", DNS: manifest.DNSDirect},
+			{Host: "shared.example.com", Path: "/z", DNS: manifest.DNSProxied},
+		}},
+	}}
+	saveActive(t, store, existing)
+	candidate := &manifest.Manifest{App: "candidate", Workloads: map[string]manifest.Workload{
+		"zeta":  {Routes: []manifest.Route{{Host: "shared.example.com", Path: "/b", DNS: manifest.DNSDirect}}},
+		"alpha": {Routes: []manifest.Route{{Host: "shared.example.com", Path: "/a/", DNS: manifest.DNSDirect}}},
+	}}
+	want := "candidate can't route what conflicts with another app on this machine: " +
+		"shared.example.com/a/ for alpha is already routed to existing's alpha; " +
+		"shared.example.com uses dns \"direct\" here and \"proxied\" in existing; routes sharing a host must use one DNS mode; " +
+		"shared.example.com/a/ for alpha is already routed to existing's zeta; " +
+		"shared.example.com uses dns \"direct\" here and \"proxied\" in existing; routes sharing a host must use one DNS mode"
+	for range 10 {
+		if err := CheckRouteConflicts(context.Background(), store, candidate); err == nil || err.Error() != want {
+			t.Fatalf("conflict diagnostics changed: %v", err)
+		}
+	}
+}
+
+func TestRoutePreflightStillRejectsUnreadableUnrelatedManifests(t *testing.T) {
+	store, err := state.Open(filepath.Join(t.TempDir(), "state.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	if err := store.SaveRevision(context.Background(), state.Revision{App: "broken", ID: "r1", Status: state.RevisionActive, Manifest: []byte("{")}); err != nil {
+		t.Fatal(err)
+	}
+	if err := CheckRouteConflicts(context.Background(), store, routeFixture(t, "candidate", "/", "")); err == nil || !strings.Contains(err.Error(), "revision broken/r1 manifest:") {
+		t.Fatalf("unreadable active manifest was ignored: %v", err)
+	}
+}

@@ -689,6 +689,7 @@ remains available for initial binary installation.
 | [docs/features/safe-moves.md](docs/features/safe-moves.md) | source fencing and deliberate target cutover |
 | [docs/features/release-safety.md](docs/features/release-safety.md) | release rehearsal and data-aware rollback |
 | [docs/features/deployment-sources.md](docs/features/deployment-sources.md) | approved source captures, safe retries and cleanup |
+| [docs/technical/performance.md](docs/technical/performance.md) | benchmark workloads, repeated comparisons and optimization results |
 | [docs/technical/minio-image-availability.md](docs/technical/minio-image-availability.md) | open object-service image distribution issue |
 | [lane/README.md](lane/README.md) | the proving ground |
 

@@ -1140,10 +1140,18 @@ func (m *Manifest) RouteFor(host, path string) (string, Workload, Route, bool) {
 		bestRoute Route
 		bestLen   = -1
 	)
-	for _, name := range m.WorkloadNames() {
-		for _, r := range m.Workloads[name].Routes {
+	for name, w := range m.Workloads {
+		for _, r := range w.Routes {
+			if r.Host != host {
+				continue
+			}
 			prefix := r.NormalizedPath()
-			if r.Host == host && strings.HasPrefix(probe, prefix) && len(prefix) > bestLen {
+			if !strings.HasPrefix(probe, prefix) {
+				continue
+			}
+			// Equal prefixes keep the lexical workload order used by the
+			// sorted traversal, and the first route within that workload.
+			if len(prefix) > bestLen || len(prefix) == bestLen && name < bestName {
 				bestName, bestRoute, bestLen = name, r, len(prefix)
 			}
 		}

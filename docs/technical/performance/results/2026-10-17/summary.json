@@ -1,0 +1,2742 @@
+{
+  "baseline": "6d2398eaea873909dfbdf08048e7882680e11429",
+  "candidate": "56f1ffc2efbf59049c79920a646f725f8024c0e4",
+  "toolchain": "Go 1.27.1, darwin/arm64, Apple M5 Pro",
+  "samples_per_case": 10,
+  "benchtime": "250ms",
+  "workers": 1,
+  "selected": [
+    "BenchmarkParseMetrics/Hosts10",
+    "BenchmarkTrafficUnchanged/Hosts100",
+    "BenchmarkTrafficRollups/Hosts10",
+    "BenchmarkConfigBehind/apps=100",
+    "BenchmarkRouteFor/Workloads32/Hit",
+    "BenchmarkCheckRouteConflicts/Apps100/Workloads32",
+    "BenchmarkSchedulerFirstDeploy/Revisions1000",
+    "BenchmarkStateRevisionReads/apps=25/history=32/ActiveRevisions"
+  ],
+  "cases": [
+    {
+      "name": "BenchmarkParseMetrics/Hosts1",
+      "before": {
+        "ns/op": 658847.0,
+        "B/op": 1158666.0,
+        "allocs/op": 2205.0
+      },
+      "after": {
+        "ns/op": 101271.0,
+        "B/op": 69872.0,
+        "allocs/op": 409.0
+      },
+      "delta": {
+        "ns/op": -84.62905651843296,
+        "B/op": -93.96961678343888,
+        "allocs/op": -81.45124716553288
+      },
+      "stats": {
+        "sec/op": {
+          "before_ci": "123%",
+          "after_ci": "99%",
+          "comparison": "-84.63%",
+          "p": "p=0.000 n=10"
+        },
+        "B/op": {
+          "before_ci": "0%",
+          "after_ci": "0%",
+          "comparison": "-93.97%",
+          "p": "p=0.000 n=10"
+        },
+        "allocs/op": {
+          "before_ci": "0%",
+          "after_ci": "0%",
+          "comparison": "-81.45%",
+          "p": "p=0.000 n=10"
+        }
+      }
+    },
+    {
+      "name": "BenchmarkParseMetrics/Hosts10",
+      "before": {
+        "ns/op": 2488475.0,
+        "B/op": 2111001.0,
+        "allocs/op": 20443.0
+      },
+      "after": {
+        "ns/op": 925858.0,
+        "B/op": 640752.0,
+        "allocs/op": 3302.0
+      },
+      "delta": {
+        "ns/op": -62.79416108259075,
+        "B/op": -69.64700632543519,
+        "allocs/op": -83.84777185344616
+      },
+      "stats": {
+        "sec/op": {
+          "before_ci": "130%",
+          "after_ci": "63%",
+          "comparison": "-62.79%",
+          "p": "p=0.000 n=10"
+        },
+        "B/op": {
+          "before_ci": "0%",
+          "after_ci": "0%",
+          "comparison": "-69.65%",
+          "p": "p=0.000 n=10"
+        },
+        "allocs/op": {
+          "before_ci": "0%",
+          "after_ci": "0%",
+          "comparison": "-83.85%",
+          "p": "p=0.000 n=10"
+        }
+      },
+      "label": "Metrics parsing",
+      "workload": "10 hosts, 1,095 series",
+      "target_met": true
+    },
+    {
+      "name": "BenchmarkParseMetrics/Hosts100",
+      "before": {
+        "ns/op": 32503885.0,
+        "B/op": 11885242.0,
+        "allocs/op": 202790.0
+      },
+      "after": {
+        "ns/op": 14260251.5,
+        "B/op": 6600432.0,
+        "allocs/op": 32199.0
+      },
+      "delta": {
+        "ns/op": -56.12754752239617,
+        "B/op": -44.46531252792328,
+        "allocs/op": -84.12199812614034
+      },
+      "stats": {
+        "sec/op": {
+          "before_ci": "60%",
+          "after_ci": "150%",
+          "comparison": "-56.13%",
+          "p": "p=0.035 n=10"
+        },
+        "B/op": {
+          "before_ci": "0%",
+          "after_ci": "0%",
+          "comparison": "-44.47%",
+          "p": "p=0.000 n=10"
+        },
+        "allocs/op": {
+          "before_ci": "0%",
+          "after_ci": "0%",
+          "comparison": "-84.12%",
+          "p": "p=0.000 n=10"
+        }
+      }
+    },
+    {
+      "name": "BenchmarkTrafficUnchanged/Hosts1",
+      "before": {
+        "ns/op": 166809.0,
+        "B/op": 59313.0,
+        "allocs/op": 1218.0
+      },
+      "after": {
+        "ns/op": 71002.5,
+        "B/op": 14760.0,
+        "allocs/op": 70.0
+      },
+      "delta": {
+        "ns/op": -57.434850637555535,
+        "B/op": -75.11506752313996,
+        "allocs/op": -94.25287356321839
+      },
+      "stats": {
+        "sec/op": {
+          "before_ci": "135%",
+          "after_ci": "128%",
+          "comparison": "-57.43%",
+          "p": "p=0.002 n=10"
+        },
+        "B/op": {
+          "before_ci": "0%",
+          "after_ci": "0%",
+          "comparison": "-75.12%",
+          "p": "p=0.000 n=10"
+        },
+        "allocs/op": {
+          "before_ci": "0%",
+          "after_ci": "0%",
+          "comparison": "-94.25%",
+          "p": "p=0.000 n=10"
+        }
+      }
+    },
+    {
+      "name": "BenchmarkTrafficUnchanged/Hosts10",
+      "before": {
+        "ns/op": 2706807.5,
+        "B/op": 634936.0,
+        "allocs/op": 12110.0
+      },
+      "after": {
+        "ns/op": 783283.5,
+        "B/op": 134792.0,
+        "allocs/op": 625.0
+      },
+      "delta": {
+        "ns/op": -71.06246011214317,
+        "B/op": -78.77077374727531,
+        "allocs/op": -94.83897605284889
+      },
+      "stats": {
+        "sec/op": {
+          "before_ci": "113%",
+          "after_ci": "164%",
+          "comparison": "-71.06%",
+          "p": "p=0.002 n=10"
+        },
+        "B/op": {
+          "before_ci": "0%",
+          "after_ci": "0%",
+          "comparison": "-78.77%",
+          "p": "p=0.000 n=10"
+        },
+        "allocs/op": {
+          "before_ci": "0%",
+          "after_ci": "0%",
+          "comparison": "-94.84%",
+          "p": "p=0.000 n=10"
+        }
+      }
+    },
+    {
+      "name": "BenchmarkTrafficUnchanged/Hosts100",
+      "before": {
+        "ns/op": 28004724.0,
+        "B/op": 6134936.5,
+        "allocs/op": 120979.0
+      },
+      "after": {
+        "ns/op": 9784090.0,
+        "B/op": 1242808.0,
+        "allocs/op": 6146.0
+      },
+      "delta": {
+        "ns/op": -65.06271584751202,
+        "B/op": -79.74212121021952,
+        "allocs/op": -94.91977946585772
+      },
+      "stats": {
+        "sec/op": {
+          "before_ci": "145%",
+          "after_ci": "206%",
+          "comparison": "-65.06%",
+          "p": "p=0.023 n=10"
+        },
+        "B/op": {
+          "before_ci": "0%",
+          "after_ci": "0%",
+          "comparison": "-79.74%",
+          "p": "p=0.000 n=10"
+        },
+        "allocs/op": {
+          "before_ci": "0%",
+          "after_ci": "0%",
+          "comparison": "-94.92%",
+          "p": "p=0.000 n=10"
+        }
+      },
+      "label": "Counter bookkeeping",
+      "workload": "100 hosts, unchanged scrape",
+      "target_met": true
+    },
+    {
+      "name": "BenchmarkTrafficRollups/Hosts1",
+      "before": {
+        "ns/op": 1633232.5,
+        "B/op": 67852.5,
+        "allocs/op": 1442.0
+      },
+      "after": {
+        "ns/op": 827743.5,
+        "B/op": 23297.5,
+        "allocs/op": 294.0
+      },
+      "delta": {
+        "ns/op": -49.31869773593166,
+        "B/op": -65.6644928337202,
+        "allocs/op": -79.6116504854369
+      },
+      "stats": {
+        "sec/op": {
+          "before_ci": "202%",
+          "after_ci": "384%",
+          "comparison": "~",
+          "p": "p=0.190 n=10"
+        },
+        "B/op": {
+          "before_ci": "0%",
+          "after_ci": "0%",
+          "comparison": "-65.66%",
+          "p": "p=0.000 n=10"
+        },
+        "allocs/op": {
+          "before_ci": "0%",
+          "after_ci": "0%",
+          "comparison": "-79.61%",
+          "p": "p=0.000 n=10"
+        }
+      }
+    },
+    {
+      "name": "BenchmarkTrafficRollups/Hosts10",
+      "before": {
+        "ns/op": 12392446.5,
+        "B/op": 720760.0,
+        "allocs/op": 14353.0
+      },
+      "after": {
+        "ns/op": 6769187.5,
+        "B/op": 220608.5,
+        "allocs/op": 2868.0
+      },
+      "delta": {
+        "ns/op": -45.376504147102835,
+        "B/op": -69.39223874798823,
+        "allocs/op": -80.01811467985786
+      },
+      "stats": {
+        "sec/op": {
+          "before_ci": "84%",
+          "after_ci": "220%",
+          "comparison": "~",
+          "p": "p=0.063 n=10"
+        },
+        "B/op": {
+          "before_ci": "0%",
+          "after_ci": "0%",
+          "comparison": "-69.39%",
+          "p": "p=0.000 n=10"
+        },
+        "allocs/op": {
+          "before_ci": "0%",
+          "after_ci": "0%",
+          "comparison": "-80.02%",
+          "p": "p=0.000 n=10"
+        }
+      },
+      "label": "Durable traffic rollups",
+      "workload": "10 hosts, 120 rollups",
+      "target_met": true
+    },
+    {
+      "name": "BenchmarkSummarize/Hours24",
+      "before": {
+        "ns/op": 23136.5,
+        "B/op": 1096.0,
+        "allocs/op": 9.0
+      },
+      "after": {
+        "ns/op": 57387.5,
+        "B/op": 1096.0,
+        "allocs/op": 9.0
+      },
+      "delta": {
+        "ns/op": 148.0388131307674,
+        "B/op": 0.0,
+        "allocs/op": 0.0
+      },
+      "stats": {
+        "sec/op": {
+          "before_ci": "117%",
+          "after_ci": "59%",
+          "comparison": "~",
+          "p": "p=0.089 n=10"
+        },
+        "B/op": {
+          "before_ci": "0%",
+          "after_ci": "0%",
+          "comparison": "~",
+          "p": "p=1.000 n=10"
+        },
+        "allocs/op": {
+          "before_ci": "0%",
+          "after_ci": "0%",
+          "comparison": "~",
+          "p": "p=1.000 n=10"
+        }
+      }
+    },
+    {
+      "name": "BenchmarkSummarize/Hours168",
+      "before": {
+        "ns/op": 148477.0,
+        "B/op": 9512.0,
+        "allocs/op": 15.0
+      },
+      "after": {
+        "ns/op": 309779.5,
+        "B/op": 9512.0,
+        "allocs/op": 15.0
+      },
+      "delta": {
+        "ns/op": 108.63803821467299,
+        "B/op": 0.0,
+        "allocs/op": 0.0
+      },
+      "stats": {
+        "sec/op": {
+          "before_ci": "69%",
+          "after_ci": "57%",
+          "comparison": "~",
+          "p": "p=0.075 n=10"
+        },
+        "B/op": {
+          "before_ci": "0%",
+          "after_ci": "0%",
+          "comparison": "~",
+          "p": "p=1.000 n=10"
+        },
+        "allocs/op": {
+          "before_ci": "0%",
+          "after_ci": "0%",
+          "comparison": "~",
+          "p": "p=1.000 n=10"
+        }
+      }
+    },
+    {
+      "name": "BenchmarkSummarize/Hours2160",
+      "before": {
+        "ns/op": 2767791.0,
+        "B/op": 148312.0,
+        "allocs/op": 33.0
+      },
+      "after": {
+        "ns/op": 2406256.0,
+        "B/op": 148312.0,
+        "allocs/op": 33.0
+      },
+      "delta": {
+        "ns/op": -13.062221822384712,
+        "B/op": 0.0,
+        "allocs/op": 0.0
+      },
+      "stats": {
+        "sec/op": {
+          "before_ci": "92%",
+          "after_ci": "157%",
+          "comparison": "~",
+          "p": "p=0.579 n=10"
+        },
+        "B/op": {
+          "before_ci": "0%",
+          "after_ci": "0%",
+          "comparison": "~",
+          "p": "p=1.000 n=10"
+        },
+        "allocs/op": {
+          "before_ci": "0%",
+          "after_ci": "0%",
+          "comparison": "~",
+          "p": "p=1.000 n=10"
+        }
+      }
+    },
+    {
+      "name": "BenchmarkConfigBehind/apps=10",
+      "before": {
+        "ns/op": 1015285.5,
+        "B/op": 329294.0,
+        "allocs/op": 3733.0
+      },
+      "after": {
+        "ns/op": 247965.0,
+        "B/op": 151728.0,
+        "allocs/op": 372.0
+      },
+      "delta": {
+        "ns/op": -75.57682051009297,
+        "B/op": -53.92324184467376,
+        "allocs/op": -90.03482453790517
+      },
+      "stats": {
+        "sec/op": {
+          "before_ci": "25%",
+          "after_ci": "96%",
+          "comparison": "-75.58%",
+          "p": "p=0.000 n=10"
+        },
+        "B/op": {
+          "before_ci": "0%",
+          "after_ci": "0%",
+          "comparison": "-53.92%",
+          "p": "p=0.000 n=10"
+        },
+        "allocs/op": {
+          "before_ci": "0%",
+          "after_ci": "0%",
+          "comparison": "-90.03%",
+          "p": "p=0.000 n=10"
+        }
+      }
+    },
+    {
+      "name": "BenchmarkConfigBehind/apps=100",
+      "before": {
+        "ns/op": 9972819.0,
+        "B/op": 3128543.5,
+        "allocs/op": 36382.0
+      },
+      "after": {
+        "ns/op": 2912063.0,
+        "B/op": 1406300.0,
+        "allocs/op": 3532.0
+      },
+      "delta": {
+        "ns/op": -70.80000148403376,
+        "B/op": -55.04937041789574,
+        "allocs/op": -90.29190258919246
+      },
+      "stats": {
+        "sec/op": {
+          "before_ci": "76%",
+          "after_ci": "145%",
+          "comparison": "-70.80%",
+          "p": "p=0.000 n=10"
+        },
+        "B/op": {
+          "before_ci": "0%",
+          "after_ci": "0%",
+          "comparison": "-55.05%",
+          "p": "p=0.000 n=10"
+        },
+        "allocs/op": {
+          "before_ci": "0%",
+          "after_ci": "0%",
+          "comparison": "-90.29%",
+          "p": "p=0.000 n=10"
+        }
+      },
+      "label": "Edge configuration",
+      "workload": "100 apps, 400 routes",
+      "target_met": true
+    },
+    {
+      "name": "BenchmarkConfigBehind/apps=1000",
+      "before": {
+        "ns/op": 113240590.0,
+        "B/op": 44232087.5,
+        "allocs/op": 362690.5
+      },
+      "after": {
+        "ns/op": 22018523.0,
+        "B/op": 14013256.0,
+        "allocs/op": 35047.0
+      },
+      "delta": {
+        "ns/op": -80.55597997149255,
+        "B/op": -68.31880023749727,
+        "allocs/op": -90.33694017350882
+      },
+      "stats": {
+        "sec/op": {
+          "before_ci": "62%",
+          "after_ci": "235%",
+          "comparison": "-80.56%",
+          "p": "p=0.002 n=10"
+        },
+        "B/op": {
+          "before_ci": "30%",
+          "after_ci": "0%",
+          "comparison": "-68.32%",
+          "p": "p=0.000 n=10"
+        },
+        "allocs/op": {
+          "before_ci": "0%",
+          "after_ci": "0%",
+          "comparison": "-90.34%",
+          "p": "p=0.000 n=10"
+        }
+      }
+    },
+    {
+      "name": "BenchmarkStateRevisionReads/apps=1/history=32/ActiveRevisions",
+      "before": {
+        "ns/op": 25402.0,
+        "B/op": 4032.0,
+        "allocs/op": 69.0
+      },
+      "after": {
+        "ns/op": 21568.0,
+        "B/op": 4032.0,
+        "allocs/op": 69.0
+      },
+      "delta": {
+        "ns/op": -15.093299740177935,
+        "B/op": 0.0,
+        "allocs/op": 0.0
+      },
+      "stats": {
+        "sec/op": {
+          "before_ci": "70%",
+          "after_ci": "23%",
+          "comparison": "~",
+          "p": "p=0.280 n=10"
+        },
+        "B/op": {
+          "before_ci": "0%",
+          "after_ci": "0%",
+          "comparison": "~",
+          "p": "p=1.000 n=10"
+        },
+        "allocs/op": {
+          "before_ci": "0%",
+          "after_ci": "0%",
+          "comparison": "~",
+          "p": "p=1.000 n=10"
+        }
+      }
+    },
+    {
+      "name": "BenchmarkStateRevisionReads/apps=1/history=32/RevisionWithStatus/active",
+      "before": {
+        "ns/op": 28762.0,
+        "B/op": 3992.0,
+        "allocs/op": 72.0
+      },
+      "after": {
+        "ns/op": 30691.5,
+        "B/op": 3992.0,
+        "allocs/op": 72.0
+      },
+      "delta": {
+        "ns/op": 6.708504276475913,
+        "B/op": 0.0,
+        "allocs/op": 0.0
+      },
+      "stats": {
+        "sec/op": {
+          "before_ci": "53%",
+          "after_ci": "52%",
+          "comparison": "~",
+          "p": "p=0.971 n=10"
+        },
+        "B/op": {
+          "before_ci": "0%",
+          "after_ci": "0%",
+          "comparison": "~",
+          "p": "p=1.000 n=10"
+        },
+        "allocs/op": {
+          "before_ci": "0%",
+          "after_ci": "0%",
+          "comparison": "~",
+          "p": "p=1.000 n=10"
+        }
+      }
+    },
+    {
+      "name": "BenchmarkStateRevisionReads/apps=1/history=32/RevisionWithStatus/previous",
+      "before": {
+        "ns/op": 26856.5,
+        "B/op": 3992.0,
+        "allocs/op": 72.0
+      },
+      "after": {
+        "ns/op": 30792.0,
+        "B/op": 3992.0,
+        "allocs/op": 72.0
+      },
+      "delta": {
+        "ns/op": 14.653808202855911,
+        "B/op": 0.0,
+        "allocs/op": 0.0
+      },
+      "stats": {
+        "sec/op": {
+          "before_ci": "42%",
+          "after_ci": "28%",
+          "comparison": "~",
+          "p": "p=0.853 n=10"
+        },
+        "B/op": {
+          "before_ci": "0%",
+          "after_ci": "0%",
+          "comparison": "~",
+          "p": "p=1.000 n=10"
+        },
+        "allocs/op": {
+          "before_ci": "0%",
+          "after_ci": "0%",
+          "comparison": "~",
+          "p": "p=1.000 n=10"
+        }
+      }
+    },
+    {
+      "name": "BenchmarkStateRevisionReads/apps=1/history=32/Revisions",
+      "before": {
+        "ns/op": 192565.0,
+        "B/op": 102012.0,
+        "allocs/op": 1222.0
+      },
+      "after": {
+        "ns/op": 189912.0,
+        "B/op": 102012.0,
+        "allocs/op": 1222.0
+      },
+      "delta": {
+        "ns/op": -1.3777166151689002,
+        "B/op": 0.0,
+        "allocs/op": 0.0
+      },
+      "stats": {
+        "sec/op": {
+          "before_ci": "47%",
+          "after_ci": "27%",
+          "comparison": "~",
+          "p": "p=0.353 n=10"
+        },
+        "B/op": {
+          "before_ci": "0%",
+          "after_ci": "0%",
+          "comparison": "~",
+          "p": "p=1.000 n=10"
+        },
+        "allocs/op": {
+          "before_ci": "0%",
+          "after_ci": "0%",
+          "comparison": "~",
+          "p": "p=1.000 n=10"
+        }
+      }
+    },
+    {
+      "name": "BenchmarkStateRevisionReads/apps=25/history=32/ActiveRevisions",
+      "before": {
+        "ns/op": 295110.0,
+        "B/op": 81960.0,
+        "allocs/op": 962.0
+      },
+      "after": {
+        "ns/op": 206185.0,
+        "B/op": 81959.0,
+        "allocs/op": 962.0
+      },
+      "delta": {
+        "ns/op": -30.132831825421025,
+        "B/op": -0.0012201073694484421,
+        "allocs/op": 0.0
+      },
+      "stats": {
+        "sec/op": {
+          "before_ci": "37%",
+          "after_ci": "35%",
+          "comparison": "-30.13%",
+          "p": "p=0.043 n=10"
+        },
+        "B/op": {
+          "before_ci": "0%",
+          "after_ci": "0%",
+          "comparison": "~",
+          "p": "p=0.125 n=10"
+        },
+        "allocs/op": {
+          "before_ci": "0%",
+          "after_ci": "0%",
+          "comparison": "~",
+          "p": "p=1.000 n=10"
+        }
+      },
+      "label": "Active revision read",
+      "workload": "25 apps, 32 retained revisions each",
+      "target_met": true
+    },
+    {
+      "name": "BenchmarkStateRevisionReads/apps=25/history=32/RevisionWithStatus/active",
+      "before": {
+        "ns/op": 29170.5,
+        "B/op": 3992.0,
+        "allocs/op": 72.0
+      },
+      "after": {
+        "ns/op": 28973.5,
+        "B/op": 3992.0,
+        "allocs/op": 72.0
+      },
+      "delta": {
+        "ns/op": -0.67533981248179,
+        "B/op": 0.0,
+        "allocs/op": 0.0
+      },
+      "stats": {
+        "sec/op": {
+          "before_ci": "50%",
+          "after_ci": "23%",
+          "comparison": "~",
+          "p": "p=0.579 n=10"
+        },
+        "B/op": {
+          "before_ci": "0%",
+          "after_ci": "0%",
+          "comparison": "~",
+          "p": "p=1.000 n=10"
+        },
+        "allocs/op": {
+          "before_ci": "0%",
+          "after_ci": "0%",
+          "comparison": "~",
+          "p": "p=1.000 n=10"
+        }
+      }
+    },
+    {
+      "name": "BenchmarkStateRevisionReads/apps=25/history=32/RevisionWithStatus/previous",
+      "before": {
+        "ns/op": 29715.5,
+        "B/op": 3992.0,
+        "allocs/op": 72.0
+      },
+      "after": {
+        "ns/op": 27808.5,
+        "B/op": 3992.0,
+        "allocs/op": 72.0
+      },
+      "delta": {
+        "ns/op": -6.4175262068617345,
+        "B/op": 0.0,
+        "allocs/op": 0.0
+      },
+      "stats": {
+        "sec/op": {
+          "before_ci": "36%",
+          "after_ci": "48%",
+          "comparison": "~",
+          "p": "p=0.579 n=10"
+        },
+        "B/op": {
+          "before_ci": "0%",
+          "after_ci": "0%",
+          "comparison": "~",
+          "p": "p=1.000 n=10"
+        },
+        "allocs/op": {
+          "before_ci": "0%",
+          "after_ci": "0%",
+          "comparison": "~",
+          "p": "p=1.000 n=10"
+        }
+      }
+    },
+    {
+      "name": "BenchmarkStateRevisionReads/apps=25/history=32/Revisions",
+      "before": {
+        "ns/op": 233481.0,
+        "B/op": 102012.0,
+        "allocs/op": 1222.0
+      },
+      "after": {
+        "ns/op": 162227.5,
+        "B/op": 102012.0,
+        "allocs/op": 1222.0
+      },
+      "delta": {
+        "ns/op": -30.517900814199017,
+        "B/op": 0.0,
+        "allocs/op": 0.0
+      },
+      "stats": {
+        "sec/op": {
+          "before_ci": "46%",
+          "after_ci": "36%",
+          "comparison": "~",
+          "p": "p=0.075 n=10"
+        },
+        "B/op": {
+          "before_ci": "0%",
+          "after_ci": "0%",
+          "comparison": "~",
+          "p": "p=1.000 n=10"
+        },
+        "allocs/op": {
+          "before_ci": "0%",
+          "after_ci": "0%",
+          "comparison": "~",
+          "p": "p=1.000 n=10"
+        }
+      }
+    },
+    {
+      "name": "BenchmarkStateRevisionReads/apps=25/history=512/ActiveRevisions",
+      "before": {
+        "ns/op": 8118024.5,
+        "B/op": 82458.5,
+        "allocs/op": 1012.0
+      },
+      "after": {
+        "ns/op": 6048476.0,
+        "B/op": 82426.0,
+        "allocs/op": 1012.0
+      },
+      "delta": {
+        "ns/op": -25.49325269959458,
+        "B/op": -0.03941376571244826,
+        "allocs/op": 0.0
+      },
+      "stats": {
+        "sec/op": {
+          "before_ci": "286%",
+          "after_ci": "88%",
+          "comparison": "~",
+          "p": "p=0.218 n=10"
+        },
+        "B/op": {
+          "before_ci": "1%",
+          "after_ci": "0%",
+          "comparison": "~",
+          "p": "p=0.128 n=10"
+        },
+        "allocs/op": {
+          "before_ci": "0%",
+          "after_ci": "0%",
+          "comparison": "~",
+          "p": "p=1.000 n=10"
+        }
+      }
+    },
+    {
+      "name": "BenchmarkStateRevisionReads/apps=25/history=512/RevisionWithStatus/active",
+      "before": {
+        "ns/op": 133913.0,
+        "B/op": 3992.0,
+        "allocs/op": 74.0
+      },
+      "after": {
+        "ns/op": 121325.5,
+        "B/op": 3992.0,
+        "allocs/op": 74.0
+      },
+      "delta": {
+        "ns/op": -9.399759545376474,
+        "B/op": 0.0,
+        "allocs/op": 0.0
+      },
+      "stats": {
+        "sec/op": {
+          "before_ci": "114%",
+          "after_ci": "79%",
+          "comparison": "~",
+          "p": "p=0.393 n=10"
+        },
+        "B/op": {
+          "before_ci": "0%",
+          "after_ci": "0%",
+          "comparison": "~",
+          "p": "p=1.000 n=10"
+        },
+        "allocs/op": {
+          "before_ci": "0%",
+          "after_ci": "0%",
+          "comparison": "~",
+          "p": "p=1.000 n=10"
+        }
+      }
+    },
+    {
+      "name": "BenchmarkStateRevisionReads/apps=25/history=512/RevisionWithStatus/previous",
+      "before": {
+        "ns/op": 119858.0,
+        "B/op": 3992.0,
+        "allocs/op": 74.0
+      },
+      "after": {
+        "ns/op": 117616.0,
+        "B/op": 3992.0,
+        "allocs/op": 74.0
+      },
+      "delta": {
+        "ns/op": -1.8705468137295789,
+        "B/op": 0.0,
+        "allocs/op": 0.0
+      },
+      "stats": {
+        "sec/op": {
+          "before_ci": "172%",
+          "after_ci": "69%",
+          "comparison": "~",
+          "p": "p=0.684 n=10"
+        },
+        "B/op": {
+          "before_ci": "0%",
+          "after_ci": "0%",
+          "comparison": "~",
+          "p": "p=1.000 n=10"
+        },
+        "allocs/op": {
+          "before_ci": "0%",
+          "after_ci": "0%",
+          "comparison": "~",
+          "p": "p=1.000 n=10"
+        }
+      }
+    },
+    {
+      "name": "BenchmarkStateRevisionReads/apps=25/history=512/Revisions",
+      "before": {
+        "ns/op": 2771726.5,
+        "B/op": 1635388.0,
+        "allocs/op": 19696.0
+      },
+      "after": {
+        "ns/op": 2452798.0,
+        "B/op": 1635388.0,
+        "allocs/op": 19696.0
+      },
+      "delta": {
+        "ns/op": -11.506492433506699,
+        "B/op": 0.0,
+        "allocs/op": 0.0
+      },
+      "stats": {
+        "sec/op": {
+          "before_ci": "27%",
+          "after_ci": "45%",
+          "comparison": "~",
+          "p": "p=0.579 n=10"
+        },
+        "B/op": {
+          "before_ci": "0%",
+          "after_ci": "0%",
+          "comparison": "~",
+          "p": "p=0.779 n=10"
+        },
+        "allocs/op": {
+          "before_ci": "0%",
+          "after_ci": "0%",
+          "comparison": "~",
+          "p": "p=1.000 n=10"
+        }
+      }
+    },
+    {
+      "name": "BenchmarkStateRevisionReads/apps=100/history=512/ActiveRevisions",
+      "before": {
+        "ns/op": 31750320.5,
+        "B/op": 329169.0,
+        "allocs/op": 3940.0
+      },
+      "after": {
+        "ns/op": 35171060.0,
+        "B/op": 328883.5,
+        "allocs/op": 3939.0
+      },
+      "delta": {
+        "ns/op": 10.773873920422306,
+        "B/op": -0.08673356239500274,
+        "allocs/op": -0.025380710659894667
+      },
+      "stats": {
+        "sec/op": {
+          "before_ci": "104%",
+          "after_ci": "75%",
+          "comparison": "~",
+          "p": "p=0.436 n=10"
+        },
+        "B/op": {
+          "before_ci": "0%",
+          "after_ci": "0%",
+          "comparison": "~",
+          "p": "p=0.060 n=10"
+        },
+        "allocs/op": {
+          "before_ci": "0%",
+          "after_ci": "0%",
+          "comparison": "~",
+          "p": "p=0.270 n=10"
+        }
+      }
+    },
+    {
+      "name": "BenchmarkStateRevisionReads/apps=100/history=512/RevisionWithStatus/active",
+      "before": {
+        "ns/op": 132629.0,
+        "B/op": 3992.0,
+        "allocs/op": 74.0
+      },
+      "after": {
+        "ns/op": 117403.5,
+        "B/op": 3992.0,
+        "allocs/op": 74.0
+      },
+      "delta": {
+        "ns/op": -11.479766868482756,
+        "B/op": 0.0,
+        "allocs/op": 0.0
+      },
+      "stats": {
+        "sec/op": {
+          "before_ci": "52%",
+          "after_ci": "15%",
+          "comparison": "~",
+          "p": "p=0.218 n=10"
+        },
+        "B/op": {
+          "before_ci": "0%",
+          "after_ci": "0%",
+          "comparison": "~",
+          "p": "p=1.000 n=10"
+        },
+        "allocs/op": {
+          "before_ci": "0%",
+          "after_ci": "0%",
+          "comparison": "~",
+          "p": "p=1.000 n=10"
+        }
+      }
+    },
+    {
+      "name": "BenchmarkStateRevisionReads/apps=100/history=512/RevisionWithStatus/previous",
+      "before": {
+        "ns/op": 148774.0,
+        "B/op": 3992.0,
+        "allocs/op": 74.0
+      },
+      "after": {
+        "ns/op": 121725.0,
+        "B/op": 3992.0,
+        "allocs/op": 74.0
+      },
+      "delta": {
+        "ns/op": -18.181268232352434,
+        "B/op": 0.0,
+        "allocs/op": 0.0
+      },
+      "stats": {
+        "sec/op": {
+          "before_ci": "66%",
+          "after_ci": "65%",
+          "comparison": "~",
+          "p": "p=0.579 n=10"
+        },
+        "B/op": {
+          "before_ci": "0%",
+          "after_ci": "0%",
+          "comparison": "~",
+          "p": "p=1.000 n=10"
+        },
+        "allocs/op": {
+          "before_ci": "0%",
+          "after_ci": "0%",
+          "comparison": "~",
+          "p": "p=1.000 n=10"
+        }
+      }
+    },
+    {
+      "name": "BenchmarkStateRevisionReads/apps=100/history=512/Revisions",
+      "before": {
+        "ns/op": 2882656.0,
+        "B/op": 1635308.0,
+        "allocs/op": 19676.0
+      },
+      "after": {
+        "ns/op": 2329090.5,
+        "B/op": 1635306.0,
+        "allocs/op": 19676.0
+      },
+      "delta": {
+        "ns/op": -19.203314582107613,
+        "B/op": -0.00012230112003130955,
+        "allocs/op": 0.0
+      },
+      "stats": {
+        "sec/op": {
+          "before_ci": "135%",
+          "after_ci": "33%",
+          "comparison": "~",
+          "p": "p=0.190 n=10"
+        },
+        "B/op": {
+          "before_ci": "0%",
+          "after_ci": "0%",
+          "comparison": "~",
+          "p": "p=0.264 n=10"
+        },
+        "allocs/op": {
+          "before_ci": "0%",
+          "after_ci": "0%",
+          "comparison": "~",
+          "p": "p=1.000 n=10"
+        }
+      }
+    },
+    {
+      "name": "BenchmarkStateBackupReads/apps=1/history=32/LatestForApp",
+      "before": {
+        "ns/op": 39350.0,
+        "B/op": 2576.0,
+        "allocs/op": 63.0
+      },
+      "after": {
+        "ns/op": 36043.0,
+        "B/op": 2576.0,
+        "allocs/op": 63.0
+      },
+      "delta": {
+        "ns/op": -8.40406607369758,
+        "B/op": 0.0,
+        "allocs/op": 0.0
+      },
+      "stats": {
+        "sec/op": {
+          "before_ci": "47%",
+          "after_ci": "14%",
+          "comparison": "~",
+          "p": "p=0.280 n=10"
+        },
+        "B/op": {
+          "before_ci": "0%",
+          "after_ci": "0%",
+          "comparison": "~",
+          "p": "p=1.000 n=10"
+        },
+        "allocs/op": {
+          "before_ci": "0%",
+          "after_ci": "0%",
+          "comparison": "~",
+          "p": "p=1.000 n=10"
+        }
+      }
+    },
+    {
+      "name": "BenchmarkStateBackupReads/apps=1/history=32/AppHistory",
+      "before": {
+        "ns/op": 95649.0,
+        "B/op": 22264.0,
+        "allocs/op": 370.0
+      },
+      "after": {
+        "ns/op": 85947.0,
+        "B/op": 22264.0,
+        "allocs/op": 370.0
+      },
+      "delta": {
+        "ns/op": -10.14333657434997,
+        "B/op": 0.0,
+        "allocs/op": 0.0
+      },
+      "stats": {
+        "sec/op": {
+          "before_ci": "73%",
+          "after_ci": "14%",
+          "comparison": "~",
+          "p": "p=0.280 n=10"
+        },
+        "B/op": {
+          "before_ci": "0%",
+          "after_ci": "0%",
+          "comparison": "~",
+          "p": "p=1.000 n=10"
+        },
+        "allocs/op": {
+          "before_ci": "0%",
+          "after_ci": "0%",
+          "comparison": "~",
+          "p": "p=1.000 n=10"
+        }
+      }
+    },
+    {
+      "name": "BenchmarkStateBackupReads/apps=1/history=32/FleetHistory",
+      "before": {
+        "ns/op": 94063.5,
+        "B/op": 22056.0,
+        "allocs/op": 368.0
+      },
+      "after": {
+        "ns/op": 83943.0,
+        "B/op": 22056.0,
+        "allocs/op": 368.0
+      },
+      "delta": {
+        "ns/op": -10.759221164426158,
+        "B/op": 0.0,
+        "allocs/op": 0.0
+      },
+      "stats": {
+        "sec/op": {
+          "before_ci": "51%",
+          "after_ci": "20%",
+          "comparison": "~",
+          "p": "p=0.393 n=10"
+        },
+        "B/op": {
+          "before_ci": "0%",
+          "after_ci": "0%",
+          "comparison": "~",
+          "p": "p=1.000 n=10"
+        },
+        "allocs/op": {
+          "before_ci": "0%",
+          "after_ci": "0%",
+          "comparison": "~",
+          "p": "p=1.000 n=10"
+        }
+      }
+    },
+    {
+      "name": "BenchmarkStateBackupReads/apps=1/history=32/FleetBackupHistory",
+      "before": {
+        "ns/op": 97476.0,
+        "B/op": 22312.0,
+        "allocs/op": 372.0
+      },
+      "after": {
+        "ns/op": 81658.5,
+        "B/op": 22312.0,
+        "allocs/op": 372.0
+      },
+      "delta": {
+        "ns/op": -16.227071279084083,
+        "B/op": 0.0,
+        "allocs/op": 0.0
+      },
+      "stats": {
+        "sec/op": {
+          "before_ci": "39%",
+          "after_ci": "63%",
+          "comparison": "~",
+          "p": "p=0.853 n=10"
+        },
+        "B/op": {
+          "before_ci": "0%",
+          "after_ci": "0%",
+          "comparison": "~",
+          "p": "p=1.000 n=10"
+        },
+        "allocs/op": {
+          "before_ci": "0%",
+          "after_ci": "0%",
+          "comparison": "~",
+          "p": "p=1.000 n=10"
+        }
+      }
+    },
+    {
+      "name": "BenchmarkStateBackupReads/apps=1/history=32/LastGoodBackupRun",
+      "before": {
+        "ns/op": 25893.0,
+        "B/op": 1696.0,
+        "allocs/op": 55.0
+      },
+      "after": {
+        "ns/op": 22836.5,
+        "B/op": 1696.0,
+        "allocs/op": 55.0
+      },
+      "delta": {
+        "ns/op": -11.804348665662534,
+        "B/op": 0.0,
+        "allocs/op": 0.0
+      },
+      "stats": {
+        "sec/op": {
+          "before_ci": "60%",
+          "after_ci": "23%",
+          "comparison": "~",
+          "p": "p=0.579 n=10"
+        },
+        "B/op": {
+          "before_ci": "0%",
+          "after_ci": "0%",
+          "comparison": "~",
+          "p": "p=1.000 n=10"
+        },
+        "allocs/op": {
+          "before_ci": "0%",
+          "after_ci": "0%",
+          "comparison": "~",
+          "p": "p=1.000 n=10"
+        }
+      }
+    },
+    {
+      "name": "BenchmarkStateBackupReads/apps=25/history=32/LatestForApp",
+      "before": {
+        "ns/op": 45483.0,
+        "B/op": 2592.0,
+        "allocs/op": 64.0
+      },
+      "after": {
+        "ns/op": 37605.0,
+        "B/op": 2592.0,
+        "allocs/op": 64.0
+      },
+      "delta": {
+        "ns/op": -17.320757205989047,
+        "B/op": 0.0,
+        "allocs/op": 0.0
+      },
+      "stats": {
+        "sec/op": {
+          "before_ci": "100%",
+          "after_ci": "29%",
+          "comparison": "~",
+          "p": "p=0.218 n=10"
+        },
+        "B/op": {
+          "before_ci": "0%",
+          "after_ci": "0%",
+          "comparison": "~",
+          "p": "p=1.000 n=10"
+        },
+        "allocs/op": {
+          "before_ci": "0%",
+          "after_ci": "0%",
+          "comparison": "~",
+          "p": "p=1.000 n=10"
+        }
+      }
+    },
+    {
+      "name": "BenchmarkStateBackupReads/apps=25/history=32/AppHistory",
+      "before": {
+        "ns/op": 100703.5,
+        "B/op": 22424.0,
+        "allocs/op": 390.0
+      },
+      "after": {
+        "ns/op": 88810.0,
+        "B/op": 22424.0,
+        "allocs/op": 390.0
+      },
+      "delta": {
+        "ns/op": -11.810413739343717,
+        "B/op": 0.0,
+        "allocs/op": 0.0
+      },
+      "stats": {
+        "sec/op": {
+          "before_ci": "34%",
+          "after_ci": "24%",
+          "comparison": "~",
+          "p": "p=0.436 n=10"
+        },
+        "B/op": {
+          "before_ci": "0%",
+          "after_ci": "0%",
+          "comparison": "~",
+          "p": "p=1.000 n=10"
+        },
+        "allocs/op": {
+          "before_ci": "0%",
+          "after_ci": "0%",
+          "comparison": "~",
+          "p": "p=1.000 n=10"
+        }
+      }
+    },
+    {
+      "name": "BenchmarkStateBackupReads/apps=25/history=32/FleetHistory",
+      "before": {
+        "ns/op": 265531.0,
+        "B/op": 23080.0,
+        "allocs/op": 423.0
+      },
+      "after": {
+        "ns/op": 299785.0,
+        "B/op": 23080.0,
+        "allocs/op": 423.0
+      },
+      "delta": {
+        "ns/op": 12.900188678534708,
+        "B/op": 0.0,
+        "allocs/op": 0.0
+      },
+      "stats": {
+        "sec/op": {
+          "before_ci": "44%",
+          "after_ci": "24%",
+          "comparison": "~",
+          "p": "p=0.684 n=10"
+        },
+        "B/op": {
+          "before_ci": "0%",
+          "after_ci": "0%",
+          "comparison": "~",
+          "p": "p=1.000 n=10"
+        },
+        "allocs/op": {
+          "before_ci": "0%",
+          "after_ci": "0%",
+          "comparison": "~",
+          "p": "p=1.000 n=10"
+        }
+      }
+    },
+    {
+      "name": "BenchmarkStateBackupReads/apps=25/history=32/FleetBackupHistory",
+      "before": {
+        "ns/op": 322783.0,
+        "B/op": 23336.0,
+        "allocs/op": 427.0
+      },
+      "after": {
+        "ns/op": 290161.5,
+        "B/op": 23336.0,
+        "allocs/op": 427.0
+      },
+      "delta": {
+        "ns/op": -10.106325302137964,
+        "B/op": 0.0,
+        "allocs/op": 0.0
+      },
+      "stats": {
+        "sec/op": {
+          "before_ci": "146%",
+          "after_ci": "24%",
+          "comparison": "~",
+          "p": "p=0.218 n=10"
+        },
+        "B/op": {
+          "before_ci": "0%",
+          "after_ci": "0%",
+          "comparison": "~",
+          "p": "p=1.000 n=10"
+        },
+        "allocs/op": {
+          "before_ci": "0%",
+          "after_ci": "0%",
+          "comparison": "~",
+          "p": "p=1.000 n=10"
+        }
+      }
+    },
+    {
+      "name": "BenchmarkStateBackupReads/apps=25/history=32/LastGoodBackupRun",
+      "before": {
+        "ns/op": 28261.5,
+        "B/op": 1712.0,
+        "allocs/op": 56.0
+      },
+      "after": {
+        "ns/op": 22348.0,
+        "B/op": 1712.0,
+        "allocs/op": 56.0
+      },
+      "delta": {
+        "ns/op": -20.924225536507258,
+        "B/op": 0.0,
+        "allocs/op": 0.0
+      },
+      "stats": {
+        "sec/op": {
+          "before_ci": "52%",
+          "after_ci": "20%",
+          "comparison": "~",
+          "p": "p=0.105 n=10"
+        },
+        "B/op": {
+          "before_ci": "0%",
+          "after_ci": "0%",
+          "comparison": "~",
+          "p": "p=1.000 n=10"
+        },
+        "allocs/op": {
+          "before_ci": "0%",
+          "after_ci": "0%",
+          "comparison": "~",
+          "p": "p=1.000 n=10"
+        }
+      }
+    },
+    {
+      "name": "BenchmarkStateBackupReads/apps=25/history=512/LatestForApp",
+      "before": {
+        "ns/op": 37293.5,
+        "B/op": 2592.0,
+        "allocs/op": 64.0
+      },
+      "after": {
+        "ns/op": 37904.0,
+        "B/op": 2592.0,
+        "allocs/op": 64.0
+      },
+      "delta": {
+        "ns/op": 1.6370144931422415,
+        "B/op": 0.0,
+        "allocs/op": 0.0
+      },
+      "stats": {
+        "sec/op": {
+          "before_ci": "71%",
+          "after_ci": "20%",
+          "comparison": "~",
+          "p": "p=0.853 n=10"
+        },
+        "B/op": {
+          "before_ci": "0%",
+          "after_ci": "0%",
+          "comparison": "~",
+          "p": "p=1.000 n=10"
+        },
+        "allocs/op": {
+          "before_ci": "0%",
+          "after_ci": "0%",
+          "comparison": "~",
+          "p": "p=1.000 n=10"
+        }
+      }
+    },
+    {
+      "name": "BenchmarkStateBackupReads/apps=25/history=512/AppHistory",
+      "before": {
+        "ns/op": 218729.0,
+        "B/op": 22520.0,
+        "allocs/op": 394.0
+      },
+      "after": {
+        "ns/op": 203897.5,
+        "B/op": 22520.0,
+        "allocs/op": 394.0
+      },
+      "delta": {
+        "ns/op": -6.780765239177244,
+        "B/op": 0.0,
+        "allocs/op": 0.0
+      },
+      "stats": {
+        "sec/op": {
+          "before_ci": "78%",
+          "after_ci": "10%",
+          "comparison": "~",
+          "p": "p=0.247 n=10"
+        },
+        "B/op": {
+          "before_ci": "0%",
+          "after_ci": "0%",
+          "comparison": "~",
+          "p": "p=1.000 n=10"
+        },
+        "allocs/op": {
+          "before_ci": "0%",
+          "after_ci": "0%",
+          "comparison": "~",
+          "p": "p=1.000 n=10"
+        }
+      }
+    },
+    {
+      "name": "BenchmarkStateBackupReads/apps=25/history=512/FleetHistory",
+      "before": {
+        "ns/op": 6646776.0,
+        "B/op": 23080.0,
+        "allocs/op": 424.0
+      },
+      "after": {
+        "ns/op": 3629887.0,
+        "B/op": 23080.0,
+        "allocs/op": 424.0
+      },
+      "delta": {
+        "ns/op": -45.388756895072135,
+        "B/op": 0.0,
+        "allocs/op": 0.0
+      },
+      "stats": {
+        "sec/op": {
+          "before_ci": "541%",
+          "after_ci": "208%",
+          "comparison": "~",
+          "p": "p=0.247 n=10"
+        },
+        "B/op": {
+          "before_ci": "0%",
+          "after_ci": "0%",
+          "comparison": "~",
+          "p": "p=1.000 n=10"
+        },
+        "allocs/op": {
+          "before_ci": "0%",
+          "after_ci": "0%",
+          "comparison": "~",
+          "p": "p=1.000 n=10"
+        }
+      }
+    },
+    {
+      "name": "BenchmarkStateBackupReads/apps=25/history=512/FleetBackupHistory",
+      "before": {
+        "ns/op": 3885322.5,
+        "B/op": 23336.0,
+        "allocs/op": 428.0
+      },
+      "after": {
+        "ns/op": 4467701.0,
+        "B/op": 23336.0,
+        "allocs/op": 428.0
+      },
+      "delta": {
+        "ns/op": 14.989193303773373,
+        "B/op": 0.0,
+        "allocs/op": 0.0
+      },
+      "stats": {
+        "sec/op": {
+          "before_ci": "250%",
+          "after_ci": "57%",
+          "comparison": "~",
+          "p": "p=0.739 n=10"
+        },
+        "B/op": {
+          "before_ci": "0%",
+          "after_ci": "0%",
+          "comparison": "~",
+          "p": "p=1.000 n=10"
+        },
+        "allocs/op": {
+          "before_ci": "0%",
+          "after_ci": "0%",
+          "comparison": "~",
+          "p": "p=1.000 n=10"
+        }
+      }
+    },
+    {
+      "name": "BenchmarkStateBackupReads/apps=25/history=512/LastGoodBackupRun",
+      "before": {
+        "ns/op": 23852.5,
+        "B/op": 1712.0,
+        "allocs/op": 56.0
+      },
+      "after": {
+        "ns/op": 21565.0,
+        "B/op": 1712.0,
+        "allocs/op": 56.0
+      },
+      "delta": {
+        "ns/op": -9.590189707577823,
+        "B/op": 0.0,
+        "allocs/op": 0.0
+      },
+      "stats": {
+        "sec/op": {
+          "before_ci": "54%",
+          "after_ci": "29%",
+          "comparison": "~",
+          "p": "p=0.579 n=10"
+        },
+        "B/op": {
+          "before_ci": "0%",
+          "after_ci": "0%",
+          "comparison": "~",
+          "p": "p=1.000 n=10"
+        },
+        "allocs/op": {
+          "before_ci": "0%",
+          "after_ci": "0%",
+          "comparison": "~",
+          "p": "p=1.000 n=10"
+        }
+      }
+    },
+    {
+      "name": "BenchmarkStateBackupReads/apps=100/history=512/LatestForApp",
+      "before": {
+        "ns/op": 40211.0,
+        "B/op": 2592.0,
+        "allocs/op": 64.0
+      },
+      "after": {
+        "ns/op": 38166.5,
+        "B/op": 2592.0,
+        "allocs/op": 64.0
+      },
+      "delta": {
+        "ns/op": -5.08442963368233,
+        "B/op": 0.0,
+        "allocs/op": 0.0
+      },
+      "stats": {
+        "sec/op": {
+          "before_ci": "33%",
+          "after_ci": "13%",
+          "comparison": "~",
+          "p": "p=0.912 n=10"
+        },
+        "B/op": {
+          "before_ci": "0%",
+          "after_ci": "0%",
+          "comparison": "~",
+          "p": "p=1.000 n=10"
+        },
+        "allocs/op": {
+          "before_ci": "0%",
+          "after_ci": "0%",
+          "comparison": "~",
+          "p": "p=1.000 n=10"
+        }
+      }
+    },
+    {
+      "name": "BenchmarkStateBackupReads/apps=100/history=512/AppHistory",
+      "before": {
+        "ns/op": 215108.0,
+        "B/op": 22520.0,
+        "allocs/op": 394.0
+      },
+      "after": {
+        "ns/op": 211030.0,
+        "B/op": 22520.0,
+        "allocs/op": 394.0
+      },
+      "delta": {
+        "ns/op": -1.895791881287534,
+        "B/op": 0.0,
+        "allocs/op": 0.0
+      },
+      "stats": {
+        "sec/op": {
+          "before_ci": "92%",
+          "after_ci": "16%",
+          "comparison": "~",
+          "p": "p=0.739 n=10"
+        },
+        "B/op": {
+          "before_ci": "0%",
+          "after_ci": "0%",
+          "comparison": "~",
+          "p": "p=1.000 n=10"
+        },
+        "allocs/op": {
+          "before_ci": "0%",
+          "after_ci": "0%",
+          "comparison": "~",
+          "p": "p=1.000 n=10"
+        }
+      }
+    },
+    {
+      "name": "BenchmarkStateBackupReads/apps=100/history=512/FleetHistory",
+      "before": {
+        "ns/op": 15981194.0,
+        "B/op": 23080.0,
+        "allocs/op": 424.0
+      },
+      "after": {
+        "ns/op": 21108679.5,
+        "B/op": 23080.0,
+        "allocs/op": 424.0
+      },
+      "delta": {
+        "ns/op": 32.084495689120594,
+        "B/op": 0.0,
+        "allocs/op": 0.0
+      },
+      "stats": {
+        "sec/op": {
+          "before_ci": "96%",
+          "after_ci": "72%",
+          "comparison": "~",
+          "p": "p=0.481 n=10"
+        },
+        "B/op": {
+          "before_ci": "0%",
+          "after_ci": "0%",
+          "comparison": "~",
+          "p": "p=1.000 n=10"
+        },
+        "allocs/op": {
+          "before_ci": "0%",
+          "after_ci": "0%",
+          "comparison": "~",
+          "p": "p=1.000 n=10"
+        }
+      }
+    },
+    {
+      "name": "BenchmarkStateBackupReads/apps=100/history=512/FleetBackupHistory",
+      "before": {
+        "ns/op": 15347799.5,
+        "B/op": 23336.0,
+        "allocs/op": 428.0
+      },
+      "after": {
+        "ns/op": 25378550.0,
+        "B/op": 23336.0,
+        "allocs/op": 428.0
+      },
+      "delta": {
+        "ns/op": 65.3562779472067,
+        "B/op": 0.0,
+        "allocs/op": 0.0
+      },
+      "stats": {
+        "sec/op": {
+          "before_ci": "32%",
+          "after_ci": "53%",
+          "comparison": "+65.36%",
+          "p": "p=0.043 n=10"
+        },
+        "B/op": {
+          "before_ci": "0%",
+          "after_ci": "0%",
+          "comparison": "~",
+          "p": "p=1.000 n=10"
+        },
+        "allocs/op": {
+          "before_ci": "0%",
+          "after_ci": "0%",
+          "comparison": "~",
+          "p": "p=1.000 n=10"
+        }
+      }
+    },
+    {
+      "name": "BenchmarkStateBackupReads/apps=100/history=512/LastGoodBackupRun",
+      "before": {
+        "ns/op": 23133.0,
+        "B/op": 1712.0,
+        "allocs/op": 56.0
+      },
+      "after": {
+        "ns/op": 23882.0,
+        "B/op": 1712.0,
+        "allocs/op": 56.0
+      },
+      "delta": {
+        "ns/op": 3.23779881554489,
+        "B/op": 0.0,
+        "allocs/op": 0.0
+      },
+      "stats": {
+        "sec/op": {
+          "before_ci": "25%",
+          "after_ci": "21%",
+          "comparison": "~",
+          "p": "p=0.971 n=10"
+        },
+        "B/op": {
+          "before_ci": "0%",
+          "after_ci": "0%",
+          "comparison": "~",
+          "p": "p=1.000 n=10"
+        },
+        "allocs/op": {
+          "before_ci": "0%",
+          "after_ci": "0%",
+          "comparison": "~",
+          "p": "p=1.000 n=10"
+        }
+      }
+    },
+    {
+      "name": "BenchmarkParse/Workloads1",
+      "before": {
+        "ns/op": 101366.0,
+        "B/op": 50129.0,
+        "allocs/op": 942.0
+      },
+      "after": {
+        "ns/op": 103740.5,
+        "B/op": 50129.0,
+        "allocs/op": 942.0
+      },
+      "delta": {
+        "ns/op": 2.342501430459909,
+        "B/op": 0.0,
+        "allocs/op": 0.0
+      },
+      "stats": {
+        "sec/op": {
+          "before_ci": "14%",
+          "after_ci": "17%",
+          "comparison": "~",
+          "p": "p=0.631 n=10"
+        },
+        "B/op": {
+          "before_ci": "0%",
+          "after_ci": "0%",
+          "comparison": "~",
+          "p": "p=0.582 n=10"
+        },
+        "allocs/op": {
+          "before_ci": "0%",
+          "after_ci": "0%",
+          "comparison": "~",
+          "p": "p=1.000 n=10"
+        }
+      }
+    },
+    {
+      "name": "BenchmarkParse/Workloads8",
+      "before": {
+        "ns/op": 407271.5,
+        "B/op": 187802.0,
+        "allocs/op": 3849.0
+      },
+      "after": {
+        "ns/op": 412898.0,
+        "B/op": 187802.5,
+        "allocs/op": 3849.0
+      },
+      "delta": {
+        "ns/op": 1.3815108594635195,
+        "B/op": 0.0002662378462359172,
+        "allocs/op": 0.0
+      },
+      "stats": {
+        "sec/op": {
+          "before_ci": "11%",
+          "after_ci": "13%",
+          "comparison": "~",
+          "p": "p=0.529 n=10"
+        },
+        "B/op": {
+          "before_ci": "0%",
+          "after_ci": "0%",
+          "comparison": "~",
+          "p": "p=0.134 n=10"
+        },
+        "allocs/op": {
+          "before_ci": "0%",
+          "after_ci": "0%",
+          "comparison": "~",
+          "p": "p=1.000 n=10"
+        }
+      }
+    },
+    {
+      "name": "BenchmarkParse/Workloads32",
+      "before": {
+        "ns/op": 1457617.5,
+        "B/op": 673825.5,
+        "allocs/op": 13939.0
+      },
+      "after": {
+        "ns/op": 1559736.0,
+        "B/op": 673822.5,
+        "allocs/op": 13939.0
+      },
+      "delta": {
+        "ns/op": 7.005850300233085,
+        "B/op": -0.0004452191257220406,
+        "allocs/op": 0.0
+      },
+      "stats": {
+        "sec/op": {
+          "before_ci": "11%",
+          "after_ci": "17%",
+          "comparison": "~",
+          "p": "p=0.143 n=10"
+        },
+        "B/op": {
+          "before_ci": "0%",
+          "after_ci": "0%",
+          "comparison": "~",
+          "p": "p=0.099 n=10"
+        },
+        "allocs/op": {
+          "before_ci": "0%",
+          "after_ci": "0%",
+          "comparison": "~",
+          "p": "p=1.000 n=10"
+        }
+      }
+    },
+    {
+      "name": "BenchmarkValidate/Workloads1",
+      "before": {
+        "ns/op": 6631.5,
+        "B/op": 2184.0,
+        "allocs/op": 79.0
+      },
+      "after": {
+        "ns/op": 7663.0,
+        "B/op": 2184.0,
+        "allocs/op": 79.0
+      },
+      "delta": {
+        "ns/op": 15.554550252582366,
+        "B/op": 0.0,
+        "allocs/op": 0.0
+      },
+      "stats": {
+        "sec/op": {
+          "before_ci": "54%",
+          "after_ci": "26%",
+          "comparison": "~",
+          "p": "p=0.529 n=10"
+        },
+        "B/op": {
+          "before_ci": "0%",
+          "after_ci": "0%",
+          "comparison": "~",
+          "p": "p=1.000 n=10"
+        },
+        "allocs/op": {
+          "before_ci": "0%",
+          "after_ci": "0%",
+          "comparison": "~",
+          "p": "p=1.000 n=10"
+        }
+      }
+    },
+    {
+      "name": "BenchmarkValidate/Workloads8",
+      "before": {
+        "ns/op": 26895.5,
+        "B/op": 7513.0,
+        "allocs/op": 214.0
+      },
+      "after": {
+        "ns/op": 29386.0,
+        "B/op": 7513.0,
+        "allocs/op": 214.0
+      },
+      "delta": {
+        "ns/op": 9.259913368407346,
+        "B/op": 0.0,
+        "allocs/op": 0.0
+      },
+      "stats": {
+        "sec/op": {
+          "before_ci": "18%",
+          "after_ci": "16%",
+          "comparison": "~",
+          "p": "p=0.529 n=10"
+        },
+        "B/op": {
+          "before_ci": "0%",
+          "after_ci": "0%",
+          "comparison": "~",
+          "p": "p=1.000 n=10"
+        },
+        "allocs/op": {
+          "before_ci": "0%",
+          "after_ci": "0%",
+          "comparison": "~",
+          "p": "p=1.000 n=10"
+        }
+      }
+    },
+    {
+      "name": "BenchmarkValidate/Workloads32",
+      "before": {
+        "ns/op": 104973.5,
+        "B/op": 33005.0,
+        "allocs/op": 716.0
+      },
+      "after": {
+        "ns/op": 115764.0,
+        "B/op": 33005.0,
+        "allocs/op": 716.0
+      },
+      "delta": {
+        "ns/op": 10.2792609563366,
+        "B/op": 0.0,
+        "allocs/op": 0.0
+      },
+      "stats": {
+        "sec/op": {
+          "before_ci": "23%",
+          "after_ci": "13%",
+          "comparison": "~",
+          "p": "p=0.684 n=10"
+        },
+        "B/op": {
+          "before_ci": "0%",
+          "after_ci": "0%",
+          "comparison": "~",
+          "p": "p=1.000 n=10"
+        },
+        "allocs/op": {
+          "before_ci": "0%",
+          "after_ci": "0%",
+          "comparison": "~",
+          "p": "p=1.000 n=10"
+        }
+      }
+    },
+    {
+      "name": "BenchmarkRouteFor/Workloads1/Hit",
+      "before": {
+        "ns/op": 137.35000000000002,
+        "B/op": 16.0,
+        "allocs/op": 1.0
+      },
+      "after": {
+        "ns/op": 101.95500000000001,
+        "B/op": 0.0,
+        "allocs/op": 0.0
+      },
+      "delta": {
+        "ns/op": -25.7699308336367,
+        "B/op": -100.0,
+        "allocs/op": -100.0
+      },
+      "stats": {
+        "sec/op": {
+          "before_ci": "6%",
+          "after_ci": "19%",
+          "comparison": "-25.77%",
+          "p": "p=0.001 n=10"
+        },
+        "B/op": {
+          "before_ci": "0%",
+          "after_ci": "0%",
+          "comparison": "-100.00%",
+          "p": "p=0.000 n=10"
+        },
+        "allocs/op": {
+          "before_ci": "0%",
+          "after_ci": "0%",
+          "comparison": "-100.00%",
+          "p": "p=0.000 n=10"
+        }
+      }
+    },
+    {
+      "name": "BenchmarkRouteFor/Workloads1/MissHost",
+      "before": {
+        "ns/op": 115.0,
+        "B/op": 16.0,
+        "allocs/op": 1.0
+      },
+      "after": {
+        "ns/op": 55.010000000000005,
+        "B/op": 0.0,
+        "allocs/op": 0.0
+      },
+      "delta": {
+        "ns/op": -52.16521739130434,
+        "B/op": -100.0,
+        "allocs/op": -100.0
+      },
+      "stats": {
+        "sec/op": {
+          "before_ci": "16%",
+          "after_ci": "9%",
+          "comparison": "-52.17%",
+          "p": "p=0.000 n=10"
+        },
+        "B/op": {
+          "before_ci": "0%",
+          "after_ci": "0%",
+          "comparison": "-100.00%",
+          "p": "p=0.000 n=10"
+        },
+        "allocs/op": {
+          "before_ci": "0%",
+          "after_ci": "0%",
+          "comparison": "-100.00%",
+          "p": "p=0.000 n=10"
+        }
+      }
+    },
+    {
+      "name": "BenchmarkRouteFor/Workloads1/MissPath",
+      "before": {
+        "ns/op": 118.25,
+        "B/op": 16.0,
+        "allocs/op": 1.0
+      },
+      "after": {
+        "ns/op": 81.745,
+        "B/op": 0.0,
+        "allocs/op": 0.0
+      },
+      "delta": {
+        "ns/op": -30.87103594080338,
+        "B/op": -100.0,
+        "allocs/op": -100.0
+      },
+      "stats": {
+        "sec/op": {
+          "before_ci": "15%",
+          "after_ci": "40%",
+          "comparison": "-30.87%",
+          "p": "p=0.003 n=10"
+        },
+        "B/op": {
+          "before_ci": "0%",
+          "after_ci": "0%",
+          "comparison": "-100.00%",
+          "p": "p=0.000 n=10"
+        },
+        "allocs/op": {
+          "before_ci": "0%",
+          "after_ci": "0%",
+          "comparison": "-100.00%",
+          "p": "p=0.000 n=10"
+        }
+      }
+    },
+    {
+      "name": "BenchmarkRouteFor/Workloads8/Hit",
+      "before": {
+        "ns/op": 462.5,
+        "B/op": 128.0,
+        "allocs/op": 1.0
+      },
+      "after": {
+        "ns/op": 194.55,
+        "B/op": 0.0,
+        "allocs/op": 0.0
+      },
+      "delta": {
+        "ns/op": -57.93513513513513,
+        "B/op": -100.0,
+        "allocs/op": -100.0
+      },
+      "stats": {
+        "sec/op": {
+          "before_ci": "15%",
+          "after_ci": "12%",
+          "comparison": "-57.94%",
+          "p": "p=0.000 n=10"
+        },
+        "B/op": {
+          "before_ci": "0%",
+          "after_ci": "0%",
+          "comparison": "-100.00%",
+          "p": "p=0.000 n=10"
+        },
+        "allocs/op": {
+          "before_ci": "0%",
+          "after_ci": "0%",
+          "comparison": "-100.00%",
+          "p": "p=0.000 n=10"
+        }
+      }
+    },
+    {
+      "name": "BenchmarkRouteFor/Workloads8/MissHost",
+      "before": {
+        "ns/op": 432.15,
+        "B/op": 128.0,
+        "allocs/op": 1.0
+      },
+      "after": {
+        "ns/op": 90.35,
+        "B/op": 0.0,
+        "allocs/op": 0.0
+      },
+      "delta": {
+        "ns/op": -79.09290755524702,
+        "B/op": -100.0,
+        "allocs/op": -100.0
+      },
+      "stats": {
+        "sec/op": {
+          "before_ci": "10%",
+          "after_ci": "9%",
+          "comparison": "-79.09%",
+          "p": "p=0.000 n=10"
+        },
+        "B/op": {
+          "before_ci": "0%",
+          "after_ci": "0%",
+          "comparison": "-100.00%",
+          "p": "p=0.000 n=10"
+        },
+        "allocs/op": {
+          "before_ci": "0%",
+          "after_ci": "0%",
+          "comparison": "-100.00%",
+          "p": "p=0.000 n=10"
+        }
+      }
+    },
+    {
+      "name": "BenchmarkRouteFor/Workloads8/MissPath",
+      "before": {
+        "ns/op": 422.2,
+        "B/op": 128.0,
+        "allocs/op": 1.0
+      },
+      "after": {
+        "ns/op": 163.75,
+        "B/op": 0.0,
+        "allocs/op": 0.0
+      },
+      "delta": {
+        "ns/op": -61.21506395073425,
+        "B/op": -100.0,
+        "allocs/op": -100.0
+      },
+      "stats": {
+        "sec/op": {
+          "before_ci": "12%",
+          "after_ci": "7%",
+          "comparison": "-61.22%",
+          "p": "p=0.000 n=10"
+        },
+        "B/op": {
+          "before_ci": "0%",
+          "after_ci": "0%",
+          "comparison": "-100.00%",
+          "p": "p=0.000 n=10"
+        },
+        "allocs/op": {
+          "before_ci": "0%",
+          "after_ci": "0%",
+          "comparison": "-100.00%",
+          "p": "p=0.000 n=10"
+        }
+      }
+    },
+    {
+      "name": "BenchmarkRouteFor/Workloads32/Hit",
+      "before": {
+        "ns/op": 2148.5,
+        "B/op": 512.0,
+        "allocs/op": 1.0
+      },
+      "after": {
+        "ns/op": 667.2,
+        "B/op": 0.0,
+        "allocs/op": 0.0
+      },
+      "delta": {
+        "ns/op": -68.94577612287642,
+        "B/op": -100.0,
+        "allocs/op": -100.0
+      },
+      "stats": {
+        "sec/op": {
+          "before_ci": "7%",
+          "after_ci": "12%",
+          "comparison": "-68.95%",
+          "p": "p=0.000 n=10"
+        },
+        "B/op": {
+          "before_ci": "0%",
+          "after_ci": "0%",
+          "comparison": "-100.00%",
+          "p": "p=0.000 n=10"
+        },
+        "allocs/op": {
+          "before_ci": "0%",
+          "after_ci": "0%",
+          "comparison": "-100.00%",
+          "p": "p=0.000 n=10"
+        }
+      },
+      "label": "Route lookup",
+      "workload": "32 workloads, nested path hit",
+      "target_met": true
+    },
+    {
+      "name": "BenchmarkRouteFor/Workloads32/MissHost",
+      "before": {
+        "ns/op": 2107.5,
+        "B/op": 512.0,
+        "allocs/op": 1.0
+      },
+      "after": {
+        "ns/op": 318.1,
+        "B/op": 0.0,
+        "allocs/op": 0.0
+      },
+      "delta": {
+        "ns/op": -84.90628706998814,
+        "B/op": -100.0,
+        "allocs/op": -100.0
+      },
+      "stats": {
+        "sec/op": {
+          "before_ci": "9%",
+          "after_ci": "11%",
+          "comparison": "-84.91%",
+          "p": "p=0.000 n=10"
+        },
+        "B/op": {
+          "before_ci": "0%",
+          "after_ci": "0%",
+          "comparison": "-100.00%",
+          "p": "p=0.000 n=10"
+        },
+        "allocs/op": {
+          "before_ci": "0%",
+          "after_ci": "0%",
+          "comparison": "-100.00%",
+          "p": "p=0.000 n=10"
+        }
+      }
+    },
+    {
+      "name": "BenchmarkRouteFor/Workloads32/MissPath",
+      "before": {
+        "ns/op": 2069.5,
+        "B/op": 512.0,
+        "allocs/op": 1.0
+      },
+      "after": {
+        "ns/op": 604.8,
+        "B/op": 0.0,
+        "allocs/op": 0.0
+      },
+      "delta": {
+        "ns/op": -70.77554964967383,
+        "B/op": -100.0,
+        "allocs/op": -100.0
+      },
+      "stats": {
+        "sec/op": {
+          "before_ci": "6%",
+          "after_ci": "7%",
+          "comparison": "-70.78%",
+          "p": "p=0.000 n=10"
+        },
+        "B/op": {
+          "before_ci": "0%",
+          "after_ci": "0%",
+          "comparison": "-100.00%",
+          "p": "p=0.000 n=10"
+        },
+        "allocs/op": {
+          "before_ci": "0%",
+          "after_ci": "0%",
+          "comparison": "-100.00%",
+          "p": "p=0.000 n=10"
+        }
+      }
+    },
+    {
+      "name": "BenchmarkCheckRouteConflicts/Apps1/Workloads2",
+      "before": {
+        "ns/op": 36134.0,
+        "B/op": 12022.0,
+        "allocs/op": 120.0
+      },
+      "after": {
+        "ns/op": 34636.5,
+        "B/op": 12647.5,
+        "allocs/op": 125.0
+      },
+      "delta": {
+        "ns/op": -4.144296230696853,
+        "B/op": 5.20296123773083,
+        "allocs/op": 4.166666666666674
+      },
+      "stats": {
+        "sec/op": {
+          "before_ci": "9%",
+          "after_ci": "13%",
+          "comparison": "~",
+          "p": "p=1.000 n=10"
+        },
+        "B/op": {
+          "before_ci": "0%",
+          "after_ci": "0%",
+          "comparison": "+5.20%",
+          "p": "p=0.000 n=10"
+        },
+        "allocs/op": {
+          "before_ci": "0%",
+          "after_ci": "0%",
+          "comparison": "+4.17%",
+          "p": "p=0.000 n=10"
+        }
+      }
+    },
+    {
+      "name": "BenchmarkCheckRouteConflicts/Apps25/Workloads8",
+      "before": {
+        "ns/op": 641216.5,
+        "B/op": 308591.5,
+        "allocs/op": 2608.0
+      },
+      "after": {
+        "ns/op": 444186.5,
+        "B/op": 272222.0,
+        "allocs/op": 2013.0
+      },
+      "delta": {
+        "ns/op": -30.727531184865022,
+        "B/op": -11.785645424452717,
+        "allocs/op": -22.814417177914116
+      },
+      "stats": {
+        "sec/op": {
+          "before_ci": "13%",
+          "after_ci": "10%",
+          "comparison": "-30.73%",
+          "p": "p=0.000 n=10"
+        },
+        "B/op": {
+          "before_ci": "0%",
+          "after_ci": "0%",
+          "comparison": "-11.79%",
+          "p": "p=0.000 n=10"
+        },
+        "allocs/op": {
+          "before_ci": "0%",
+          "after_ci": "0%",
+          "comparison": "-22.81%",
+          "p": "p=0.000 n=10"
+        }
+      }
+    },
+    {
+      "name": "BenchmarkCheckRouteConflicts/Apps100/Workloads32",
+      "before": {
+        "ns/op": 5101191.0,
+        "B/op": 1885071.5,
+        "allocs/op": 19903.0
+      },
+      "after": {
+        "ns/op": 1928909.5,
+        "B/op": 1087366.0,
+        "allocs/op": 7929.0
+      },
+      "delta": {
+        "ns/op": -62.187075528048254,
+        "B/op": -42.31698903728586,
+        "allocs/op": -60.16178465557955
+      },
+      "stats": {
+        "sec/op": {
+          "before_ci": "9%",
+          "after_ci": "10%",
+          "comparison": "-62.19%",
+          "p": "p=0.000 n=10"
+        },
+        "B/op": {
+          "before_ci": "0%",
+          "after_ci": "0%",
+          "comparison": "-42.32%",
+          "p": "p=0.000 n=10"
+        },
+        "allocs/op": {
+          "before_ci": "0%",
+          "after_ci": "0%",
+          "comparison": "-60.16%",
+          "p": "p=0.000 n=10"
+        }
+      },
+      "label": "Route preflight",
+      "workload": "100 apps, 32 candidate workloads",
+      "target_met": true
+    },
+    {
+      "name": "BenchmarkSchedulerFirstDeploy/Revisions1",
+      "before": {
+        "ns/op": 19563.5,
+        "B/op": 3266.0,
+        "allocs/op": 71.0
+      },
+      "after": {
+        "ns/op": 10294.0,
+        "B/op": 1045.0,
+        "allocs/op": 25.0
+      },
+      "delta": {
+        "ns/op": -47.3816034963069,
+        "B/op": -68.00367421922842,
+        "allocs/op": -64.7887323943662
+      },
+      "stats": {
+        "sec/op": {
+          "before_ci": "28%",
+          "after_ci": "13%",
+          "comparison": "-47.38%",
+          "p": "p=0.000 n=10"
+        },
+        "B/op": {
+          "before_ci": "1%",
+          "after_ci": "2%",
+          "comparison": "-68.00%",
+          "p": "p=0.000 n=10"
+        },
+        "allocs/op": {
+          "before_ci": "0%",
+          "after_ci": "0%",
+          "comparison": "-64.79%",
+          "p": "p=0.000 n=10"
+        }
+      }
+    },
+    {
+      "name": "BenchmarkSchedulerFirstDeploy/Revisions100",
+      "before": {
+        "ns/op": 356411.0,
+        "B/op": 200173.0,
+        "allocs/op": 3047.5
+      },
+      "after": {
+        "ns/op": 31093.5,
+        "B/op": 935.0,
+        "allocs/op": 24.0
+      },
+      "delta": {
+        "ns/op": -91.27594266170236,
+        "B/op": -99.53290403800712,
+        "allocs/op": -99.21246923707957
+      },
+      "stats": {
+        "sec/op": {
+          "before_ci": "62%",
+          "after_ci": "22%",
+          "comparison": "-91.28%",
+          "p": "p=0.000 n=10"
+        },
+        "B/op": {
+          "before_ci": "0%",
+          "after_ci": "0%",
+          "comparison": "-99.53%",
+          "p": "p=0.000 n=10"
+        },
+        "allocs/op": {
+          "before_ci": "0%",
+          "after_ci": "0%",
+          "comparison": "-99.21%",
+          "p": "p=0.000 n=10"
+        }
+      }
+    },
+    {
+      "name": "BenchmarkSchedulerFirstDeploy/Revisions1000",
+      "before": {
+        "ns/op": 3193495.5,
+        "B/op": 2083583.5,
+        "allocs/op": 30052.0
+      },
+      "after": {
+        "ns/op": 224148.0,
+        "B/op": 934.5,
+        "allocs/op": 24.0
+      },
+      "delta": {
+        "ns/op": -92.98110800531893,
+        "B/op": -99.95514938566177,
+        "allocs/op": -99.92013842672701
+      },
+      "stats": {
+        "sec/op": {
+          "before_ci": "11%",
+          "after_ci": "38%",
+          "comparison": "-92.98%",
+          "p": "p=0.000 n=10"
+        },
+        "B/op": {
+          "before_ci": "0%",
+          "after_ci": "0%",
+          "comparison": "-99.96%",
+          "p": "p=0.000 n=10"
+        },
+        "allocs/op": {
+          "before_ci": "0%",
+          "after_ci": "0%",
+          "comparison": "-99.92%",
+          "p": "p=0.000 n=10"
+        }
+      },
+      "label": "Backup schedule anchor",
+      "workload": "1,000 retained revisions",
+      "target_met": true
+    }
+  ]
+}

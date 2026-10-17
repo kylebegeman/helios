@@ -1,0 +1,368 @@
+goos: darwin
+goarch: arm64
+pkg: github.com/kylebegeman/helios/internal/app
+cpu: Apple M5 Pro
+                                        │ docs/technical/performance/results/2026-10-17/paired-final/baseline.txt │ docs/technical/performance/results/2026-10-17/paired-final/candidate.txt │
+                                        │                                 sec/op                                  │                      sec/op                       vs base                │
+CheckRouteConflicts/Apps1/Workloads2                                                                 36.13µ ±  9%                                       34.64µ ± 13%        ~ (p=1.000 n=10)
+CheckRouteConflicts/Apps25/Workloads8                                                                641.2µ ± 13%                                       444.2µ ± 10%  -30.73% (p=0.000 n=10)
+CheckRouteConflicts/Apps100/Workloads32                                                              5.101m ±  9%                                       1.929m ± 10%  -62.19% (p=0.000 n=10)
+geomean                                                                                              490.8µ                                             309.6µ        -36.91%
+
+                                        │ docs/technical/performance/results/2026-10-17/paired-final/baseline.txt │ docs/technical/performance/results/2026-10-17/paired-final/candidate.txt │
+                                        │                                  B/op                                   │                       B/op                        vs base                │
+CheckRouteConflicts/Apps1/Workloads2                                                                 11.74Ki ± 0%                                       12.35Ki ± 0%   +5.20% (p=0.000 n=10)
+CheckRouteConflicts/Apps25/Workloads8                                                                301.4Ki ± 0%                                       265.8Ki ± 0%  -11.79% (p=0.000 n=10)
+CheckRouteConflicts/Apps100/Workloads32                                                              1.798Mi ± 0%                                       1.037Mi ± 0%  -42.32% (p=0.000 n=10)
+geomean                                                                                              186.8Ki                                            151.6Ki       -18.80%
+
+                                        │ docs/technical/performance/results/2026-10-17/paired-final/baseline.txt │ docs/technical/performance/results/2026-10-17/paired-final/candidate.txt │
+                                        │                                allocs/op                                │                    allocs/op                      vs base                │
+CheckRouteConflicts/Apps1/Workloads2                                                                   120.0 ± 0%                                         125.0 ± 0%   +4.17% (p=0.000 n=10)
+CheckRouteConflicts/Apps25/Workloads8                                                                 2.608k ± 0%                                        2.013k ± 0%  -22.81% (p=0.000 n=10)
+CheckRouteConflicts/Apps100/Workloads32                                                              19.903k ± 0%                                        7.929k ± 0%  -60.16% (p=0.000 n=10)
+geomean                                                                                               1.840k                                             1.259k       -31.58%
+
+pkg: github.com/kylebegeman/helios/internal/daemon
+                                   │ docs/technical/performance/results/2026-10-17/paired-final/baseline.txt │ docs/technical/performance/results/2026-10-17/paired-final/candidate.txt │
+                                   │                                 sec/op                                  │                      sec/op                       vs base                │
+SchedulerFirstDeploy/Revisions1                                                                 19.56µ ± 28%                                       10.29µ ± 13%  -47.38% (p=0.000 n=10)
+SchedulerFirstDeploy/Revisions100                                                              356.41µ ± 62%                                       31.09µ ± 22%  -91.28% (p=0.000 n=10)
+SchedulerFirstDeploy/Revisions1000                                                             3193.5µ ± 11%                                       224.1µ ± 38%  -92.98% (p=0.000 n=10)
+geomean                                                                                         281.3µ                                             41.55µ        -85.23%
+
+                                   │ docs/technical/performance/results/2026-10-17/paired-final/baseline.txt │ docs/technical/performance/results/2026-10-17/paired-final/candidate.txt │
+                                   │                                  B/op                                   │                       B/op                        vs base                │
+SchedulerFirstDeploy/Revisions1                                                                 3.189Ki ± 1%                                       1.021Ki ± 2%  -68.00% (p=0.000 n=10)
+SchedulerFirstDeploy/Revisions100                                                              200173.0 ± 0%                                         935.0 ± 0%  -99.53% (p=0.000 n=10)
+SchedulerFirstDeploy/Revisions1000                                                            2083583.5 ± 0%                                         934.5 ± 0%  -99.96% (p=0.000 n=10)
+geomean                                                                                         108.3Ki                                              970.1       -99.12%
+
+                                   │ docs/technical/performance/results/2026-10-17/paired-final/baseline.txt │ docs/technical/performance/results/2026-10-17/paired-final/candidate.txt │
+                                   │                                allocs/op                                │                    allocs/op                      vs base                │
+SchedulerFirstDeploy/Revisions1                                                                   71.00 ± 0%                                         25.00 ± 0%  -64.79% (p=0.000 n=10)
+SchedulerFirstDeploy/Revisions100                                                               3047.50 ± 0%                                         24.00 ± 0%  -99.21% (p=0.000 n=10)
+SchedulerFirstDeploy/Revisions1000                                                             30052.00 ± 0%                                         24.00 ± 0%  -99.92% (p=0.000 n=10)
+geomean                                                                                          1.866k                                              24.33       -98.70%
+
+pkg: github.com/kylebegeman/helios/internal/edge
+                       │ docs/technical/performance/results/2026-10-17/paired-final/baseline.txt │ docs/technical/performance/results/2026-10-17/paired-final/candidate.txt │
+                       │                                 sec/op                                  │                      sec/op                       vs base                │
+ConfigBehind/apps=10                                                               1015.3µ ± 25%                                      248.0µ ±  96%  -75.58% (p=0.000 n=10)
+ConfigBehind/apps=100                                                               9.973m ± 76%                                      2.912m ± 145%  -70.80% (p=0.000 n=10)
+ConfigBehind/apps=1000                                                             113.24m ± 62%                                      22.02m ± 235%  -80.56% (p=0.002 n=10)
+geomean                                                                             10.47m                                            2.515m         -75.98%
+
+                       │ docs/technical/performance/results/2026-10-17/paired-final/baseline.txt │ docs/technical/performance/results/2026-10-17/paired-final/candidate.txt │
+                       │                                   B/s                                   │                       B/s                        vs base                 │
+ConfigBehind/apps=10                                                              85.22Mi ±  27%                                    348.90Mi ± 49%  +309.43% (p=0.000 n=10)
+ConfigBehind/apps=100                                                             85.10Mi ±  43%                                    291.84Mi ± 59%  +242.95% (p=0.000 n=10)
+ConfigBehind/apps=1000                                                            76.12Mi ± 103%                                    388.53Mi ± 70%  +410.44% (p=0.002 n=10)
+geomean                                                                           82.03Mi                                            340.7Mi        +315.38%
+
+                       │ docs/technical/performance/results/2026-10-17/paired-final/baseline.txt │ docs/technical/performance/results/2026-10-17/paired-final/candidate.txt │
+                       │                                  B/op                                   │                       B/op                        vs base                │
+ConfigBehind/apps=10                                                               321.6Ki ±  0%                                       148.2Ki ± 0%  -53.92% (p=0.000 n=10)
+ConfigBehind/apps=100                                                              2.984Mi ±  0%                                       1.341Mi ± 0%  -55.05% (p=0.000 n=10)
+ConfigBehind/apps=1000                                                             42.18Mi ± 30%                                       13.36Mi ± 0%  -68.32% (p=0.000 n=10)
+geomean                                                                            3.406Mi                                             1.374Mi       -59.67%
+
+                       │ docs/technical/performance/results/2026-10-17/paired-final/baseline.txt │ docs/technical/performance/results/2026-10-17/paired-final/candidate.txt │
+                       │                                allocs/op                                │                    allocs/op                      vs base                │
+ConfigBehind/apps=10                                                                 3733.0 ± 0%                                         372.0 ± 0%  -90.03% (p=0.000 n=10)
+ConfigBehind/apps=100                                                               36.382k ± 0%                                        3.532k ± 0%  -90.29% (p=0.000 n=10)
+ConfigBehind/apps=1000                                                              362.69k ± 0%                                        35.05k ± 0%  -90.34% (p=0.000 n=10)
+geomean                                                                              36.66k                                             3.584k       -90.22%
+
+                       │ docs/technical/performance/results/2026-10-17/paired-final/baseline.txt │ docs/technical/performance/results/2026-10-17/paired-final/candidate.txt │
+                       │                                hosts/op                                 │                    hosts/op                      vs base                 │
+ConfigBehind/apps=10                                                                  11.00 ± 0%                                        11.00 ± 0%       ~ (p=1.000 n=10) ¹
+ConfigBehind/apps=100                                                                 101.0 ± 0%                                        101.0 ± 0%       ~ (p=1.000 n=10) ¹
+ConfigBehind/apps=1000                                                               1.001k ± 0%                                       1.001k ± 0%       ~ (p=1.000 n=10) ¹
+geomean                                                                               103.6                                             103.6       +0.00%
+¹ all samples are equal
+
+                       │ docs/technical/performance/results/2026-10-17/paired-final/baseline.txt │ docs/technical/performance/results/2026-10-17/paired-final/candidate.txt │
+                       │                                routes/op                                │                    routes/op                     vs base                 │
+ConfigBehind/apps=10                                                                  40.00 ± 0%                                        40.00 ± 0%       ~ (p=1.000 n=10) ¹
+ConfigBehind/apps=100                                                                 400.0 ± 0%                                        400.0 ± 0%       ~ (p=1.000 n=10) ¹
+ConfigBehind/apps=1000                                                               4.000k ± 0%                                       4.000k ± 0%       ~ (p=1.000 n=10) ¹
+geomean                                                                               400.0                                             400.0       +0.00%
+¹ all samples are equal
+
+pkg: github.com/kylebegeman/helios/internal/manifest
+                              │ docs/technical/performance/results/2026-10-17/paired-final/baseline.txt │ docs/technical/performance/results/2026-10-17/paired-final/candidate.txt │
+                              │                                 sec/op                                  │                      sec/op                       vs base                │
+Parse/Workloads1                                                                           101.4µ ± 14%                                       103.7µ ± 17%        ~ (p=0.631 n=10)
+Parse/Workloads8                                                                           407.3µ ± 11%                                       412.9µ ± 13%        ~ (p=0.529 n=10)
+Parse/Workloads32                                                                          1.458m ± 11%                                       1.560m ± 17%        ~ (p=0.143 n=10)
+Validate/Workloads1                                                                        6.632µ ± 54%                                       7.663µ ± 26%        ~ (p=0.529 n=10)
+Validate/Workloads8                                                                        26.90µ ± 18%                                       29.39µ ± 16%        ~ (p=0.529 n=10)
+Validate/Workloads32                                                                       105.0µ ± 23%                                       115.8µ ± 13%        ~ (p=0.684 n=10)
+RouteFor/Workloads1/Hit                                                                    137.4n ±  6%                                       102.0n ± 19%  -25.77% (p=0.001 n=10)
+RouteFor/Workloads1/MissHost                                                              115.00n ± 16%                                       55.01n ±  9%  -52.17% (p=0.000 n=10)
+RouteFor/Workloads1/MissPath                                                              118.25n ± 15%                                       81.74n ± 40%  -30.87% (p=0.003 n=10)
+RouteFor/Workloads8/Hit                                                                    462.5n ± 15%                                       194.6n ± 12%  -57.94% (p=0.000 n=10)
+RouteFor/Workloads8/MissHost                                                              432.15n ± 10%                                       90.35n ±  9%  -79.09% (p=0.000 n=10)
+RouteFor/Workloads8/MissPath                                                               422.2n ± 12%                                       163.8n ±  7%  -61.22% (p=0.000 n=10)
+RouteFor/Workloads32/Hit                                                                  2148.5n ±  7%                                       667.2n ± 12%  -68.95% (p=0.000 n=10)
+RouteFor/Workloads32/MissHost                                                             2107.5n ±  9%                                       318.1n ± 11%  -84.91% (p=0.000 n=10)
+RouteFor/Workloads32/MissPath                                                             2069.5n ±  6%                                       604.8n ±  7%  -70.78% (p=0.000 n=10)
+geomean                                                                                    4.119µ                                             2.316µ        -43.78%
+
+                  │ docs/technical/performance/results/2026-10-17/paired-final/baseline.txt │ docs/technical/performance/results/2026-10-17/paired-final/candidate.txt │
+                  │                                   B/s                                   │                        B/s                         vs base               │
+Parse/Workloads1                                                              15.54Mi ± 16%                                       15.19Mi ± 21%       ~ (p=0.631 n=10)
+Parse/Workloads8                                                              17.61Mi ± 13%                                       17.38Mi ± 11%       ~ (p=0.529 n=10)
+Parse/Workloads32                                                             18.20Mi ± 10%                                       17.01Mi ± 15%       ~ (p=0.128 n=10)
+geomean                                                                       17.08Mi                                             16.50Mi        -3.42%
+
+                              │ docs/technical/performance/results/2026-10-17/paired-final/baseline.txt │ docs/technical/performance/results/2026-10-17/paired-final/candidate.txt │
+                              │                                  B/op                                   │                    B/op                      vs base                     │
+Parse/Workloads1                                                                           48.95Ki ± 0%                                  48.95Ki ± 0%         ~ (p=0.582 n=10)
+Parse/Workloads8                                                                           183.4Ki ± 0%                                  183.4Ki ± 0%         ~ (p=0.134 n=10)
+Parse/Workloads32                                                                          658.0Ki ± 0%                                  658.0Ki ± 0%         ~ (p=0.099 n=10)
+Validate/Workloads1                                                                        2.133Ki ± 0%                                  2.133Ki ± 0%         ~ (p=1.000 n=10) ¹
+Validate/Workloads8                                                                        7.337Ki ± 0%                                  7.337Ki ± 0%         ~ (p=1.000 n=10) ¹
+Validate/Workloads32                                                                       32.23Ki ± 0%                                  32.23Ki ± 0%         ~ (p=1.000 n=10)
+RouteFor/Workloads1/Hit                                                                      16.00 ± 0%                                     0.00 ± 0%  -100.00% (p=0.000 n=10)
+RouteFor/Workloads1/MissHost                                                                 16.00 ± 0%                                     0.00 ± 0%  -100.00% (p=0.000 n=10)
+RouteFor/Workloads1/MissPath                                                                 16.00 ± 0%                                     0.00 ± 0%  -100.00% (p=0.000 n=10)
+RouteFor/Workloads8/Hit                                                                      128.0 ± 0%                                      0.0 ± 0%  -100.00% (p=0.000 n=10)
+RouteFor/Workloads8/MissHost                                                                 128.0 ± 0%                                      0.0 ± 0%  -100.00% (p=0.000 n=10)
+RouteFor/Workloads8/MissPath                                                                 128.0 ± 0%                                      0.0 ± 0%  -100.00% (p=0.000 n=10)
+RouteFor/Workloads32/Hit                                                                     512.0 ± 0%                                      0.0 ± 0%  -100.00% (p=0.000 n=10)
+RouteFor/Workloads32/MissHost                                                                512.0 ± 0%                                      0.0 ± 0%  -100.00% (p=0.000 n=10)
+RouteFor/Workloads32/MissPath                                                                512.0 ± 0%                                      0.0 ± 0%  -100.00% (p=0.000 n=10)
+geomean                                                                                    1.070Ki                                                     ?                       ² ³
+¹ all samples are equal
+² summaries must be >0 to compute geomean
+³ ratios must be >0 to compute geomean
+
+                              │ docs/technical/performance/results/2026-10-17/paired-final/baseline.txt │ docs/technical/performance/results/2026-10-17/paired-final/candidate.txt │
+                              │                                allocs/op                                │                  allocs/op                   vs base                     │
+Parse/Workloads1                                                                             942.0 ± 0%                                    942.0 ± 0%         ~ (p=1.000 n=10) ¹
+Parse/Workloads8                                                                            3.849k ± 0%                                   3.849k ± 0%         ~ (p=1.000 n=10) ¹
+Parse/Workloads32                                                                           13.94k ± 0%                                   13.94k ± 0%         ~ (p=1.000 n=10) ¹
+Validate/Workloads1                                                                          79.00 ± 0%                                    79.00 ± 0%         ~ (p=1.000 n=10) ¹
+Validate/Workloads8                                                                          214.0 ± 0%                                    214.0 ± 0%         ~ (p=1.000 n=10) ¹
+Validate/Workloads32                                                                         716.0 ± 0%                                    716.0 ± 0%         ~ (p=1.000 n=10) ¹
+RouteFor/Workloads1/Hit                                                                      1.000 ± 0%                                    0.000 ± 0%  -100.00% (p=0.000 n=10)
+RouteFor/Workloads1/MissHost                                                                 1.000 ± 0%                                    0.000 ± 0%  -100.00% (p=0.000 n=10)
+RouteFor/Workloads1/MissPath                                                                 1.000 ± 0%                                    0.000 ± 0%  -100.00% (p=0.000 n=10)
+RouteFor/Workloads8/Hit                                                                      1.000 ± 0%                                    0.000 ± 0%  -100.00% (p=0.000 n=10)
+RouteFor/Workloads8/MissHost                                                                 1.000 ± 0%                                    0.000 ± 0%  -100.00% (p=0.000 n=10)
+RouteFor/Workloads8/MissPath                                                                 1.000 ± 0%                                    0.000 ± 0%  -100.00% (p=0.000 n=10)
+RouteFor/Workloads32/Hit                                                                     1.000 ± 0%                                    0.000 ± 0%  -100.00% (p=0.000 n=10)
+RouteFor/Workloads32/MissHost                                                                1.000 ± 0%                                    0.000 ± 0%  -100.00% (p=0.000 n=10)
+RouteFor/Workloads32/MissPath                                                                1.000 ± 0%                                    0.000 ± 0%  -100.00% (p=0.000 n=10)
+geomean                                                                                      15.34                                                     ?                       ² ³
+¹ all samples are equal
+² summaries must be >0 to compute geomean
+³ ratios must be >0 to compute geomean
+
+pkg: github.com/kylebegeman/helios/internal/signals
+                          │ docs/technical/performance/results/2026-10-17/paired-final/baseline.txt │ docs/technical/performance/results/2026-10-17/paired-final/candidate.txt │
+                          │                                 sec/op                                  │                      sec/op                       vs base                │
+ParseMetrics/Hosts1                                                                   658.8µ ± 123%                                      101.3µ ±  99%  -84.63% (p=0.000 n=10)
+ParseMetrics/Hosts10                                                                 2488.5µ ± 130%                                      925.9µ ±  63%  -62.79% (p=0.000 n=10)
+ParseMetrics/Hosts100                                                                 32.50m ±  60%                                      14.26m ± 150%  -56.13% (p=0.035 n=10)
+TrafficUnchanged/Hosts1                                                              166.81µ ± 135%                                      71.00µ ± 128%  -57.43% (p=0.002 n=10)
+TrafficUnchanged/Hosts10                                                             2706.8µ ± 113%                                      783.3µ ± 164%  -71.06% (p=0.002 n=10)
+TrafficUnchanged/Hosts100                                                            28.005m ± 145%                                      9.784m ± 206%  -65.06% (p=0.023 n=10)
+TrafficRollups/Hosts1                                                                1633.2µ ± 202%                                      827.7µ ± 384%        ~ (p=0.190 n=10)
+TrafficRollups/Hosts10                                                               12.392m ±  84%                                      6.769m ± 220%        ~ (p=0.063 n=10)
+Summarize/Hours24                                                                     23.14µ ± 117%                                      57.39µ ±  59%        ~ (p=0.089 n=10)
+Summarize/Hours168                                                                    148.5µ ±  69%                                      309.8µ ±  57%        ~ (p=0.075 n=10)
+Summarize/Hours2160                                                                   2.768m ±  92%                                      2.406m ± 157%        ~ (p=0.579 n=10)
+geomean                                                                               1.556m                                             853.2µ         -45.18%
+
+                      │ docs/technical/performance/results/2026-10-17/paired-final/baseline.txt │ docs/technical/performance/results/2026-10-17/paired-final/candidate.txt │
+                      │                                   B/s                                   │                       B/s                        vs base                 │
+ParseMetrics/Hosts1                                                              23.34Mi ±  55%                                    152.27Mi ± 50%  +552.49% (p=0.000 n=10)
+ParseMetrics/Hosts10                                                             57.13Mi ±  56%                                    153.89Mi ± 39%  +169.40% (p=0.000 n=10)
+ParseMetrics/Hosts100                                                            43.46Mi ± 115%                                     98.93Mi ± 94%  +127.62% (p=0.035 n=10)
+geomean                                                                          38.70Mi                                            132.4Mi        +242.03%
+
+                          │ docs/technical/performance/results/2026-10-17/paired-final/baseline.txt │ docs/technical/performance/results/2026-10-17/paired-final/candidate.txt │
+                          │                                series/op                                │                    series/op                     vs base                 │
+ParseMetrics/Hosts1                                                                      141.0 ± 0%                                        141.0 ± 0%       ~ (p=1.000 n=10) ¹
+ParseMetrics/Hosts10                                                                    1.095k ± 0%                                       1.095k ± 0%       ~ (p=1.000 n=10) ¹
+ParseMetrics/Hosts100                                                                   10.63k ± 0%                                       10.63k ± 0%       ~ (p=1.000 n=10) ¹
+TrafficUnchanged/Hosts1                                                                  141.0 ± 0%                                        141.0 ± 0%       ~ (p=1.000 n=10) ¹
+TrafficUnchanged/Hosts10                                                                1.095k ± 0%                                       1.095k ± 0%       ~ (p=1.000 n=10) ¹
+TrafficUnchanged/Hosts100                                                               10.63k ± 0%                                       10.63k ± 0%       ~ (p=1.000 n=10) ¹
+TrafficRollups/Hosts1                                                                    141.0 ± 0%                                        141.0 ± 0%       ~ (p=1.000 n=10) ¹
+TrafficRollups/Hosts10                                                                  1.095k ± 0%                                       1.095k ± 0%       ~ (p=1.000 n=10) ¹
+geomean                                                                                  896.2                                             896.2       +0.00%
+¹ all samples are equal
+
+                          │ docs/technical/performance/results/2026-10-17/paired-final/baseline.txt │ docs/technical/performance/results/2026-10-17/paired-final/candidate.txt │
+                          │                                  B/op                                   │                      B/op                       vs base                  │
+ParseMetrics/Hosts1                                                                  1131.51Ki ± 0%                                     68.23Ki ± 0%  -93.97% (p=0.000 n=10)
+ParseMetrics/Hosts10                                                                  2061.5Ki ± 0%                                     625.7Ki ± 0%  -69.65% (p=0.000 n=10)
+ParseMetrics/Hosts100                                                                 11.335Mi ± 0%                                     6.295Mi ± 0%  -44.47% (p=0.000 n=10)
+TrafficUnchanged/Hosts1                                                                57.92Ki ± 0%                                     14.41Ki ± 0%  -75.12% (p=0.000 n=10)
+TrafficUnchanged/Hosts10                                                               620.1Ki ± 0%                                     131.6Ki ± 0%  -78.77% (p=0.000 n=10)
+TrafficUnchanged/Hosts100                                                              5.851Mi ± 0%                                     1.185Mi ± 0%  -79.74% (p=0.000 n=10)
+TrafficRollups/Hosts1                                                                  66.26Ki ± 0%                                     22.75Ki ± 0%  -65.66% (p=0.000 n=10)
+TrafficRollups/Hosts10                                                                 703.9Ki ± 0%                                     215.4Ki ± 0%  -69.39% (p=0.000 n=10)
+Summarize/Hours24                                                                      1.070Ki ± 0%                                     1.070Ki ± 0%        ~ (p=1.000 n=10) ¹
+Summarize/Hours168                                                                     9.289Ki ± 0%                                     9.289Ki ± 0%        ~ (p=1.000 n=10) ¹
+Summarize/Hours2160                                                                    144.8Ki ± 0%                                     144.8Ki ± 0%        ~ (p=1.000 n=10) ¹
+geomean                                                                                261.5Ki                                          92.95Ki       -64.46%
+¹ all samples are equal
+
+                          │ docs/technical/performance/results/2026-10-17/paired-final/baseline.txt │ docs/technical/performance/results/2026-10-17/paired-final/candidate.txt │
+                          │                                allocs/op                                │                   allocs/op                     vs base                  │
+ParseMetrics/Hosts1                                                                     2205.0 ± 0%                                       409.0 ± 0%  -81.45% (p=0.000 n=10)
+ParseMetrics/Hosts10                                                                   20.443k ± 0%                                      3.302k ± 0%  -83.85% (p=0.000 n=10)
+ParseMetrics/Hosts100                                                                  202.79k ± 0%                                      32.20k ± 0%  -84.12% (p=0.000 n=10)
+TrafficUnchanged/Hosts1                                                                1218.00 ± 0%                                       70.00 ± 0%  -94.25% (p=0.000 n=10)
+TrafficUnchanged/Hosts10                                                               12110.0 ± 0%                                       625.0 ± 0%  -94.84% (p=0.000 n=10)
+TrafficUnchanged/Hosts100                                                             120.979k ± 0%                                      6.146k ± 0%  -94.92% (p=0.000 n=10)
+TrafficRollups/Hosts1                                                                   1442.0 ± 0%                                       294.0 ± 0%  -79.61% (p=0.000 n=10)
+TrafficRollups/Hosts10                                                                 14.353k ± 0%                                      2.868k ± 0%  -80.02% (p=0.000 n=10)
+Summarize/Hours24                                                                        9.000 ± 0%                                       9.000 ± 0%        ~ (p=1.000 n=10) ¹
+Summarize/Hours168                                                                       15.00 ± 0%                                       15.00 ± 0%        ~ (p=1.000 n=10) ¹
+Summarize/Hours2160                                                                      33.00 ± 0%                                       33.00 ± 0%        ~ (p=1.000 n=10) ¹
+geomean                                                                                 1.945k                                            401.7       -79.34%
+¹ all samples are equal
+
+                       │ docs/technical/performance/results/2026-10-17/paired-final/baseline.txt │ docs/technical/performance/results/2026-10-17/paired-final/candidate.txt │
+                       │                               rollups/op                                │                   rollups/op                     vs base                 │
+TrafficRollups/Hosts1                                                                 12.00 ± 0%                                        12.00 ± 0%       ~ (p=1.000 n=10) ¹
+TrafficRollups/Hosts10                                                                120.0 ± 0%                                        120.0 ± 0%       ~ (p=1.000 n=10) ¹
+geomean                                                                               37.95                                             37.95       +0.00%
+¹ all samples are equal
+
+                    │ docs/technical/performance/results/2026-10-17/paired-final/baseline.txt │ docs/technical/performance/results/2026-10-17/paired-final/candidate.txt │
+                    │                                 rows/op                                 │                     rows/op                      vs base                 │
+Summarize/Hours24                                                                  816.0 ± 0%                                        816.0 ± 0%       ~ (p=1.000 n=10) ¹
+Summarize/Hours168                                                                5.712k ± 0%                                       5.712k ± 0%       ~ (p=1.000 n=10) ¹
+Summarize/Hours2160                                                               73.44k ± 0%                                       73.44k ± 0%       ~ (p=1.000 n=10) ¹
+geomean                                                                           6.995k                                            6.995k       +0.00%
+¹ all samples are equal
+
+pkg: github.com/kylebegeman/helios/internal/state
+                                                                    │ docs/technical/performance/results/2026-10-17/paired-final/baseline.txt │ docs/technical/performance/results/2026-10-17/paired-final/candidate.txt │
+                                                                    │                                 sec/op                                  │                      sec/op                       vs base                │
+StateRevisionReads/apps=1/history=32/ActiveRevisions                                                                            25.40µ ±  70%                                      21.57µ ±  23%        ~ (p=0.280 n=10)
+StateRevisionReads/apps=1/history=32/RevisionWithStatus/active                                                                  28.76µ ±  53%                                      30.69µ ±  52%        ~ (p=0.971 n=10)
+StateRevisionReads/apps=1/history=32/RevisionWithStatus/previous                                                                26.86µ ±  42%                                      30.79µ ±  28%        ~ (p=0.853 n=10)
+StateRevisionReads/apps=1/history=32/Revisions                                                                                  192.6µ ±  47%                                      189.9µ ±  27%        ~ (p=0.353 n=10)
+StateRevisionReads/apps=25/history=32/ActiveRevisions                                                                           295.1µ ±  37%                                      206.2µ ±  35%  -30.13% (p=0.043 n=10)
+StateRevisionReads/apps=25/history=32/RevisionWithStatus/active                                                                 29.17µ ±  50%                                      28.97µ ±  23%        ~ (p=0.579 n=10)
+StateRevisionReads/apps=25/history=32/RevisionWithStatus/previous                                                               29.72µ ±  36%                                      27.81µ ±  48%        ~ (p=0.579 n=10)
+StateRevisionReads/apps=25/history=32/Revisions                                                                                 233.5µ ±  46%                                      162.2µ ±  36%        ~ (p=0.075 n=10)
+StateRevisionReads/apps=25/history=512/ActiveRevisions                                                                          8.118m ± 286%                                      6.048m ±  88%        ~ (p=0.218 n=10)
+StateRevisionReads/apps=25/history=512/RevisionWithStatus/active                                                                133.9µ ± 114%                                      121.3µ ±  79%        ~ (p=0.393 n=10)
+StateRevisionReads/apps=25/history=512/RevisionWithStatus/previous                                                              119.9µ ± 172%                                      117.6µ ±  69%        ~ (p=0.684 n=10)
+StateRevisionReads/apps=25/history=512/Revisions                                                                                2.772m ±  27%                                      2.453m ±  45%        ~ (p=0.579 n=10)
+StateRevisionReads/apps=100/history=512/ActiveRevisions                                                                         31.75m ± 104%                                      35.17m ±  75%        ~ (p=0.436 n=10)
+StateRevisionReads/apps=100/history=512/RevisionWithStatus/active                                                               132.6µ ±  52%                                      117.4µ ±  15%        ~ (p=0.218 n=10)
+StateRevisionReads/apps=100/history=512/RevisionWithStatus/previous                                                             148.8µ ±  66%                                      121.7µ ±  65%        ~ (p=0.579 n=10)
+StateRevisionReads/apps=100/history=512/Revisions                                                                               2.883m ± 135%                                      2.329m ±  33%        ~ (p=0.190 n=10)
+StateBackupReads/apps=1/history=32/LatestForApp                                                                                 39.35µ ±  47%                                      36.04µ ±  14%        ~ (p=0.280 n=10)
+StateBackupReads/apps=1/history=32/AppHistory                                                                                   95.65µ ±  73%                                      85.95µ ±  14%        ~ (p=0.280 n=10)
+StateBackupReads/apps=1/history=32/FleetHistory                                                                                 94.06µ ±  51%                                      83.94µ ±  20%        ~ (p=0.393 n=10)
+StateBackupReads/apps=1/history=32/FleetBackupHistory                                                                           97.48µ ±  39%                                      81.66µ ±  63%        ~ (p=0.853 n=10)
+StateBackupReads/apps=1/history=32/LastGoodBackupRun                                                                            25.89µ ±  60%                                      22.84µ ±  23%        ~ (p=0.579 n=10)
+StateBackupReads/apps=25/history=32/LatestForApp                                                                                45.48µ ± 100%                                      37.61µ ±  29%        ~ (p=0.218 n=10)
+StateBackupReads/apps=25/history=32/AppHistory                                                                                 100.70µ ±  34%                                      88.81µ ±  24%        ~ (p=0.436 n=10)
+StateBackupReads/apps=25/history=32/FleetHistory                                                                                265.5µ ±  44%                                      299.8µ ±  24%        ~ (p=0.684 n=10)
+StateBackupReads/apps=25/history=32/FleetBackupHistory                                                                          322.8µ ± 146%                                      290.2µ ±  24%        ~ (p=0.218 n=10)
+StateBackupReads/apps=25/history=32/LastGoodBackupRun                                                                           28.26µ ±  52%                                      22.35µ ±  20%        ~ (p=0.105 n=10)
+StateBackupReads/apps=25/history=512/LatestForApp                                                                               37.29µ ±  71%                                      37.90µ ±  20%        ~ (p=0.853 n=10)
+StateBackupReads/apps=25/history=512/AppHistory                                                                                 218.7µ ±  78%                                      203.9µ ±  10%        ~ (p=0.247 n=10)
+StateBackupReads/apps=25/history=512/FleetHistory                                                                               6.647m ± 541%                                      3.630m ± 208%        ~ (p=0.247 n=10)
+StateBackupReads/apps=25/history=512/FleetBackupHistory                                                                         3.885m ± 250%                                      4.468m ±  57%        ~ (p=0.739 n=10)
+StateBackupReads/apps=25/history=512/LastGoodBackupRun                                                                          23.85µ ±  54%                                      21.57µ ±  29%        ~ (p=0.579 n=10)
+StateBackupReads/apps=100/history=512/LatestForApp                                                                              40.21µ ±  33%                                      38.17µ ±  13%        ~ (p=0.912 n=10)
+StateBackupReads/apps=100/history=512/AppHistory                                                                                215.1µ ±  92%                                      211.0µ ±  16%        ~ (p=0.739 n=10)
+StateBackupReads/apps=100/history=512/FleetHistory                                                                              15.98m ±  96%                                      21.11m ±  72%        ~ (p=0.481 n=10)
+StateBackupReads/apps=100/history=512/FleetBackupHistory                                                                        15.35m ±  32%                                      25.38m ±  53%  +65.36% (p=0.043 n=10)
+StateBackupReads/apps=100/history=512/LastGoodBackupRun                                                                         23.13µ ±  25%                                      23.88µ ±  21%        ~ (p=0.971 n=10)
+geomean                                                                                                                         209.4µ                                             193.9µ          -7.39%
+
+                                                                    │ docs/technical/performance/results/2026-10-17/paired-final/baseline.txt │ docs/technical/performance/results/2026-10-17/paired-final/candidate.txt │
+                                                                    │                                  B/op                                   │                      B/op                        vs base                 │
+StateRevisionReads/apps=1/history=32/ActiveRevisions                                                                             3.938Ki ± 0%                                      3.938Ki ± 0%       ~ (p=1.000 n=10) ¹
+StateRevisionReads/apps=1/history=32/RevisionWithStatus/active                                                                   3.898Ki ± 0%                                      3.898Ki ± 0%       ~ (p=1.000 n=10) ¹
+StateRevisionReads/apps=1/history=32/RevisionWithStatus/previous                                                                 3.898Ki ± 0%                                      3.898Ki ± 0%       ~ (p=1.000 n=10) ¹
+StateRevisionReads/apps=1/history=32/Revisions                                                                                   99.62Ki ± 0%                                      99.62Ki ± 0%       ~ (p=1.000 n=10) ¹
+StateRevisionReads/apps=25/history=32/ActiveRevisions                                                                            80.04Ki ± 0%                                      80.04Ki ± 0%       ~ (p=0.125 n=10)
+StateRevisionReads/apps=25/history=32/RevisionWithStatus/active                                                                  3.898Ki ± 0%                                      3.898Ki ± 0%       ~ (p=1.000 n=10) ¹
+StateRevisionReads/apps=25/history=32/RevisionWithStatus/previous                                                                3.898Ki ± 0%                                      3.898Ki ± 0%       ~ (p=1.000 n=10) ¹
+StateRevisionReads/apps=25/history=32/Revisions                                                                                  99.62Ki ± 0%                                      99.62Ki ± 0%       ~ (p=1.000 n=10)
+StateRevisionReads/apps=25/history=512/ActiveRevisions                                                                           80.53Ki ± 1%                                      80.49Ki ± 0%       ~ (p=0.128 n=10)
+StateRevisionReads/apps=25/history=512/RevisionWithStatus/active                                                                 3.898Ki ± 0%                                      3.898Ki ± 0%       ~ (p=1.000 n=10) ¹
+StateRevisionReads/apps=25/history=512/RevisionWithStatus/previous                                                               3.898Ki ± 0%                                      3.898Ki ± 0%       ~ (p=1.000 n=10) ¹
+StateRevisionReads/apps=25/history=512/Revisions                                                                                 1.560Mi ± 0%                                      1.560Mi ± 0%       ~ (p=0.779 n=10)
+StateRevisionReads/apps=100/history=512/ActiveRevisions                                                                          321.5Ki ± 0%                                      321.2Ki ± 0%       ~ (p=0.060 n=10)
+StateRevisionReads/apps=100/history=512/RevisionWithStatus/active                                                                3.898Ki ± 0%                                      3.898Ki ± 0%       ~ (p=1.000 n=10)
+StateRevisionReads/apps=100/history=512/RevisionWithStatus/previous                                                              3.898Ki ± 0%                                      3.898Ki ± 0%       ~ (p=1.000 n=10)
+StateRevisionReads/apps=100/history=512/Revisions                                                                                1.560Mi ± 0%                                      1.560Mi ± 0%       ~ (p=0.264 n=10)
+StateBackupReads/apps=1/history=32/LatestForApp                                                                                  2.516Ki ± 0%                                      2.516Ki ± 0%       ~ (p=1.000 n=10) ¹
+StateBackupReads/apps=1/history=32/AppHistory                                                                                    21.74Ki ± 0%                                      21.74Ki ± 0%       ~ (p=1.000 n=10) ¹
+StateBackupReads/apps=1/history=32/FleetHistory                                                                                  21.54Ki ± 0%                                      21.54Ki ± 0%       ~ (p=1.000 n=10) ¹
+StateBackupReads/apps=1/history=32/FleetBackupHistory                                                                            21.79Ki ± 0%                                      21.79Ki ± 0%       ~ (p=1.000 n=10) ¹
+StateBackupReads/apps=1/history=32/LastGoodBackupRun                                                                             1.656Ki ± 0%                                      1.656Ki ± 0%       ~ (p=1.000 n=10) ¹
+StateBackupReads/apps=25/history=32/LatestForApp                                                                                 2.531Ki ± 0%                                      2.531Ki ± 0%       ~ (p=1.000 n=10) ¹
+StateBackupReads/apps=25/history=32/AppHistory                                                                                   21.90Ki ± 0%                                      21.90Ki ± 0%       ~ (p=1.000 n=10) ¹
+StateBackupReads/apps=25/history=32/FleetHistory                                                                                 22.54Ki ± 0%                                      22.54Ki ± 0%       ~ (p=1.000 n=10) ¹
+StateBackupReads/apps=25/history=32/FleetBackupHistory                                                                           22.79Ki ± 0%                                      22.79Ki ± 0%       ~ (p=1.000 n=10) ¹
+StateBackupReads/apps=25/history=32/LastGoodBackupRun                                                                            1.672Ki ± 0%                                      1.672Ki ± 0%       ~ (p=1.000 n=10) ¹
+StateBackupReads/apps=25/history=512/LatestForApp                                                                                2.531Ki ± 0%                                      2.531Ki ± 0%       ~ (p=1.000 n=10) ¹
+StateBackupReads/apps=25/history=512/AppHistory                                                                                  21.99Ki ± 0%                                      21.99Ki ± 0%       ~ (p=1.000 n=10) ¹
+StateBackupReads/apps=25/history=512/FleetHistory                                                                                22.54Ki ± 0%                                      22.54Ki ± 0%       ~ (p=1.000 n=10) ¹
+StateBackupReads/apps=25/history=512/FleetBackupHistory                                                                          22.79Ki ± 0%                                      22.79Ki ± 0%       ~ (p=1.000 n=10) ¹
+StateBackupReads/apps=25/history=512/LastGoodBackupRun                                                                           1.672Ki ± 0%                                      1.672Ki ± 0%       ~ (p=1.000 n=10) ¹
+StateBackupReads/apps=100/history=512/LatestForApp                                                                               2.531Ki ± 0%                                      2.531Ki ± 0%       ~ (p=1.000 n=10) ¹
+StateBackupReads/apps=100/history=512/AppHistory                                                                                 21.99Ki ± 0%                                      21.99Ki ± 0%       ~ (p=1.000 n=10) ¹
+StateBackupReads/apps=100/history=512/FleetHistory                                                                               22.54Ki ± 0%                                      22.54Ki ± 0%       ~ (p=1.000 n=10) ¹
+StateBackupReads/apps=100/history=512/FleetBackupHistory                                                                         22.79Ki ± 0%                                      22.79Ki ± 0%       ~ (p=1.000 n=10) ¹
+StateBackupReads/apps=100/history=512/LastGoodBackupRun                                                                          1.672Ki ± 0%                                      1.672Ki ± 0%       ~ (p=1.000 n=10) ¹
+geomean                                                                                                                          13.51Ki                                           13.51Ki       -0.00%
+¹ all samples are equal
+
+                                                                    │ docs/technical/performance/results/2026-10-17/paired-final/baseline.txt │ docs/technical/performance/results/2026-10-17/paired-final/candidate.txt │
+                                                                    │                                allocs/op                                │                    allocs/op                     vs base                 │
+StateRevisionReads/apps=1/history=32/ActiveRevisions                                                                               69.00 ± 0%                                        69.00 ± 0%       ~ (p=1.000 n=10) ¹
+StateRevisionReads/apps=1/history=32/RevisionWithStatus/active                                                                     72.00 ± 0%                                        72.00 ± 0%       ~ (p=1.000 n=10) ¹
+StateRevisionReads/apps=1/history=32/RevisionWithStatus/previous                                                                   72.00 ± 0%                                        72.00 ± 0%       ~ (p=1.000 n=10) ¹
+StateRevisionReads/apps=1/history=32/Revisions                                                                                    1.222k ± 0%                                       1.222k ± 0%       ~ (p=1.000 n=10) ¹
+StateRevisionReads/apps=25/history=32/ActiveRevisions                                                                              962.0 ± 0%                                        962.0 ± 0%       ~ (p=1.000 n=10) ¹
+StateRevisionReads/apps=25/history=32/RevisionWithStatus/active                                                                    72.00 ± 0%                                        72.00 ± 0%       ~ (p=1.000 n=10) ¹
+StateRevisionReads/apps=25/history=32/RevisionWithStatus/previous                                                                  72.00 ± 0%                                        72.00 ± 0%       ~ (p=1.000 n=10) ¹
+StateRevisionReads/apps=25/history=32/Revisions                                                                                   1.222k ± 0%                                       1.222k ± 0%       ~ (p=1.000 n=10) ¹
+StateRevisionReads/apps=25/history=512/ActiveRevisions                                                                            1.012k ± 0%                                       1.012k ± 0%       ~ (p=1.000 n=10)
+StateRevisionReads/apps=25/history=512/RevisionWithStatus/active                                                                   74.00 ± 0%                                        74.00 ± 0%       ~ (p=1.000 n=10) ¹
+StateRevisionReads/apps=25/history=512/RevisionWithStatus/previous                                                                 74.00 ± 0%                                        74.00 ± 0%       ~ (p=1.000 n=10) ¹
+StateRevisionReads/apps=25/history=512/Revisions                                                                                  19.70k ± 0%                                       19.70k ± 0%       ~ (p=1.000 n=10) ¹
+StateRevisionReads/apps=100/history=512/ActiveRevisions                                                                           3.940k ± 0%                                       3.939k ± 0%       ~ (p=0.270 n=10)
+StateRevisionReads/apps=100/history=512/RevisionWithStatus/active                                                                  74.00 ± 0%                                        74.00 ± 0%       ~ (p=1.000 n=10) ¹
+StateRevisionReads/apps=100/history=512/RevisionWithStatus/previous                                                                74.00 ± 0%                                        74.00 ± 0%       ~ (p=1.000 n=10) ¹
+StateRevisionReads/apps=100/history=512/Revisions                                                                                 19.68k ± 0%                                       19.68k ± 0%       ~ (p=1.000 n=10) ¹
+StateBackupReads/apps=1/history=32/LatestForApp                                                                                    63.00 ± 0%                                        63.00 ± 0%       ~ (p=1.000 n=10) ¹
+StateBackupReads/apps=1/history=32/AppHistory                                                                                      370.0 ± 0%                                        370.0 ± 0%       ~ (p=1.000 n=10) ¹
+StateBackupReads/apps=1/history=32/FleetHistory                                                                                    368.0 ± 0%                                        368.0 ± 0%       ~ (p=1.000 n=10) ¹
+StateBackupReads/apps=1/history=32/FleetBackupHistory                                                                              372.0 ± 0%                                        372.0 ± 0%       ~ (p=1.000 n=10) ¹
+StateBackupReads/apps=1/history=32/LastGoodBackupRun                                                                               55.00 ± 0%                                        55.00 ± 0%       ~ (p=1.000 n=10) ¹
+StateBackupReads/apps=25/history=32/LatestForApp                                                                                   64.00 ± 0%                                        64.00 ± 0%       ~ (p=1.000 n=10) ¹
+StateBackupReads/apps=25/history=32/AppHistory                                                                                     390.0 ± 0%                                        390.0 ± 0%       ~ (p=1.000 n=10) ¹
+StateBackupReads/apps=25/history=32/FleetHistory                                                                                   423.0 ± 0%                                        423.0 ± 0%       ~ (p=1.000 n=10) ¹
+StateBackupReads/apps=25/history=32/FleetBackupHistory                                                                             427.0 ± 0%                                        427.0 ± 0%       ~ (p=1.000 n=10) ¹
+StateBackupReads/apps=25/history=32/LastGoodBackupRun                                                                              56.00 ± 0%                                        56.00 ± 0%       ~ (p=1.000 n=10) ¹
+StateBackupReads/apps=25/history=512/LatestForApp                                                                                  64.00 ± 0%                                        64.00 ± 0%       ~ (p=1.000 n=10) ¹
+StateBackupReads/apps=25/history=512/AppHistory                                                                                    394.0 ± 0%                                        394.0 ± 0%       ~ (p=1.000 n=10) ¹
+StateBackupReads/apps=25/history=512/FleetHistory                                                                                  424.0 ± 0%                                        424.0 ± 0%       ~ (p=1.000 n=10) ¹
+StateBackupReads/apps=25/history=512/FleetBackupHistory                                                                            428.0 ± 0%                                        428.0 ± 0%       ~ (p=1.000 n=10) ¹
+StateBackupReads/apps=25/history=512/LastGoodBackupRun                                                                             56.00 ± 0%                                        56.00 ± 0%       ~ (p=1.000 n=10) ¹
+StateBackupReads/apps=100/history=512/LatestForApp                                                                                 64.00 ± 0%                                        64.00 ± 0%       ~ (p=1.000 n=10) ¹
+StateBackupReads/apps=100/history=512/AppHistory                                                                                   394.0 ± 0%                                        394.0 ± 0%       ~ (p=1.000 n=10) ¹
+StateBackupReads/apps=100/history=512/FleetHistory                                                                                 424.0 ± 0%                                        424.0 ± 0%       ~ (p=1.000 n=10) ¹
+StateBackupReads/apps=100/history=512/FleetBackupHistory                                                                           428.0 ± 0%                                        428.0 ± 0%       ~ (p=1.000 n=10) ¹
+StateBackupReads/apps=100/history=512/LastGoodBackupRun                                                                            56.00 ± 0%                                        56.00 ± 0%       ~ (p=1.000 n=10) ¹
+geomean                                                                                                                            253.7                                             253.7       -0.00%
+¹ all samples are equal

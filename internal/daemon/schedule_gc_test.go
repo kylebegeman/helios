@@ -54,3 +54,30 @@ func TestBuildCacheCeilingDefaults(t *testing.T) {
 		t.Fatalf("default ceiling %d is too permissive to protect a small disk", app.DefaultBuildCacheMax)
 	}
 }
+
+func TestFirstDeployKeepsTheEarliestRetainedTimestampAndErrorFallback(t *testing.T) {
+	store, err := state.Open(filepath.Join(t.TempDir(), "state.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	ctx := context.Background()
+	first := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	for i, status := range []state.RevisionStatus{state.RevisionFailed, state.RevisionRetired, state.RevisionActive} {
+		if err := store.SaveRevision(ctx, state.Revision{App: "fixture", ID: string(status), Status: status, CreatedAt: first.Add(time.Duration(i) * time.Hour)}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	s := &Scheduler{Store: store}
+	if got := s.firstDeploy(ctx, "fixture"); !got.Equal(first) {
+		t.Fatalf("first deployment moved to %s, want %s", got, first)
+	}
+	if got := s.firstDeploy(ctx, "missing"); !got.IsZero() {
+		t.Fatalf("missing app got a deployment timestamp: %s", got)
+	}
+	cancelled, cancel := context.WithCancel(ctx)
+	cancel()
+	if got := s.firstDeploy(cancelled, "fixture"); !got.IsZero() {
+		t.Fatalf("failed lookup got a deployment timestamp: %s", got)
+	}
+}

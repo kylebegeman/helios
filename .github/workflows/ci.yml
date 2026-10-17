@@ -20,6 +20,8 @@ jobs:
           go-version-file: go.mod
       - name: make check
         run: make check
+      - name: Validate performance fixtures
+        run: make bench-smoke BENCH_OUT=bin/benchmarks/ci-smoke
       - name: Build for the machines (linux/amd64)
         run: CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o /dev/null ./cmd/helios
       - name: Build for the Mac (darwin/arm64)

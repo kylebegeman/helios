@@ -1,0 +1,10 @@
+utc: 2026-10-17T19:04:50Z
+commit: 6d2398eaea873909dfbdf08048e7882680e11429
+tree: 339e3ce9cd656d8ead74c41179182b994e793010
+tracked-diff-sha256: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855  -
+tracked-worktree-status:
+go version go1.27.1 darwin/arm64
+darwin
+arm64
+1
+benchmark: -run=^$ -bench=. -benchmem -count=10 -benchtime=250ms -cpu=1 -p=1

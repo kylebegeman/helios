@@ -7,6 +7,7 @@ package signals
 import (
 	"bufio"
 	"context"
+	"encoding/binary"
 	"encoding/json"
 	"fmt"
 	"math"
@@ -37,7 +38,7 @@ type Series struct {
 func ParseMetrics(text string) []Series {
 	var out []Series
 	sc := bufio.NewScanner(strings.NewReader(text))
-	sc.Buffer(make([]byte, 1<<20), 1<<20)
+	sc.Buffer(make([]byte, 4<<10), 1<<20)
 	for sc.Scan() {
 		line := strings.TrimSpace(sc.Text())
 		if line == "" || strings.HasPrefix(line, "#") {
@@ -60,7 +61,9 @@ func parseLine(line string) (Series, bool) {
 		if end < i {
 			return s, false
 		}
-		for _, pair := range splitLabels(line[i+1 : end]) {
+		for labels := line[i+1 : end]; labels != ""; {
+			var pair string
+			pair, labels = cutLabel(labels)
 			k, v, ok := strings.Cut(pair, "=")
 			if !ok {
 				return s, false
@@ -77,18 +80,10 @@ func parseLine(line string) (Series, bool) {
 		}
 		rest = line[end+1:]
 	} else {
-		fields := strings.Fields(line)
-		if len(fields) < 2 {
-			return s, false
-		}
-		s.Name = fields[0]
-		rest = fields[1]
+		s.Name, rest = cutMetricField(line)
 	}
-	fields := strings.Fields(rest)
-	if len(fields) == 0 {
-		return s, false
-	}
-	v, err := strconv.ParseFloat(fields[0], 64)
+	value, _ := cutMetricField(rest)
+	v, err := strconv.ParseFloat(value, 64)
 	if err != nil || math.IsNaN(v) || math.IsInf(v, 0) {
 		return s, false
 	}
@@ -96,38 +91,81 @@ func parseLine(line string) (Series, bool) {
 	return s, true
 }
 
-// splitLabels splits a=b,c="d,e" on commas outside quotes.
-func splitLabels(s string) []string {
-	var out []string
-	var cur strings.Builder
+// cutMetricField reads one whitespace-delimited field without allocating a
+// slice for the remaining fields, including an optional sample timestamp.
+func cutMetricField(text string) (string, string) {
+	text = strings.TrimSpace(text)
+	for field := range strings.FieldsSeq(text) {
+		return field, text[len(field):]
+	}
+	return "", ""
+}
+
+// cutLabel splits at the first comma outside quotes. Both results refer to
+// the sample line; escaped quotes and commas stay intact for strconv.Unquote.
+func cutLabel(text string) (string, string) {
 	quoted, escaped := false, false
-	for _, r := range s {
-		switch {
+	for i := range len(text) {
+		switch c := text[i]; {
 		case escaped:
 			escaped = false
-			cur.WriteRune(r)
-		case quoted && r == '\\':
+		case quoted && c == '\\':
 			escaped = true
-			cur.WriteRune(r)
-		case r == '"':
+		case c == '"':
 			quoted = !quoted
-			cur.WriteRune(r)
-		case r == ',' && !quoted:
-			out = append(out, cur.String())
-			cur.Reset()
-		default:
-			cur.WriteRune(r)
+		case c == ',' && !quoted:
+			return text[:i], text[i+1:]
 		}
 	}
-	if cur.Len() > 0 {
-		out = append(out, cur.String())
-	}
-	return out
+	return text, ""
 }
 
 func (s Series) key() string {
-	labels, _ := json.Marshal(s.Labels) // String maps always marshal and sort keys.
-	return s.Name + string(labels)
+	// The usual Caddy labels fit on the stack. Larger arbitrary label sets
+	// still include every key and value in the identity.
+	var localKeys [8]string
+	keys := localKeys[:0]
+	if len(s.Labels) > cap(keys) {
+		keys = make([]string, 0, len(s.Labels))
+	}
+	size := metricKeyFieldSize(s.Name) + 1
+	for k, v := range s.Labels {
+		keys = append(keys, k)
+		size += metricKeyFieldSize(k) + metricKeyFieldSize(v)
+	}
+	sort.Strings(keys)
+	var key strings.Builder
+	key.Grow(size)
+	writeMetricKeyField(&key, s.Name)
+	if s.Labels == nil {
+		key.WriteByte(0)
+	} else {
+		key.WriteByte(1)
+	}
+	for _, k := range keys {
+		writeMetricKeyField(&key, k)
+		writeMetricKeyField(&key, s.Labels[k])
+	}
+	return key.String()
+}
+
+// Length prefixes keep names, keys and values unambiguous even when they
+// contain delimiters or NUL bytes, without JSON's temporary encoding buffers.
+func writeMetricKeyField(key *strings.Builder, value string) {
+	var length [binary.MaxVarintLen64]byte
+	n := binary.PutUvarint(length[:], uint64(len(value)))
+	key.Write(length[:n])
+	key.WriteString(value)
+}
+
+func metricKeyFieldSize(value string) int {
+	n := len(value)
+	size := n + 1
+	for n >= 128 {
+		size++
+		n >>= 7
+	}
+	return size
 }
 
 // Sampler takes one sample per call and rolls it up.
@@ -328,13 +366,26 @@ func (s *Sampler) traffic(ctx context.Context, now time.Time, series []Series, h
 	}
 	seen := map[string]bool{}
 	for _, sr := range series {
-		if !strings.HasPrefix(sr.Name, "caddy_http_") || sr.Value < 0 || math.IsNaN(sr.Value) || math.IsInf(sr.Value, 0) {
+		switch sr.Name {
+		case "caddy_http_requests_total", "caddy_http_request_duration_seconds_count",
+			"caddy_http_request_duration_seconds_sum", "caddy_http_request_duration_seconds_bucket",
+			"caddy_http_response_size_bytes_sum":
+		default:
+			continue
+		}
+		if sr.Value < 0 || math.IsNaN(sr.Value) || math.IsInf(sr.Value, 0) {
 			continue
 		}
 		host := sr.Labels["host"]
 		app, known := hostApp[host]
 		if !known || sr.Labels["handler"] != "subroute" {
 			continue
+		}
+		if sr.Name == "caddy_http_request_duration_seconds_bucket" {
+			bound, err := strconv.ParseFloat(sr.Labels["le"], 64)
+			if err != nil || bound < 0 || math.IsNaN(bound) || math.IsInf(bound, 0) {
+				continue
+			}
 		}
 		k := sr.key()
 		seen[k] = true
@@ -361,12 +412,7 @@ func (s *Sampler) traffic(ctx context.Context, now time.Time, series []Series, h
 		case "caddy_http_request_duration_seconds_sum":
 			add(app, host, state.SignalDurationMS, delta*1000)
 		case "caddy_http_request_duration_seconds_bucket":
-			if le := sr.Labels["le"]; le != "" {
-				bound, err := strconv.ParseFloat(le, 64)
-				if err == nil && bound >= 0 && !math.IsNaN(bound) && !math.IsInf(bound, 0) {
-					add(app, host, state.SignalBucketPrefix+le, delta)
-				}
-			}
+			add(app, host, state.SignalBucketPrefix+sr.Labels["le"], delta)
 		case "caddy_http_response_size_bytes_sum":
 			add(app, host, state.SignalBytes, delta)
 		}
