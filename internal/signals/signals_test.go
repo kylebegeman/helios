@@ -227,3 +227,65 @@ func TestSampleDoesNotAttributeSharedHostTrafficToOneApp(t *testing.T) {
 		t.Fatalf("shared traffic was assigned to one app: %+v, %v", rows, err)
 	}
 }
+
+func TestMetricsPreserveLabelsAndIgnoreSampleTimestamps(t *testing.T) {
+	input := " \t# a comment\n\n" +
+		" plain_metric\u2003-1.25e+2\t1790812800000 \n" +
+		`labeled_metric{ host = "app.example.com",path="/api/a,b?next=\"value\"",note="slash\\and\nline",}` + "\t2.5 1790812800000\n" +
+		"empty_labels{} 3\n" +
+		"missing_value\n"
+	got := ParseMetrics(input)
+	if len(got) != 3 {
+		t.Fatalf("got %d samples, want 3: %+v", len(got), got)
+	}
+	if got[0].Name != "plain_metric" || got[0].Value != -125 || got[0].Labels == nil || len(got[0].Labels) != 0 {
+		t.Fatalf("plain sample with Unicode whitespace: %+v", got[0])
+	}
+	if got[1].Name != "labeled_metric" || got[1].Value != 2.5 || len(got[1].Labels) != 3 ||
+		got[1].Labels["host"] != "app.example.com" || got[1].Labels["path"] != "/api/a,b?next=\"value\"" || got[1].Labels["note"] != "slash\\and\nline" {
+		t.Fatalf("escaped sample with a timestamp: %+v", got[1])
+	}
+	if got[2].Name != "empty_labels" || got[2].Value != 3 || got[2].Labels == nil || len(got[2].Labels) != 0 {
+		t.Fatalf("empty label set: %+v", got[2])
+	}
+}
+
+func TestMetricsRejectMalformedLabelsWithoutDroppingLaterSamples(t *testing.T) {
+	for _, input := range []string{
+		`metric{label="unfinished} 1`,
+		`metric{label="escaped\"} 1`,
+		`metric{label="bad\qescape"} 1`,
+		`metric{label="one"label="two"} 1`,
+		`metric{label="one", label = "two"} 1`,
+		`metric{= "value"} 1`,
+		`metric{label} 1`,
+		`metric{,label="value"} 1`,
+		`metric{label="value",,other="value"} 1`,
+		`metric{label="value" 1`,
+		`metric{label="value"}`,
+	} {
+		t.Run(input, func(t *testing.T) {
+			got := ParseMetrics(input + "\nafter 7\n")
+			if len(got) != 1 || got[0].Name != "after" || got[0].Value != 7 {
+				t.Fatalf("malformed sample affected later samples: %+v", got)
+			}
+		})
+	}
+}
+
+func TestMetricsAcceptLongLinesWithinTheExistingLimit(t *testing.T) {
+	value := strings.Repeat("x", 128<<10)
+	input := "long_metric{label=\"" + value + "\"} 42\nafter 7\n"
+	got := ParseMetrics(input)
+	if len(got) != 2 || got[0].Name != "long_metric" || got[0].Value != 42 || got[0].Labels["label"] != value || got[1].Name != "after" {
+		t.Fatalf("valid long line was truncated or skipped: %d samples", len(got))
+	}
+}
+
+func TestMetricsStopAtOversizedLines(t *testing.T) {
+	input := "before 1\nlong_metric{label=\"" + strings.Repeat("x", 1<<20) + "\"} 42\nafter 7\n"
+	got := ParseMetrics(input)
+	if len(got) != 1 || got[0].Name != "before" || got[0].Value != 1 {
+		t.Fatalf("oversized line changed the existing scrape limit: %d samples", len(got))
+	}
+}

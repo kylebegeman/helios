@@ -37,7 +37,7 @@ type Series struct {
 func ParseMetrics(text string) []Series {
 	var out []Series
 	sc := bufio.NewScanner(strings.NewReader(text))
-	sc.Buffer(make([]byte, 1<<20), 1<<20)
+	sc.Buffer(make([]byte, 4<<10), 1<<20)
 	for sc.Scan() {
 		line := strings.TrimSpace(sc.Text())
 		if line == "" || strings.HasPrefix(line, "#") {
@@ -60,7 +60,9 @@ func parseLine(line string) (Series, bool) {
 		if end < i {
 			return s, false
 		}
-		for _, pair := range splitLabels(line[i+1 : end]) {
+		for labels := line[i+1 : end]; labels != ""; {
+			var pair string
+			pair, labels = cutLabel(labels)
 			k, v, ok := strings.Cut(pair, "=")
 			if !ok {
 				return s, false
@@ -77,18 +79,10 @@ func parseLine(line string) (Series, bool) {
 		}
 		rest = line[end+1:]
 	} else {
-		fields := strings.Fields(line)
-		if len(fields) < 2 {
-			return s, false
-		}
-		s.Name = fields[0]
-		rest = fields[1]
+		s.Name, rest = cutMetricField(line)
 	}
-	fields := strings.Fields(rest)
-	if len(fields) == 0 {
-		return s, false
-	}
-	v, err := strconv.ParseFloat(fields[0], 64)
+	value, _ := cutMetricField(rest)
+	v, err := strconv.ParseFloat(value, 64)
 	if err != nil || math.IsNaN(v) || math.IsInf(v, 0) {
 		return s, false
 	}
@@ -96,33 +90,33 @@ func parseLine(line string) (Series, bool) {
 	return s, true
 }
 
-// splitLabels splits a=b,c="d,e" on commas outside quotes.
-func splitLabels(s string) []string {
-	var out []string
-	var cur strings.Builder
+// cutMetricField reads one whitespace-delimited field without allocating a
+// slice for the remaining fields, including an optional sample timestamp.
+func cutMetricField(text string) (string, string) {
+	text = strings.TrimSpace(text)
+	for field := range strings.FieldsSeq(text) {
+		return field, text[len(field):]
+	}
+	return "", ""
+}
+
+// cutLabel splits at the first comma outside quotes. Both results refer to
+// the sample line; escaped quotes and commas stay intact for strconv.Unquote.
+func cutLabel(text string) (string, string) {
 	quoted, escaped := false, false
-	for _, r := range s {
-		switch {
+	for i := range len(text) {
+		switch c := text[i]; {
 		case escaped:
 			escaped = false
-			cur.WriteRune(r)
-		case quoted && r == '\\':
+		case quoted && c == '\\':
 			escaped = true
-			cur.WriteRune(r)
-		case r == '"':
+		case c == '"':
 			quoted = !quoted
-			cur.WriteRune(r)
-		case r == ',' && !quoted:
-			out = append(out, cur.String())
-			cur.Reset()
-		default:
-			cur.WriteRune(r)
+		case c == ',' && !quoted:
+			return text[:i], text[i+1:]
 		}
 	}
-	if cur.Len() > 0 {
-		out = append(out, cur.String())
-	}
-	return out
+	return text, ""
 }
 
 func (s Series) key() string {
