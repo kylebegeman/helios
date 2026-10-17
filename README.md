@@ -34,10 +34,10 @@ alongside their `BEDROCK_*` aliases; conflicting values are refused unless an
 explicit corresponding flag overrides them. Workloads receive both sets of
 app, workload and revision metadata variables.
 
-The GitHub repository and live release channel still use the Bedrock URL until
-the separately planned cutover. Release builds produce Helios assets and
-identical legacy-named assets for older upgraders. See the
-[migration plan](docs/operations/helios-rename-plan.md) for the staged rollout.
+The GitHub repository and release channel use `kylebegeman/helios`. Release
+builds produce Helios assets and identical legacy-named assets for older
+upgraders. See the [migration record](docs/operations/helios-rename-plan.md)
+for the completed source and host rollout.
 
 ## Why Helios
 
