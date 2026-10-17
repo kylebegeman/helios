@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/base64"
+	"errors"
 	"net"
 	"strconv"
 	"strings"
@@ -13,10 +14,11 @@ import (
 
 // fakeSMTP speaks just enough SMTP to accept one message.
 type fakeSMTP struct {
-	auth string
-	from string
-	rcpt []string
-	data string
+	hello string
+	auth  string
+	from  string
+	rcpt  []string
+	data  string
 }
 
 func serve(t *testing.T) (*fakeSMTP, Server) {
@@ -44,6 +46,7 @@ func serve(t *testing.T) (*fakeSMTP, Server) {
 			line = strings.TrimRight(line, "\r\n")
 			switch {
 			case strings.HasPrefix(line, "EHLO"):
+				f.hello = line
 				w("250-fake")
 				w("250 AUTH PLAIN")
 			case strings.HasPrefix(line, "AUTH PLAIN "):
@@ -81,6 +84,7 @@ func serve(t *testing.T) (*fakeSMTP, Server) {
 }
 
 func TestSendsAPlainTextMessageWithAuthToALocalServer(t *testing.T) {
+	setHostname(t, "", errors.New("hostname unavailable"))
 	f, srv := serve(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -95,7 +99,10 @@ func TestSendsAPlainTextMessageWithAuthToALocalServer(t *testing.T) {
 	if f.from != "MAIL FROM:<bedrock@example.com>" || len(f.rcpt) != 2 || f.rcpt[1] != "RCPT TO:<ops@example.com>" {
 		t.Fatalf("envelope %q %q", f.from, f.rcpt)
 	}
-	for _, want := range []string{"Subject: hello is down\r\n", "To: kyle@example.com, ops@example.com\r\n", "Content-Type: text/plain; charset=utf-8", "web isn't running\r\n..\r\nsecond line\r\n"} {
+	if f.hello != "EHLO helios" {
+		t.Fatalf("SMTP identity %q, want EHLO helios", f.hello)
+	}
+	for _, want := range []string{"From: bedrock@example.com\r\n", "Subject: hello is down\r\n", "To: kyle@example.com, ops@example.com\r\n", "Content-Type: text/plain; charset=utf-8", "web isn't running\r\n..\r\nsecond line\r\n"} {
 		if !strings.Contains(f.data, want) {
 			t.Fatalf("message lacks %q:\n%s", want, f.data)
 		}
@@ -125,4 +132,63 @@ func TestHeadersStayOnOneLineWhateverTheAddressesHold(t *testing.T) {
 	if !strings.Contains(headers, "From: a@b  Bcc: x@y") {
 		t.Fatalf("the address was not kept on its line: %q", headers)
 	}
+}
+
+// The machine name identifies the SMTP client whenever it is available. Only
+// the product fallback and Message-ID tag change with the Helios rename.
+func TestClientNameUsesTheMachineNameOrHelios(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		hostname string
+		err      error
+		want     string
+	}{
+		{name: "machine", hostname: "mailhost.example.com", want: "mailhost.example.com"},
+		{name: "empty hostname", want: "helios"},
+		{name: "hostname failure", hostname: "ignored.example.com", err: errors.New("hostname unavailable"), want: "helios"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			setHostname(t, tc.hostname, tc.err)
+			if got := clientName(); got != tc.want {
+				t.Fatalf("clientName() = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestMessageIDUsesHeliosAndKeepsTheConfiguredSender(t *testing.T) {
+	for _, tc := range []struct{ name, hostname, domain string }{
+		{name: "machine", hostname: "mailhost.example.com", domain: "mailhost.example.com"},
+		{name: "fallback", domain: "helios"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			setHostname(t, tc.hostname, nil)
+			const from = "bedrock@example.com"
+			message := Message{From: from, To: []string{"ops@example.com"}, Subject: "helios alert", Body: "app is down"}
+			headers, _, _ := strings.Cut(message.render(), "\r\n\r\n")
+			if !strings.Contains(headers, "From: "+from+"\r\n") {
+				t.Fatalf("configured sender changed: %s", headers)
+			}
+			var id string
+			for _, line := range strings.Split(headers, "\r\n") {
+				if value, ok := strings.CutPrefix(line, "Message-ID: <"); ok {
+					id = value
+				}
+			}
+			timestamp, found := strings.CutSuffix(id, ".helios@"+tc.domain+">")
+			if !found {
+				t.Fatalf("Message-ID %q does not use Helios and the SMTP client name", id)
+			}
+			if value, err := strconv.ParseInt(timestamp, 10, 64); err != nil || value <= 0 {
+				t.Fatalf("Message-ID timestamp %q is invalid", timestamp)
+			}
+		})
+	}
+}
+
+func setHostname(t *testing.T, value string, err error) {
+	t.Helper()
+	original := hostname
+	hostname = func() (string, error) { return value, err }
+	t.Cleanup(func() { hostname = original })
 }

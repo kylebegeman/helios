@@ -174,7 +174,7 @@ func clientName() string {
 	if h, err := hostname(); err == nil && h != "" {
 		return h
 	}
-	return "bedrock"
+	return "helios"
 }
 
 func (m Message) render() string {
@@ -187,7 +187,7 @@ func (m Message) render() string {
 	fmt.Fprintf(&b, "To: %s\r\n", strings.Join(to, ", "))
 	fmt.Fprintf(&b, "Subject: %s\r\n", headerLine(m.Subject))
 	fmt.Fprintf(&b, "Date: %s\r\n", time.Now().Format(time.RFC1123Z))
-	fmt.Fprintf(&b, "Message-ID: <%d.%s@%s>\r\n", time.Now().UnixNano(), "bedrock", clientName())
+	fmt.Fprintf(&b, "Message-ID: <%d.%s@%s>\r\n", time.Now().UnixNano(), "helios", clientName())
 	b.WriteString("MIME-Version: 1.0\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Transfer-Encoding: 8bit\r\n\r\n")
 	// net/smtp's data writer dot-stuffs lines itself.
 	body := strings.ReplaceAll(m.Body, "\r\n", "\n")
