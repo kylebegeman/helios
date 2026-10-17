@@ -14,7 +14,26 @@ import (
 // deploy builds or runs releases. Different prefixes may share one host, but
 // that host's DNS mode must agree. The app may replace its own active routes.
 func CheckRouteConflicts(ctx context.Context, store *state.Store, m *manifest.Manifest) error {
-	if store == nil || len(m.Hosts()) == 0 {
+	if store == nil {
+		return nil
+	}
+	type ownedRoute struct {
+		workload string
+		route    manifest.Route
+		path     string
+	}
+	// Keep candidate and existing routes in workload order so diagnostics stay
+	// stable. Index existing routes by host once per app, instead of sorting
+	// and visiting every existing workload for every candidate route.
+	var mine []ownedRoute
+	hosts := map[string]bool{}
+	for _, name := range m.WorkloadNames() {
+		for _, r := range m.Workloads[name].Routes {
+			mine = append(mine, ownedRoute{name, r, r.NormalizedPath()})
+			hosts[r.Host] = true
+		}
+	}
+	if len(mine) == 0 {
 		return nil
 	}
 	active, err := store.ActiveRevisions(ctx)
@@ -30,19 +49,20 @@ func CheckRouteConflicts(ctx context.Context, store *state.Store, m *manifest.Ma
 		if err := json.Unmarshal(rev.Manifest, &other); err != nil {
 			return fmt.Errorf("revision %s/%s manifest: %w", rev.App, rev.ID, err)
 		}
-		for _, name := range m.WorkloadNames() {
-			for _, mine := range m.Workloads[name].Routes {
-				for _, otherName := range other.WorkloadNames() {
-					for _, theirs := range other.Workloads[otherName].Routes {
-						if mine.Host != theirs.Host {
-							continue
-						}
-						if mine.NormalizedPath() == theirs.NormalizedPath() {
-							clashes = append(clashes, fmt.Sprintf("%s%s for %s is already routed to %s's %s", mine.Host, mine.NormalizedPath(), name, other.App, otherName))
-						} else if mine.DNS != theirs.DNS {
-							clashes = append(clashes, fmt.Sprintf("%s uses dns %q here and %q in %s; routes sharing a host must use one DNS mode", mine.Host, mine.DNS, theirs.DNS, other.App))
-						}
-					}
+		byHost := map[string][]ownedRoute{}
+		for _, name := range other.WorkloadNames() {
+			for _, r := range other.Workloads[name].Routes {
+				if hosts[r.Host] {
+					byHost[r.Host] = append(byHost[r.Host], ownedRoute{name, r, r.NormalizedPath()})
+				}
+			}
+		}
+		for _, candidate := range mine {
+			for _, existing := range byHost[candidate.route.Host] {
+				if candidate.path == existing.path {
+					clashes = append(clashes, fmt.Sprintf("%s%s for %s is already routed to %s's %s", candidate.route.Host, candidate.path, candidate.workload, other.App, existing.workload))
+				} else if candidate.route.DNS != existing.route.DNS {
+					clashes = append(clashes, fmt.Sprintf("%s uses dns %q here and %q in %s; routes sharing a host must use one DNS mode", candidate.route.Host, candidate.route.DNS, existing.route.DNS, other.App))
 				}
 			}
 		}
