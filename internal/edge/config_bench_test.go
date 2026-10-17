@@ -23,13 +23,13 @@ func BenchmarkConfigBehind(b *testing.B) {
 			checkConfigBenchmarkFixture(b, config, routes, proxies)
 			b.ReportAllocs()
 			b.SetBytes(int64(len(config)))
-			b.ReportMetric(float64(len(routes)), "routes/op")
-			b.ReportMetric(float64(apps+1), "hosts/op")
 			for b.Loop() {
 				if _, err := ConfigBehind(routes, proxies); err != nil {
 					b.Fatal(err)
 				}
 			}
+			b.ReportMetric(float64(len(routes)), "routes/op")
+			b.ReportMetric(float64(apps+1), "hosts/op")
 		})
 	}
 }
