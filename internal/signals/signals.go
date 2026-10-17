@@ -7,6 +7,7 @@ package signals
 import (
 	"bufio"
 	"context"
+	"encoding/binary"
 	"encoding/json"
 	"fmt"
 	"math"
@@ -120,8 +121,51 @@ func cutLabel(text string) (string, string) {
 }
 
 func (s Series) key() string {
-	labels, _ := json.Marshal(s.Labels) // String maps always marshal and sort keys.
-	return s.Name + string(labels)
+	// The usual Caddy labels fit on the stack. Larger arbitrary label sets
+	// still include every key and value in the identity.
+	var localKeys [8]string
+	keys := localKeys[:0]
+	if len(s.Labels) > cap(keys) {
+		keys = make([]string, 0, len(s.Labels))
+	}
+	size := metricKeyFieldSize(s.Name) + 1
+	for k, v := range s.Labels {
+		keys = append(keys, k)
+		size += metricKeyFieldSize(k) + metricKeyFieldSize(v)
+	}
+	sort.Strings(keys)
+	var key strings.Builder
+	key.Grow(size)
+	writeMetricKeyField(&key, s.Name)
+	if s.Labels == nil {
+		key.WriteByte(0)
+	} else {
+		key.WriteByte(1)
+	}
+	for _, k := range keys {
+		writeMetricKeyField(&key, k)
+		writeMetricKeyField(&key, s.Labels[k])
+	}
+	return key.String()
+}
+
+// Length prefixes keep names, keys and values unambiguous even when they
+// contain delimiters or NUL bytes, without JSON's temporary encoding buffers.
+func writeMetricKeyField(key *strings.Builder, value string) {
+	var length [binary.MaxVarintLen64]byte
+	n := binary.PutUvarint(length[:], uint64(len(value)))
+	key.Write(length[:n])
+	key.WriteString(value)
+}
+
+func metricKeyFieldSize(value string) int {
+	n := len(value)
+	size := n + 1
+	for n >= 128 {
+		size++
+		n >>= 7
+	}
+	return size
 }
 
 // Sampler takes one sample per call and rolls it up.
@@ -322,13 +366,26 @@ func (s *Sampler) traffic(ctx context.Context, now time.Time, series []Series, h
 	}
 	seen := map[string]bool{}
 	for _, sr := range series {
-		if !strings.HasPrefix(sr.Name, "caddy_http_") || sr.Value < 0 || math.IsNaN(sr.Value) || math.IsInf(sr.Value, 0) {
+		switch sr.Name {
+		case "caddy_http_requests_total", "caddy_http_request_duration_seconds_count",
+			"caddy_http_request_duration_seconds_sum", "caddy_http_request_duration_seconds_bucket",
+			"caddy_http_response_size_bytes_sum":
+		default:
+			continue
+		}
+		if sr.Value < 0 || math.IsNaN(sr.Value) || math.IsInf(sr.Value, 0) {
 			continue
 		}
 		host := sr.Labels["host"]
 		app, known := hostApp[host]
 		if !known || sr.Labels["handler"] != "subroute" {
 			continue
+		}
+		if sr.Name == "caddy_http_request_duration_seconds_bucket" {
+			bound, err := strconv.ParseFloat(sr.Labels["le"], 64)
+			if err != nil || bound < 0 || math.IsNaN(bound) || math.IsInf(bound, 0) {
+				continue
+			}
 		}
 		k := sr.key()
 		seen[k] = true
@@ -355,12 +412,7 @@ func (s *Sampler) traffic(ctx context.Context, now time.Time, series []Series, h
 		case "caddy_http_request_duration_seconds_sum":
 			add(app, host, state.SignalDurationMS, delta*1000)
 		case "caddy_http_request_duration_seconds_bucket":
-			if le := sr.Labels["le"]; le != "" {
-				bound, err := strconv.ParseFloat(le, 64)
-				if err == nil && bound >= 0 && !math.IsNaN(bound) && !math.IsInf(bound, 0) {
-					add(app, host, state.SignalBucketPrefix+le, delta)
-				}
-			}
+			add(app, host, state.SignalBucketPrefix+sr.Labels["le"], delta)
 		case "caddy_http_response_size_bytes_sum":
 			add(app, host, state.SignalBytes, delta)
 		}
