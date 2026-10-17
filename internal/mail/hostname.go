@@ -2,4 +2,4 @@ package mail
 
 import "os"
 
-var hostname = os.Hostname
+func hostname() (string, error) { return os.Hostname() }
