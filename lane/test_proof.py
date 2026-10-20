@@ -3,6 +3,7 @@
 import importlib.util
 import io
 import json
+import os
 from pathlib import Path
 import subprocess
 import tempfile
@@ -64,6 +65,12 @@ class ProofReports(unittest.TestCase):
                 (cache / "generated.pyc").write_bytes(b"cache")
                 self.assertEqual(changed, PROOF.source_tree_digest())
 
+    def test_every_registered_proof_has_an_executable_script(self):
+        for proof in PROOF.PROOFS:
+            with self.subTest(proof=proof):
+                script = HERE / f"prove-{proof}.sh"
+                self.assertTrue(script.is_file() and os.access(script, os.X_OK), script)
+
     def test_transfer_requires_an_explicit_second_disposable_target(self):
         args = SimpleNamespace(proofs=["transfer"], target_config=None)
         self.assertTrue(any("--target-config" in item for item in PROOF.prerequisites(args, {})))
@@ -99,9 +106,12 @@ class ProofReports(unittest.TestCase):
             self.assertTrue(any(".env" in item for item in PROOF.prerequisites(args, settings)))
 
 
-class MemoryPreflight(unittest.TestCase):
+class Preflight:
+    """Runs proof.py against stand-in guests; nothing connects or launches."""
+
     def run_proof(self, proof, source_memory="MemTotal: 3145728 kB\n",
-                  destination_memory="MemTotal: 3145728 kB\n", check=False, memory_probe_seconds=0):
+                  destination_memory="MemTotal: 3145728 kB\n", check=False, memory_probe_seconds=0,
+                  prepared=True):
         with tempfile.TemporaryDirectory(prefix="bedrock-memory-preflight-") as directory:
             artifacts = Path(directory) / "report"
             source = "/source.env"
@@ -111,7 +121,7 @@ class MemoryPreflight(unittest.TestCase):
                         "LANE_VM_MEMORY_MIB": "3072"}
             other = {**settings, "LANE_ID": "b" * 32}
             argv = ["proof.py", "--config", source, "--artifacts", str(artifacts),
-                    "--setup", "storage", proof]
+                    "--setup", "storage", *proof.split()]
             if proof == "transfer":
                 argv[1:1] = ["--target-config", destination]
             if check:
@@ -129,6 +139,8 @@ class MemoryPreflight(unittest.TestCase):
                     if isinstance(result, subprocess.CompletedProcess):
                         return result
                     return subprocess.CompletedProcess([], 0, stdout=result, stderr="")
+                if script.startswith("command -v docker") and not prepared:
+                    return subprocess.CompletedProcess([], 1, stdout="", stderr="")
                 return subprocess.CompletedProcess([], 0, stdout="Ubuntu 24.04\n", stderr="")
 
             process = mock.Mock(returncode=0)
@@ -159,6 +171,8 @@ class MemoryPreflight(unittest.TestCase):
         popen.assert_not_called()
         setup.assert_not_called()
 
+
+class MemoryPreflight(Preflight, unittest.TestCase):
     def test_guarded_memory_probe_can_use_existing_remote_budget(self):
         # Model guard plus probe taking 45s without sleeping or connecting.
         for proof in ("product", "transfer"):
@@ -244,6 +258,18 @@ class MemoryPreflight(unittest.TestCase):
         self.assertEqual(result[1]["secondary_target"]["memory_total_bytes"], 2560 * 1024**2)
         self.assertIn("MemTotal", result[2])
         self.assertFalse(result[1]["problems"])
+
+
+class HostPreparation(Preflight, unittest.TestCase):
+    def test_journald_waits_for_m2_on_an_unprepared_host_and_runs_alone_on_a_prepared_one(self):
+        result = self.run_proof("journald", prepared=False)
+        self.assert_blocked_before_mutation(result)
+        self.assertIn("journald: host is not prepared; select m2 first", result[1]["problems"])
+        for proofs, prepared in (("m2 journald", False), ("journald", True)):
+            with self.subTest(proofs=proofs, prepared=prepared):
+                code, report, *_ = self.run_proof(proofs, prepared=prepared, check=True)
+                self.assertEqual(code, 0)
+                self.assertEqual(report["status"], "ready")
 
 
 if __name__ == "__main__":
