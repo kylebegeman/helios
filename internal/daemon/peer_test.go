@@ -338,8 +338,11 @@ func TestListenerFollowsConfig(t *testing.T) {
 
 	// The daemon's loop listens from its first tick and closes the
 	// listener when the daemon stops. A peer that never finishes its
-	// request holds the close only a while, and the daemon's loops are
-	// done once its connection is closed.
+	// request holds the close only until the listener's header wait,
+	// shortened here, cuts it off, and the daemon's loops are done once
+	// its connection is closed.
+	const headerWait = 300 * time.Millisecond
+	l.Server.HeaderWait = headerWait
 	third := port()
 	w.listenAt(t, third)
 	loopCtx, stop := context.WithCancel(ctx)
@@ -350,9 +353,6 @@ func TestListenerFollowsConfig(t *testing.T) {
 			t.Fatal("the daemon's loop never listened")
 		}
 	}
-	if code, _ := ask(t, client, http.MethodGet, third, peer.SummaryPath, w.macKey, "", nil); code != http.StatusOK {
-		t.Fatalf("summary from the daemon's loop: %d", code)
-	}
 	stuck, err := net.Dial("tcp", third.String())
 	if err != nil {
 		t.Fatal(err)
@@ -361,15 +361,23 @@ func TestListenerFollowsConfig(t *testing.T) {
 	if _, err := io.WriteString(stuck, "GET "+peer.SummaryPath+" HTTP/1.1\r\nHost: web1.example.test\r\n"); err != nil {
 		t.Fatal(err)
 	}
+	// The listener takes connections in the order they came, so once it
+	// answers this summary it holds the stuck one too, rather than leaving
+	// it to be refused when the listener closes.
+	if code, _ := ask(t, client, http.MethodGet, third, peer.SummaryPath, w.macKey, "", nil); code != http.StatusOK {
+		t.Fatalf("summary from the daemon's loop: %d", code)
+	}
 	stop()
 	stopped := make(chan struct{})
 	go func() { w.loops.Wait(); close(stopped) }()
 	select {
 	case <-stopped:
-	case <-time.After(7 * time.Second):
+	case <-time.After(10 * headerWait):
 		t.Fatal("the peer listener held up the daemon's stop")
 	}
-	stuck.SetReadDeadline(time.Now().Add(time.Second))
+	// Loops done before the close would leave the connection open until
+	// the header wait cut it, after this read gives up.
+	stuck.SetReadDeadline(time.Now().Add(headerWait / 3))
 	var timeout net.Error
 	if _, err := io.Copy(io.Discard, stuck); errors.As(err, &timeout) && timeout.Timeout() {
 		t.Fatal("the daemon's loops were done with a peer's connection still open")

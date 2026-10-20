@@ -242,7 +242,7 @@ func TestPeerServerIsBounded(t *testing.T) {
 		if built := s.httpServer(context.Background()); built.ReadHeaderTimeout != 5*time.Second || built.MaxHeaderBytes != MaxHeaderBytes {
 			t.Fatalf("the listener waits %s for headers of %d bytes", built.ReadHeaderTimeout, built.MaxHeaderBytes)
 		}
-		s.headerWait = 200 * time.Millisecond
+		s.HeaderWait = 200 * time.Millisecond
 		base := listening(t, s)
 		conn, err := net.Dial("tcp", strings.TrimPrefix(base, "http://"))
 		if err != nil {

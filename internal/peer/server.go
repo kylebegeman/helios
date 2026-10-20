@@ -75,9 +75,9 @@ type Server struct {
 	// machine's peers, with when they arrived by this machine's clock.
 	Receive func(observer string, p Push, at time.Time)
 
-	// headerWait is how long a request's headers may take to arrive; 5 s
+	// HeaderWait is how long a request's headers may take to arrive; 5 s
 	// when zero.
-	headerWait time.Duration
+	HeaderWait time.Duration
 
 	made     sync.Once
 	inFlight chan struct{}
@@ -153,7 +153,7 @@ func (s *Server) Stop() {
 // nothing here takes more than a small body. Its errors are discarded:
 // the standard logger would print remote addresses.
 func (s *Server) httpServer(ctx context.Context) *http.Server {
-	headerWait := s.headerWait
+	headerWait := s.HeaderWait
 	if headerWait == 0 {
 		headerWait = 5 * time.Second
 	}
