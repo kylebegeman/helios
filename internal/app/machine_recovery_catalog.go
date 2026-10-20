@@ -204,37 +204,38 @@ func recoveryImageID(ctx context.Context, ref, container string) (string, error)
 }
 
 // The sizes Docker reports add up to an estimate of the image archive,
-// not a bound: docker image save wraps each layer in a tar of its own,
-// with a header and block padding for every file, and the containerd
-// image store may report a size other than what it saves. So the
-// estimate keeps a tenth of the sum and 64 MiB on top, until the archive
-// is measured against the sum on a real host.
+// not a bound: docker image save adds tar headers and an index to what
+// Docker counts, and on a graph driver store a header and block padding
+// for every file in every layer. So the estimate keeps a tenth of the sum
+// and 64 MiB on top. On the containerd image store the sum came within
+// 25 KB an image of what save wrote.
 const (
 	imageArchiveSlackPercent = 10
 	imageArchiveSlackBytes   = 64 << 20
 )
 
-// recoveryImageSizes estimates what archiving images writes: the sum of
-// the size Docker reports for each image, with the archive's slack on
-// top. Tests replace it.
-var recoveryImageSizes = func(ctx context.Context, ids []string) (int64, error) {
+// recoveryImageSizes estimates the room archiving images takes: the sum of
+// what saving each image takes, as Engine.ArchiveSizes counts it, with the
+// archive's slack on top. Tests replace it.
+var recoveryImageSizes = func(ctx context.Context, connect func() (*docker.Engine, error), ids []string) (int64, error) {
 	if len(ids) == 0 {
 		return 0, nil
 	}
-	out, err := machineDocker(ctx, append([]string{"image", "inspect", "--format={{.Size}}"}, ids...)...)
+	e, err := connect()
 	if err != nil {
 		return 0, fmt.Errorf("size the workload images: %w", err)
 	}
-	sizes := strings.Fields(string(out))
-	if len(sizes) != len(ids) {
-		return 0, fmt.Errorf("size the workload images: docker reported %d sizes for %d images", len(sizes), len(ids))
+	callCtx, cancel := context.WithTimeout(ctx, machineDockerTimeout)
+	defer cancel()
+	sizes, err := e.ArchiveSizes(callCtx, ids)
+	if err != nil {
+		if ctx.Err() == nil && errors.Is(callCtx.Err(), context.DeadlineExceeded) {
+			return 0, fmt.Errorf("size the workload images: docker did not answer within %s", machineDockerTimeout)
+		}
+		return 0, fmt.Errorf("size the workload images: %w", err)
 	}
 	var sum int64
-	for _, s := range sizes {
-		n, err := strconv.ParseInt(s, 10, 64)
-		if err != nil || n < 0 {
-			return 0, fmt.Errorf("size the workload images: docker reported %q as an image's size", s)
-		}
+	for _, n := range sizes {
 		sum = addSize(sum, n)
 	}
 	return addSize(sum, addSize(sum/100*imageArchiveSlackPercent, imageArchiveSlackBytes)), nil
@@ -462,7 +463,7 @@ func (b Backup) prepareMachineRecoveryCatalog(ctx context.Context, hostname, sta
 		pins = append(pins, pin)
 	}
 	slices.Sort(c.Images)
-	archive, err := recoveryImageSizes(ctx, c.Images)
+	archive, err := recoveryImageSizes(ctx, connect, c.Images)
 	if err != nil {
 		return err
 	}

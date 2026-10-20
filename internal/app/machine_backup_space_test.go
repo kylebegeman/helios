@@ -18,6 +18,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/kylebegeman/helios/internal/docker"
 	"github.com/kylebegeman/helios/internal/docker/dockertest"
 	"github.com/kylebegeman/helios/internal/manifest"
 	"github.com/kylebegeman/helios/internal/restic"
@@ -181,7 +182,7 @@ func TestAMachineBackupCountsItsImageArchiveBeforeCopyingAnyData(t *testing.T) {
 	dockerCLI(t, "echo "+id)
 	saved := recoveryImageSizes
 	var sized []string
-	recoveryImageSizes = func(_ context.Context, ids []string) (int64, error) {
+	recoveryImageSizes = func(_ context.Context, _ func() (*docker.Engine, error), ids []string) (int64, error) {
 		sized = ids
 		return 9 << 30, nil
 	}
@@ -206,7 +207,7 @@ func TestAMachineBackupWithoutRoomForItsImagesRefusesBeforeArchivingThem(t *test
 	stage := stageMachineBackup(t, r, stagedApp{name: "site", image: "nginx:alpine"})
 	dockerCLI(t, "if [ \"$2\" = save ]; then printf archive > \"$4\"; else echo sha256:"+strings.Repeat("c", 64)+"; fi")
 	saved := recoveryImageSizes
-	recoveryImageSizes = func(context.Context, []string) (int64, error) { return 9 << 30, nil }
+	recoveryImageSizes = func(context.Context, func() (*docker.Engine, error), []string) (int64, error) { return 9 << 30, nil }
 	t.Cleanup(func() { recoveryImageSizes = saved })
 	onDisks(t, func(string) (disk, error) { return disk{dev: 1, free: 12 << 30}, nil })
 	err := prepareCatalog(r, stage)
@@ -228,7 +229,7 @@ func TestAMachineBackupWhoseImagesCantBeSizedRefusesBeforeArchivingThem(t *testi
 	dockerCLI(t, "if [ \"$2\" = save ]; then printf archive > \"$4\"; else echo sha256:"+strings.Repeat("c", 64)+"; fi")
 	saved := recoveryImageSizes
 	sizing := errors.New("size the workload images: docker did not answer within 2m0s")
-	recoveryImageSizes = func(context.Context, []string) (int64, error) { return 0, sizing }
+	recoveryImageSizes = func(context.Context, func() (*docker.Engine, error), []string) (int64, error) { return 0, sizing }
 	t.Cleanup(func() { recoveryImageSizes = saved })
 	roomToRestore(t)
 	if err := prepareCatalog(r, stage); !errors.Is(err, sizing) {
@@ -395,9 +396,9 @@ func TestAMachineBackupStopsWaitingForADockerThatDoesNotAnswer(t *testing.T) {
 		}
 	})
 	t.Run("sizing the images", func(t *testing.T) {
-		dockerCLI(t, "exec sleep 5")
+		connect := engineAnswering(t, func(_ http.ResponseWriter, r *http.Request) { <-r.Context().Done() })
 		err := answered(t, func(ctx context.Context) error {
-			_, err := recoveryImageSizes(ctx, []string{"sha256:" + strings.Repeat("c", 64)})
+			_, err := recoveryImageSizes(ctx, connect, []string{"sha256:" + strings.Repeat("c", 64)})
 			return err
 		})
 		if want := "size the workload images: docker did not answer within 50ms"; err == nil || err.Error() != want {
@@ -408,11 +409,8 @@ func TestAMachineBackupStopsWaitingForADockerThatDoesNotAnswer(t *testing.T) {
 	// which keeps the output open after the wrapper is stopped.
 	t.Run("a docker whose child holds its output", func(t *testing.T) {
 		dockerCLI(t, "sleep 5")
-		err := answered(t, func(ctx context.Context) error {
-			_, err := recoveryImageSizes(ctx, []string{"sha256:" + strings.Repeat("c", 64)})
-			return err
-		})
-		if want := "size the workload images: docker did not answer within 50ms"; err == nil || err.Error() != want {
+		err := prepare(t, stagedApp{name: "hello", image: "nginx:alpine"})
+		if want := "hello/web recovery image: resolve the recorded recovery image: docker did not answer within 50ms"; err == nil || err.Error() != want {
 			t.Fatalf("got %v, want %q", err, want)
 		}
 	})
@@ -443,51 +441,83 @@ func TestAMachineBackupStopsWaitingForADockerThatDoesNotAnswer(t *testing.T) {
 	})
 }
 
-// The archive is bigger than the images it holds, so their sizes are
-// counted with room for it on top.
-func TestWorkloadImagesAreSizedWithRoomForTheirArchive(t *testing.T) {
-	dir := t.TempDir()
-	answer, asked := filepath.Join(dir, "answer"), filepath.Join(dir, "asked")
-	dockerCLI(t, "printf '%s\\n' \"$@\" > '"+asked+"'\ncat '"+answer+"'")
-	ctx := context.Background()
-	if n, err := recoveryImageSizes(ctx, nil); n != 0 || err != nil {
-		t.Fatalf("no images were sized at %d: %v", n, err)
+// engineAnswering connects to a stand-in daemon that lists manifests and
+// answers every image inspect with inspect.
+func engineAnswering(t *testing.T, inspect http.HandlerFunc) func() (*docker.Engine, error) {
+	t.Helper()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("API-Version", "1.48")
+		if r.URL.Path != "/_ping" {
+			inspect(w, r)
+		}
+	}))
+	t.Cleanup(server.Close)
+	t.Setenv("DOCKER_HOST", "tcp"+strings.TrimPrefix(server.URL, "http"))
+	t.Setenv("DOCKER_API_VERSION", "")
+	t.Setenv("DOCKER_TLS_VERIFY", "")
+	t.Setenv("DOCKER_CERT_PATH", "")
+	return func() (*docker.Engine, error) {
+		e, err := docker.Connect(context.Background())
+		if err == nil {
+			t.Cleanup(func() { e.Close() })
+		}
+		return e, err
 	}
-	if _, err := os.Stat(asked); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("sizing no images ran docker: %v", err)
+}
+
+// The archive is bigger than what Docker counts for the images it holds,
+// so their sizes are summed with room for it on top.
+func TestWorkloadImagesAreSizedWithRoomForTheirArchive(t *testing.T) {
+	ctx := context.Background()
+	unused := func() (*docker.Engine, error) {
+		t.Error("sizing no images connected to docker")
+		return nil, errors.New("unused")
+	}
+	if n, err := recoveryImageSizes(ctx, unused, nil); n != 0 || err != nil {
+		t.Fatalf("no images were sized at %d: %v", n, err)
 	}
 	ids := []string{"sha256:" + strings.Repeat("a", 64), "sha256:" + strings.Repeat("b", 64)}
 	for _, tc := range []struct {
-		answer string
-		want   int64
-		err    string
+		name    string
+		content map[string]int64
+		want    int64
+		err     string
 	}{
 		// The sum, a tenth of it and 64 MiB.
-		{answer: "1000\n2000\n", want: 3000 + 300 + 64<<20},
-		{answer: fmt.Sprintf("%d\n%d\n", int64(math.MaxInt64), int64(math.MaxInt64)), want: math.MaxInt64},
-		{answer: "1000\n", err: "size the workload images: docker reported 1 sizes for 2 images"},
-		{answer: "1000\n-1\n", err: `size the workload images: docker reported "-1" as an image's size`},
-		{answer: "1000\nsha256:x\n", err: `size the workload images: docker reported "sha256:x" as an image's size`},
+		{name: "sized", content: map[string]int64{ids[0]: 1000, ids[1]: 2000}, want: 3000 + 300 + 64<<20},
+		{name: "past the largest size", content: map[string]int64{ids[0]: math.MaxInt64, ids[1]: math.MaxInt64}, want: math.MaxInt64},
+		{name: "unreadable", content: map[string]int64{ids[0]: 1000, ids[1]: -1}, err: "size the workload images: docker reported -1 bytes of content for " + ids[1]},
+		{name: "missing", content: map[string]int64{ids[0]: 1000}, err: "size the workload images: Error response from daemon: No such image: " + ids[1]},
 	} {
-		if err := os.WriteFile(answer, []byte(tc.answer), 0o600); err != nil {
-			t.Fatal(err)
-		}
-		n, err := recoveryImageSizes(ctx, ids)
-		if tc.err != "" {
-			if err == nil || err.Error() != tc.err {
-				t.Errorf("docker answering %q: got %d, %v, want %q", tc.answer, n, err, tc.err)
+		t.Run(tc.name, func(t *testing.T) {
+			var inspected []string
+			connect := engineAnswering(t, func(w http.ResponseWriter, r *http.Request) {
+				id := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/v1.48/images/"), "/json")
+				inspected = append(inspected, id)
+				w.Header().Set("Content-Type", "application/json")
+				content, ok := tc.content[id]
+				if !ok || r.URL.Query().Get("manifests") != "1" {
+					w.WriteHeader(http.StatusNotFound)
+					json.NewEncoder(w).Encode(map[string]any{"message": "No such image: " + id})
+					return
+				}
+				json.NewEncoder(w).Encode(map[string]any{"Id": id, "Size": 4 * content, "Manifests": []any{
+					map[string]any{"ID": id, "Available": true, "Size": map[string]any{"Content": content}},
+				}})
+			})
+			n, err := recoveryImageSizes(ctx, connect, ids)
+			if tc.err != "" {
+				if err == nil || err.Error() != tc.err {
+					t.Fatalf("got %d, %v, want %q", n, err, tc.err)
+				}
+				return
 			}
-			continue
-		}
-		if err != nil || n != tc.want {
-			t.Errorf("docker answering %q: got %d, %v, want %d", tc.answer, n, err, tc.want)
-		}
-	}
-	args, err := os.ReadFile(asked)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if want := strings.Join(append([]string{"image", "inspect", "--format={{.Size}}"}, ids...), "\n") + "\n"; string(args) != want {
-		t.Errorf("docker was asked %q, want %q", args, want)
+			if err != nil || n != tc.want {
+				t.Fatalf("got %d, %v, want %d", n, err, tc.want)
+			}
+			if !slices.Equal(inspected, ids) {
+				t.Errorf("inspected %v, want %v", inspected, ids)
+			}
+		})
 	}
 }

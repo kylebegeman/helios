@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/kylebegeman/helios/internal/docker"
 	"github.com/kylebegeman/helios/internal/docker/dockertest"
 	"github.com/kylebegeman/helios/internal/kernel"
 	"github.com/kylebegeman/helios/internal/manifest"
@@ -93,7 +94,7 @@ func TestAnInterruptedMachineBackupPrepareRemovesWhatItStaged(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	saved := recoveryImageSizes
-	recoveryImageSizes = func(ctx context.Context, _ []string) (int64, error) {
+	recoveryImageSizes = func(ctx context.Context, _ func() (*docker.Engine, error), _ []string) (int64, error) {
 		cancel()
 		return 0, ctx.Err()
 	}

@@ -19,9 +19,13 @@ The machine backup stages all of this on the machine's own disk, under
 `backups/machine` in the state directory, before uploading it: the state copy
 and secrets, each data app's pinned snapshot and the workload image archive.
 Before it copies any app data, it adds up the pinned snapshots, as their
-backups recorded them, and the images, with room for the archive's framing,
-and refuses unless the total fits with the reserve `helios watch` keeps: 5 GB
-or a tenth of the disk, whichever is larger. It also refuses, before copying,
+backups recorded them, and the room saving the images takes, with more for the
+archive's framing. On the containerd image store that is each image's
+compressed content, often a quarter of the size `docker image ls` shows. A
+graph driver store first copies the whole archive into Docker's own data
+directory, so there it is twice the images' size. Layers that images share
+count once for each. It refuses unless the total fits with the reserve
+`helios watch` keeps: 5 GB or a tenth of the disk, whichever is larger. It also refuses, before copying,
 a pin whose backup finished before the app's active revision. A machine backup
 that fails removes everything it staged there, unless it was stopped while it
 snapshots: the resumed operation snapshots that copy, or removes it when it

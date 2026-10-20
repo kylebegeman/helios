@@ -3,6 +3,7 @@ package docker
 import (
 	"context"
 	"fmt"
+	"math"
 	"os/exec"
 	"regexp"
 	"strconv"
@@ -10,6 +11,7 @@ import (
 	"time"
 
 	"github.com/moby/moby/client"
+	"github.com/moby/moby/client/pkg/versions"
 )
 
 // Image is an image helios built.
@@ -50,6 +52,65 @@ func (e *Engine) OwnedImages(ctx context.Context) ([]Image, error) {
 		out = append(out, Image{ID: img.ID, Tags: tags, Digests: img.RepoDigests, Labels: img.Labels, Size: img.Size})
 	}
 	return out, nil
+}
+
+// manifestsAPIVersion is the first Engine API version that lists an
+// image's manifests.
+const manifestsAPIVersion = "1.48"
+
+// ArchiveSizes estimates, image by image, the room docker image save takes.
+// The containerd image store streams the compressed content it keeps, which
+// its manifests count; the size it reports for an image can include the
+// unpacked snapshots too, about four times as much. A graph driver store
+// lists no manifests and saves each layer unpacked, near the reported
+// size, but first writes the whole archive into a temporary directory
+// under its data root, so a save there takes twice the reported size while
+// it runs. A daemon too old to list manifests is counted the same way.
+// Each image counts all of its own content, so layers images share count
+// once for each, though a save of them together writes them once.
+func (e *Engine) ArchiveSizes(ctx context.Context, ids []string) ([]int64, error) {
+	// Settle the API version before deciding whether to ask for manifests.
+	if _, err := e.cli.Ping(ctx, client.PingOptions{NegotiateAPIVersion: true}); err != nil {
+		return nil, err
+	}
+	var opts []client.ImageInspectOption
+	if !versions.LessThan(e.cli.ClientVersion(), manifestsAPIVersion) {
+		opts = append(opts, client.ImageInspectWithManifests(true))
+	}
+	sizes := make([]int64, 0, len(ids))
+	for _, id := range ids {
+		res, err := e.cli.ImageInspect(ctx, id, opts...)
+		if err != nil {
+			return nil, err
+		}
+		var size int64
+		if len(res.Manifests) > 0 {
+			// Every manifest's content, available or not: Content counts
+			// only what is present, and save copies all of that.
+			for _, m := range res.Manifests {
+				if m.Size.Content < 0 {
+					return nil, fmt.Errorf("docker reported %d bytes of content for %s", m.Size.Content, id)
+				}
+				size = addBytes(size, m.Size.Content)
+			}
+		} else {
+			if res.Size < 0 {
+				return nil, fmt.Errorf("docker reported %d bytes for %s", res.Size, id)
+			}
+			// The temporary copy and the archive itself.
+			size = addBytes(res.Size, res.Size)
+		}
+		sizes = append(sizes, size)
+	}
+	return sizes, nil
+}
+
+// addBytes adds two non-negative sizes, saturating rather than wrapping.
+func addBytes(a, b int64) int64 {
+	if b > math.MaxInt64-a {
+		return math.MaxInt64
+	}
+	return a + b
 }
 
 // PruneBuildCache drops build cache older than age, then trims whatever
