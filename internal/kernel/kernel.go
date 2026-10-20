@@ -71,7 +71,7 @@ type Definition interface {
 // it started, so it can close what the operation left open for a resumed
 // attempt that now never comes. It is told before the operation finishes,
 // so a daemon killed in between tells it again, and nothing it does changes
-// how the operation ends.
+// how the operation ends. A definition that wraps another passes it on.
 type Abandoner interface {
 	Abandon(ctx context.Context, operation, reason string)
 }

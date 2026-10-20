@@ -22,3 +22,13 @@ func (g recoveryGuard) Plan(ctx context.Context, raw json.RawMessage) (*kernel.P
 	}
 	return g.definition.Plan(ctx, raw)
 }
+
+// Abandon passes kernel.Abandoner on to the definition it guards, which
+// Recover could not otherwise reach through the guard. It does so even
+// while a recovery reserves the machine: Recover ends the operation all
+// the same, and what the definition closes is that operation's own.
+func (g recoveryGuard) Abandon(ctx context.Context, operation, reason string) {
+	if a, ok := g.definition.(kernel.Abandoner); ok {
+		a.Abandon(ctx, operation, reason)
+	}
+}
