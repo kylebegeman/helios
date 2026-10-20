@@ -362,6 +362,7 @@ func (d *daemon) startLoops(ctx context.Context, edgeLoaded time.Time) {
 	})
 	sampler := signals.NewSampler(d.store)
 	sampler.Log = logf
+	sampler.HostDisk = func() (uint64, uint64, bool) { return watch.DiskFree(prober.Root) }
 	d.every(ctx, time.Minute, true, func(time.Time) {
 		guarded(logf, "signals", func() {
 			if err := sampler.Sample(ctx); err != nil && ctx.Err() == nil {

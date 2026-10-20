@@ -31,6 +31,11 @@ const (
 	SignalMemoryMax   = "memory_max"
 	// SignalDiskBytes is what the app's volumes and database take on disk.
 	SignalDiskBytes = "disk_bytes"
+	// SignalHostDiskUsed is the most bytes in use on the machine's root
+	// filesystem in the hour, kept under the reserved app with the key
+	// SignalHostDiskRoot.
+	SignalHostDiskUsed = "host_disk_used"
+	SignalHostDiskRoot = "root"
 )
 
 // Signal is one hourly rollup.
@@ -106,7 +111,16 @@ func (s *Store) Signals(ctx context.Context, app string, since time.Time) ([]Sig
 		query += ` AND app = ?`
 		args = append(args, app)
 	}
-	query += ` ORDER BY hour, app, key, metric`
+	return s.querySignals(ctx, query+` ORDER BY hour, app, key, metric`, args...)
+}
+
+// MetricSignals returns one metric's rollups for every app since a time,
+// oldest first.
+func (s *Store) MetricSignals(ctx context.Context, metric string, since time.Time) ([]Signal, error) {
+	return s.querySignals(ctx, `SELECT hour, app, key, metric, value, samples FROM signals WHERE hour >= ? AND metric = ? ORDER BY hour, app, key`, unix(since), metric)
+}
+
+func (s *Store) querySignals(ctx context.Context, query string, args ...any) ([]Signal, error) {
 	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, err

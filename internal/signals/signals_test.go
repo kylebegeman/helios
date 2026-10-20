@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/kylebegeman/helios/internal/docker"
+	"github.com/kylebegeman/helios/internal/manifest"
 	"github.com/kylebegeman/helios/internal/state"
 )
 
@@ -414,5 +415,43 @@ func TestTrafficTracksExtraLabelsResetsAndEviction(t *testing.T) {
 	}
 	if len(rows) != 1 || rows[0].Metric != state.SignalRequests || rows[0].Value != 26 || rows[0].Samples != 3 {
 		t.Fatalf("extra labels, resets or eviction changed deltas: %+v", rows)
+	}
+}
+
+// The root filesystem's use is kept each hour at its largest, under the
+// reserved app, for the watcher's disk forecast.
+func TestSampleKeepsTheHoursLargestRootDiskUse(t *testing.T) {
+	ctx := context.Background()
+	store, err := state.Open(filepath.Join(t.TempDir(), "state.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	now := time.Date(2026, 10, 20, 12, 5, 0, 0, time.UTC)
+	free, readable := uint64(70), true
+	s := &Sampler{Store: store, Now: func() time.Time { return now }, Log: func(string, ...any) {},
+		HostDisk: func() (uint64, uint64, bool) { return free, 100, readable }}
+	for _, f := range []uint64{70, 40, 60} {
+		free = f
+		if err := s.Sample(ctx); err != nil {
+			t.Fatal(err)
+		}
+		now = now.Add(time.Minute)
+	}
+	// An unreadable disk, or one that reads more free than it holds,
+	// keeps nothing. The unreadable read says the disk is full, so keeping
+	// it would raise the hour's 60.
+	free, readable = 0, false
+	if err := s.Sample(ctx); err != nil {
+		t.Fatal(err)
+	}
+	free, readable = 101, true
+	if err := s.Sample(ctx); err != nil {
+		t.Fatal(err)
+	}
+	rows, err := store.Signals(ctx, manifest.ReservedApp, now.Add(-time.Hour))
+	if err != nil || len(rows) != 1 || rows[0].Key != state.SignalHostDiskRoot || rows[0].Metric != state.SignalHostDiskUsed ||
+		rows[0].Value != 60 || !rows[0].Hour.Equal(now.Truncate(time.Hour)) {
+		t.Fatalf("root disk rollups: %+v, %v", rows, err)
 	}
 }

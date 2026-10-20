@@ -195,6 +195,14 @@ func (s *Store) ImportMachineRecovery(ctx context.Context, sourceDBPath, recover
 				if row[5].(int64) == 0 {
 					row[5] = now
 				}
+			case "signals":
+				// Host disk rows describe the source machine's root
+				// filesystem. The target samples its own from the moment it
+				// starts, so the same hours would collide, and the rest would
+				// fit two machines' disks into one forecast.
+				if row[3] == SignalHostDiskUsed {
+					continue
+				}
 			}
 			if _, err := tx.ExecContext(ctx, query, row...); err != nil {
 				return fmt.Errorf("import %s: %w", table.name, err)
