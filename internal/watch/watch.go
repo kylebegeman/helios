@@ -77,6 +77,9 @@ type Watcher struct {
 
 	failing map[string]int
 	passing map[string]int
+	// graver counts the rounds in a row an open incident's condition has
+	// been graver than the incident.
+	graver map[string]int
 	// owed holds each incident whose latest notice some leg missed.
 	owed map[int64]owedNotice
 }
@@ -92,6 +95,7 @@ func (w *Watcher) init() {
 	if w.failing == nil {
 		w.failing = map[string]int{}
 		w.passing = map[string]int{}
+		w.graver = map[string]int{}
 		w.owed = map[int64]owedNotice{}
 	}
 	if w.Now == nil {
@@ -146,6 +150,7 @@ func (w *Watcher) Round(ctx context.Context, conditions []Condition) error {
 		if c.Unknown {
 			delete(w.failing, key)
 			delete(w.passing, key)
+			delete(w.graver, key)
 			continue
 		}
 		w.failing[key]++
@@ -169,8 +174,21 @@ func (w *Watcher) Round(ctx context.Context, conditions []Condition) error {
 			continue
 		}
 		inc.Observations++
-		// A notice is told once; it is repeated only once it needs attention.
-		escalated := inc.Severity == state.SeverityNotice && c.Severity != state.SeverityNotice
+		// A notice is told once; it is repeated only once it needs
+		// attention. An incident that grows graver, a notice that needs
+		// attention or a warning that became an outage, is told at once
+		// rather than at the next daily repeat. Like a new incident, the
+		// graver severity has to hold for OpenAfter rounds first, so a
+		// blip to critical never pages; until then the incident stays as
+		// it was. A notice grows graver on the clock, not on a probe, so
+		// it can't blip.
+		escalated := severityRank(c.Severity) > severityRank(inc.Severity)
+		if escalated && inc.Severity != state.SeverityNotice && w.graver[key]+1 < w.OpenAfter {
+			w.graver[key]++
+			c.Severity, c.Message, escalated = inc.Severity, inc.Message, false
+		} else {
+			delete(w.graver, key)
+		}
 		inc.Message, inc.Severity = c.Message, c.Severity
 		repeat := escalated || inc.Severity != state.SeverityNotice && !inc.NotifiedAt.IsZero() && now.Sub(inc.NotifiedAt) >= w.Renotify
 		owed, isOwed := w.owed[inc.ID]
@@ -194,6 +212,7 @@ func (w *Watcher) Round(ctx context.Context, conditions []Condition) error {
 		}
 		w.passing[key]++
 		w.failing[key] = 0
+		delete(w.graver, key)
 		if w.passing[key] < w.ResolveAfter {
 			continue
 		}
@@ -211,6 +230,7 @@ func (w *Watcher) Round(ctx context.Context, conditions []Condition) error {
 			if _, ok := openByKey[key]; !ok {
 				delete(w.failing, key)
 				delete(w.passing, key)
+				delete(w.graver, key)
 			}
 		}
 	}
