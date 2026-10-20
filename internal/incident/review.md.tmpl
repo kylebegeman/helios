@@ -1,0 +1,35 @@
+# Incident {{.ID}}: {{.Subject}}
+{{if .Blank}}
+`helios alerts review <id>` prints this review filled in from the incident, its evidence and the operations around it. Keep a copy with the incident's notes and write the parts it leaves open.
+{{end}}
+Blameless review. Describe systems and decisions, not people.
+
+## Summary
+
+{{.Key}} went {{.Severity}} on {{.Host}} at {{.Opened}}{{if .Resolved}} and resolved at {{.Resolved}}{{end}}.
+What happened, in two sentences:
+
+## Impact
+
+Who or what was affected, for how long:
+
+## Timeline (UTC)
+
+| Time | Event |
+| --- | --- |
+{{range .Timeline}}| {{.At}} | {{.What}} |
+{{end}}
+## Contributing factors
+
+- {{.Message}}
+-
+
+## What helped
+
+-
+
+## Actions
+
+| Action | Owner | Due |
+| --- | --- | --- |
+|  |  |  |

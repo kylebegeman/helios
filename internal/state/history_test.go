@@ -38,6 +38,10 @@ func TestOperationFiltersRunBeforeTheLimitAndIncludeCompensatedFailures(t *testi
 	if err != nil || len(rows) != 2 || rows[1].ID != "failed" {
 		t.Fatalf("since includes the boundary: %v %+v", err, rows)
 	}
+	rows, err = s.ListFiltered(ctx, OperationFilter{Target: "api", Since: start.Add(time.Minute), Until: start.Add(2 * time.Minute)})
+	if err != nil || len(rows) != 2 || rows[0].ID != "compensated" || rows[1].ID != "failed" {
+		t.Fatalf("until includes the boundary: %v %+v", err, rows)
+	}
 	rows, err = s.ListFiltered(ctx, OperationFilter{Target: "api' OR 1=1 --"})
 	if err != nil || len(rows) != 0 {
 		t.Fatalf("filter values must be bound: %v %+v", err, rows)

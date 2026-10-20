@@ -79,6 +79,40 @@ func LoadLoomMarker(stateDir string, id int64) (*LoomMarker, error) {
 	return &m, nil
 }
 
+// LoomMarkerOf reads inc's Loom marker. It returns nil and no error when
+// there is none, or when the one there is an earlier incident's.
+func LoomMarkerOf(stateDir string, inc state.Incident) (*LoomMarker, error) {
+	m, err := LoadLoomMarker(stateDir, inc.ID)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	if !m.OpenedAt.Equal(inc.OpenedAt) {
+		return nil, nil
+	}
+	return m, nil
+}
+
+// Outcome says in a few words where the send stands, with the status
+// Loom or the relay answered.
+func (m *LoomMarker) Outcome() string {
+	status := ""
+	if m.Status != 0 {
+		status = " " + strconv.Itoa(m.Status)
+	}
+	switch m.State {
+	case LoomRefused:
+		return "refused" + status
+	case LoomAmbiguous:
+		return "ambiguous" + status + ", not resent"
+	case LoomSending:
+		return "sending since " + m.At.UTC().Format(time.DateTime) + " UTC, not resent"
+	}
+	return m.State
+}
+
 // Save writes e to its incident's evidence.json, replacing what was
 // there only once the new file is on disk. Evidence over FileMax is
 // refused; Collect fits it first.

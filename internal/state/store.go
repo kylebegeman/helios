@@ -454,12 +454,14 @@ func (s *Store) Steps(ctx context.Context, id string) ([]Step, error) {
 
 // OperationFilter selects history before the result limit is applied.
 // Failed includes compensated operations because their requested changes did
-// not succeed. Since includes operations created at or after that instant.
+// not succeed. Since includes operations created at or after that instant,
+// and Until those created at or before it.
 type OperationFilter struct {
 	Target string
 	Kind   string
 	Failed bool
 	Since  time.Time
+	Until  time.Time
 	Limit  int
 }
 
@@ -491,6 +493,10 @@ func (s *Store) ListFiltered(ctx context.Context, filter OperationFilter) ([]Ope
 	if !filter.Since.IsZero() {
 		clauses = append(clauses, "created_at >= ?")
 		args = append(args, unix(filter.Since))
+	}
+	if !filter.Until.IsZero() {
+		clauses = append(clauses, "created_at <= ?")
+		args = append(args, unix(filter.Until))
 	}
 	query := selectOperation
 	if len(clauses) > 0 {

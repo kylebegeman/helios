@@ -20,11 +20,9 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
-	"sync"
 	"sync/atomic"
 	"time"
 
-	"github.com/kylebegeman/helios/internal/docker"
 	"github.com/kylebegeman/helios/internal/incident"
 	"github.com/kylebegeman/helios/internal/integration"
 	"github.com/kylebegeman/helios/internal/secrets"
@@ -58,11 +56,7 @@ var (
 	// evidenceSources points src at this machine's Docker, journal and
 	// upstream status pages, and returns what releases them. Tests
 	// replace it.
-	evidenceSources = func(src *incident.Sources) (release func()) {
-		engine := &lazyEngine{}
-		src.Engine, src.Journal, src.Upstream = engine, docker.Journal{}, incident.Upstreams()
-		return engine.close
-	}
+	evidenceSources = incident.Local
 )
 
 // Statuses that turn a body away for good: sending it again gets the
@@ -466,26 +460,4 @@ func clearLoomFailure(store *state.Store) error {
 			record.Legs[LoomWebhookLeg] = LegTest{At: time.Now().UTC()}
 		}
 	})
-}
-
-// lazyEngine connects to Docker on the first read of a container's
-// output, so evidence that reads none never does.
-type lazyEngine struct {
-	once   sync.Once
-	engine *docker.Engine
-	err    error
-}
-
-func (l *lazyEngine) Logs(ctx context.Context, name string, opts docker.LogOptions, w io.Writer) error {
-	l.once.Do(func() { l.engine, l.err = docker.Connect(ctx) })
-	if l.err != nil {
-		return l.err
-	}
-	return l.engine.Logs(ctx, name, opts, w)
-}
-
-func (l *lazyEngine) close() {
-	if l.engine != nil {
-		l.engine.Close()
-	}
 }

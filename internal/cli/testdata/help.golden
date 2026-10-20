@@ -78,6 +78,8 @@ Usage:
   helios alerts [command]
 
 Available Commands:
+  review      Print a blameless review of an incident, its timeline filled in, for you to finish.
+  show        Show one incident and how its alerts went out, and with --evidence what was known about it.
   test        Send a test alert through each way alerts go out, and say how each did.
 
 Flags:
@@ -91,6 +93,33 @@ Global Flags:
       --targets-file string   the local named-target configuration (default "~/.bedrock/targets.json")
 
 Use "helios alerts [command] --help" for more information about a command.
+== helios alerts review (hidden false)
+Print a blameless review of an incident, its timeline filled in, for you to finish.
+
+Usage:
+  helios alerts review <id> [flags]
+
+Global Flags:
+      --json                  print JSON, one object per line
+      --socket string         the daemon's socket; the local kernel is used when nothing answers (default "/run/bedrock/bedrock.sock")
+      --state-dir string      where helios keeps its state (default "~/.bedrock")
+      --target string         operate on this explicitly named SSH target
+      --targets-file string   the local named-target configuration (default "~/.bedrock/targets.json")
+== helios alerts show (hidden false)
+Show one incident and how its alerts went out, and with --evidence what was known about it.
+
+Usage:
+  helios alerts show <id> [flags]
+
+Flags:
+      --evidence   also show the change before it, its logs, history and upstream status, collected now if they weren't then
+
+Global Flags:
+      --json                  print JSON, one object per line
+      --socket string         the daemon's socket; the local kernel is used when nothing answers (default "/run/bedrock/bedrock.sock")
+      --state-dir string      where helios keeps its state (default "~/.bedrock")
+      --target string         operate on this explicitly named SSH target
+      --targets-file string   the local named-target configuration (default "~/.bedrock/targets.json")
 == helios alerts test (hidden false)
 Send a test alert through each way alerts go out, and say how each did.
 

@@ -208,6 +208,8 @@ func TestATargetWithoutTheJournalIsNotAskedForPastLogs(t *testing.T) {
 	for _, args := range [][]string{
 		{"logs", "hello", "--revision", "r1"},
 		{"logs", "hello", "migrate", "--job", "3"},
+		{"alerts", "show", "1", "--evidence"},
+		{"alerts", "review", "1"},
 	} {
 		if _, stderr, code := targetRun(t, config, args...); code == 0 || !strings.Contains(stderr, "target does not keep incident evidence or retired logs; upgrade it first") {
 			t.Fatalf("%v: %d %s", args, code, stderr)

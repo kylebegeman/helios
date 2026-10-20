@@ -1,0 +1,47 @@
+# Incident 5: api
+
+Blameless review. Describe systems and decisions, not people.
+
+## Summary
+
+app:api went critical on web.example.test at 2026-10-20 14:02:05 UTC and resolved at 2026-10-20 14:14:05 UTC.
+What happened, in two sentences:
+
+## Impact
+
+Who or what was affected, for how long:
+
+## Timeline (UTC)
+
+| Time | Event |
+| --- | --- |
+| 2026-10-17 14:02:05 | earlier incident 3, critical, lasted 5m0s: web answered 502 |
+| 2026-10-18 14:02:05 | earlier incident 2, critical, lasted 5m0s: web answered 500 \| twice |
+| 2026-10-19 14:02:05 | earlier incident 1, critical, lasted 5m0s: web timed out |
+| 2026-10-20 13:22:05 | app.deploy of site started: revision r7 (op-site) |
+| 2026-10-20 13:23:05 | app.deploy of site finished: succeeded (op-site) |
+| 2026-10-20 13:59:05 | app.backup of api started (op-backup) |
+| 2026-10-20 14:00:05 | app.backup of api finished: failed (op-backup) |
+| 2026-10-20 14:01:05 | app.deploy of api started: revision r2, commit 0123456789ab, signed by ops@example.test (op-deploy) |
+| 2026-10-20 14:02:05 | incident 5 opened: api went critical |
+| 2026-10-20 14:02:09 | Loom delivery: delivered |
+| 2026-10-20 14:03:05 | app.deploy of api finished: succeeded (op-deploy) |
+| 2026-10-20 14:07:05 | app.rollback of api started: revision r1 (op-rollback) |
+| 2026-10-20 14:08:05 | app.rollback of api finished: succeeded (op-rollback) |
+| 2026-10-20 14:14:05 | incident 5 resolved after 12m0s |
+| 2026-10-20 14:14:05 | the last alert about it went out |
+
+## Contributing factors
+
+- web answered 502 | with [redacted API_TOKEN] in its body
+-
+
+## What helped
+
+-
+
+## Actions
+
+| Action | Owner | Due |
+| --- | --- | --- |
+|  |  |  |
