@@ -186,6 +186,10 @@ func newJobs(a *app) *cobra.Command {
 			for _, r := range runs {
 				result := "running"
 				took := ""
+				if r.Kind == state.JobHold {
+					fmt.Fprintf(w, "%s\t%s\t%s\t\theld until %s: %s\n", r.Workload, r.Kind, r.StartedAt.Local().Format("2006-01-02 15:04:05"), apps.OperatorTime(r.FinishedAt), r.Output)
+					continue
+				}
 				if !r.FinishedAt.IsZero() {
 					took = r.FinishedAt.Sub(r.StartedAt).Round(time.Millisecond).String()
 					result = "ok"
@@ -323,6 +327,11 @@ func newPs(a *app) *cobra.Command {
 								status += " failed"
 							default:
 								status += " ok"
+							}
+						}
+						if kind == manifest.Cron {
+							if hold, err := apps.ActiveCronHold(ctx, store, rev.App, name, time.Now()); err == nil && hold != nil {
+								status += ", held until " + apps.OperatorTime(hold.FinishedAt)
 							}
 						}
 						rows = append(rows, row{rev.App, name, rev.ID, "", status, rev.Images[name]})

@@ -10,11 +10,12 @@ Available Commands:
   backups          List backups, drills and restores, newest first.
   capabilities     Print this build's supported contracts and read-only machine identity.
   check            Validate a manifest and its local source inputs without a host.
+  cron             Hold a cron workload's scheduled runs for a while, or release the hold.
   daemon           The host daemon: run it, install it under systemd, or check it.
   deploy           Deploy the app in a source directory: build, start, check, switch the edge, retire the old revision.
   dns              The records behind every host this machine routes, as Cloudflare and the world see them.
   doctor           Check this machine and say what to fix. Changes nothing.
-  drill            Prove a backup: restore it beside the app, start the app on it, check, clean up.
+  drill            Prove a backup: restore it beside the app, start the app on it, check, clean up. Or skip the next scheduled one.
   exec             Run a command inside a workload's container.
   exposure         What each container may do and what reaches it: user, capabilities, root filesystem, networks, ports, mounts.
   gc               Remove containers, images and build cache that no kept revision uses.
@@ -166,6 +167,60 @@ Usage:
 Flags:
       --host              also check deploy-plan preconditions on this target; applies and journals nothing
       --manifest string   the manifest at the source's root (default: helios.yaml, or bedrock.yaml)
+
+Global Flags:
+      --json                  print JSON, one object per line
+      --socket string         the daemon's socket; the local kernel is used when nothing answers (default "/run/bedrock/bedrock.sock")
+      --state-dir string      where helios keeps its state (default "~/.bedrock")
+      --target string         operate on this explicitly named SSH target
+      --targets-file string   the local named-target configuration (default "~/.bedrock/targets.json")
+== helios cron (hidden false)
+Hold a cron workload's scheduled runs for a while, or release the hold.
+
+Usage:
+  helios cron [command]
+
+Available Commands:
+  hold        Skip a cron workload's scheduled runs until a time, at most 14 days ahead, and say why. A run in progress finishes.
+  release     End a cron workload's hold now. It runs again at its next scheduled time, with no catch-up run.
+
+Global Flags:
+      --json                  print JSON, one object per line
+      --socket string         the daemon's socket; the local kernel is used when nothing answers (default "/run/bedrock/bedrock.sock")
+      --state-dir string      where helios keeps its state (default "~/.bedrock")
+      --target string         operate on this explicitly named SSH target
+      --targets-file string   the local named-target configuration (default "~/.bedrock/targets.json")
+
+Use "helios cron [command] --help" for more information about a command.
+== helios cron hold (hidden false)
+Skip a cron workload's scheduled runs until a time, at most 14 days ahead, and say why. A run in progress finishes.
+
+Usage:
+  helios cron hold <app> <workload> [flags]
+
+Flags:
+      --digest string   apply only if the plan is still the one with this digest; implies --yes
+      --plan            show the plan and change nothing
+      --reason string   why the workload is held; required
+      --until string    when the hold ends, as an RFC 3339 time; required
+      --yes             apply without asking
+
+Global Flags:
+      --json                  print JSON, one object per line
+      --socket string         the daemon's socket; the local kernel is used when nothing answers (default "/run/bedrock/bedrock.sock")
+      --state-dir string      where helios keeps its state (default "~/.bedrock")
+      --target string         operate on this explicitly named SSH target
+      --targets-file string   the local named-target configuration (default "~/.bedrock/targets.json")
+== helios cron release (hidden false)
+End a cron workload's hold now. It runs again at its next scheduled time, with no catch-up run.
+
+Usage:
+  helios cron release <app> <workload> [flags]
+
+Flags:
+      --digest string   apply only if the plan is still the one with this digest; implies --yes
+      --plan            show the plan and change nothing
+      --yes             apply without asking
 
 Global Flags:
       --json                  print JSON, one object per line
@@ -336,7 +391,7 @@ Global Flags:
       --target string         operate on this explicitly named SSH target
       --targets-file string   the local named-target configuration (default "~/.bedrock/targets.json")
 == helios drill (hidden false)
-Prove a backup: restore it beside the app, start the app on it, check, clean up.
+Prove a backup: restore it beside the app, start the app on it, check, clean up. Or skip the next scheduled one.
 
 Usage:
   helios drill <app> [flags]
@@ -344,6 +399,8 @@ Usage:
 Flags:
       --digest string     apply only if the plan is still the one with this digest; implies --yes
       --plan              show the plan and change nothing
+      --reason string     why the drill is skipped; required with --skip-next
+      --skip-next         skip the next scheduled drill instead of running one; again before it, the one after
       --snapshot string   a snapshot id instead of the latest
       --yes               apply without asking
 

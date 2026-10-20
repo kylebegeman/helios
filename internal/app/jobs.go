@@ -147,20 +147,22 @@ func (j *Jobs) RunWith(ctx context.Context, rev *state.Revision, workload string
 		// Preserve the durable guard until reconciliation verifies its outcome.
 		return code, runErr
 	}
-	// Removal and the record use a fresh context: the job's may have ended.
-	cleanup, cancelCleanup := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancelCleanup()
+	// Removal and the record use fresh contexts: the job's may have ended.
 	output := ""
 	if containerID != "" {
-		output = e.LogTail(cleanup, containerID, 40)
+		tail, cancelTail := context.WithTimeout(context.Background(), 30*time.Second)
+		output = e.LogTail(tail, containerID, 40)
+		cancelTail()
 		if code < 0 {
 			// An uncertain or timed out job may still write. Keep the run open
-			// unless its exact container is stopped, so cron cannot overlap it.
-			if err := e.Remove(cleanup, containerID, 5*time.Second); err != nil && !docker.IsNotFound(err) {
+			// until its exact container is stopped, so cron cannot overlap it.
+			if err := removeUncertainJob(ctx, e, containerID); err != nil {
 				return code, errors.Join(runErr, err)
 			}
 		}
 	}
+	cleanup, cancelCleanup := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancelCleanup()
 	errText := ""
 	if runErr != nil {
 		errText = runErr.Error()
@@ -175,6 +177,32 @@ func (j *Jobs) RunWith(ctx context.Context, rev *state.Revision, workload string
 }
 
 const defaultJobTimeout = time.Hour
+
+// jobRemoveRetry is how long a job that timed out waits between attempts
+// to remove a container Docker wouldn't remove.
+var jobRemoveRetry = 5 * time.Second
+
+// removeUncertainJob removes the container of a job that timed out or
+// whose outcome is unknown, retrying while Docker refuses. Giving up after
+// one refusal would leave the run open with no one to finish it: listed as
+// running, holding cron off and failing every backup. Only the caller's
+// cancellation stops the retries; the open run is then the next daemon's
+// to reconcile, against the same deadline.
+func removeUncertainJob(ctx context.Context, e *docker.Engine, id string) error {
+	for {
+		attempt, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		err := e.Remove(attempt, id, 5*time.Second)
+		cancel()
+		if err == nil || docker.IsNotFound(err) {
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return err
+		case <-time.After(jobRemoveRetry):
+		}
+	}
+}
 
 func jobTimeout(w manifest.Workload) time.Duration {
 	if w.Timeout != "" {
@@ -294,6 +322,21 @@ func (j *Jobs) Tick(ctx context.Context, now time.Time, log func(string, ...any)
 			since := rev.CreatedAt
 			if last != nil && last.StartedAt.After(since) {
 				since = last.StartedAt
+			}
+			hold, err := j.Store.LastJobHold(ctx, rev.App, name)
+			if err != nil {
+				log("cron: %v", err)
+				continue
+			}
+			if hold != nil {
+				if now.Before(hold.FinishedAt) {
+					continue
+				}
+				// A hold resumes the schedule where it ends, with no run to
+				// catch up on the ones it held.
+				if hold.FinishedAt.After(since) {
+					since = hold.FinishedAt
+				}
 			}
 			if sched.Next(since).After(now) {
 				continue

@@ -12,6 +12,10 @@ const (
 	BackupRunBackup  = "backup"
 	BackupRunDrill   = "drill"
 	BackupRunRestore = "restore"
+	// BackupRunDrillSkip is a scheduled drill an operator skipped. It
+	// starts and finishes at the skipped occurrence, and its detail is the
+	// operator's reason.
+	BackupRunDrillSkip = "drill-skip"
 )
 
 // BackupRun is one backup, drill or restore of an app's data.
@@ -71,6 +75,17 @@ func (s *Store) FinishBackupRun(ctx context.Context, id int64, r BackupRun) erro
 	_, err := s.db.ExecContext(ctx, `UPDATE backup_runs SET finished_at = ?, ok = ?, snapshot = ?, snapshot_at = ?, files = ?, bytes = ?, detail = ?, error = ? WHERE id = ?`,
 		unix(r.FinishedAt), r.OK, r.Snapshot, unix(r.SnapshotAt), r.Files, r.Bytes, r.Detail, r.Error, id)
 	return err
+}
+
+// SkipDrill records that the drill scheduled at occurrence is skipped, and
+// why.
+func (s *Store) SkipDrill(ctx context.Context, app string, occurrence time.Time, reason string) (int64, error) {
+	res, err := s.db.ExecContext(ctx, `INSERT INTO backup_runs (app, kind, started_at, finished_at, ok, detail) VALUES (?, ?, ?, ?, 1, ?)`,
+		app, BackupRunDrillSkip, unix(occurrence), unix(occurrence), reason)
+	if err != nil {
+		return 0, err
+	}
+	return res.LastInsertId()
 }
 
 const backupRunColumns = `id, app, kind, started_at, finished_at, ok, snapshot, snapshot_at, files, bytes, detail, error`

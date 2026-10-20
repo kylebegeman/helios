@@ -6,8 +6,10 @@ import (
 	"time"
 )
 
-// Incident severities.
+// Incident severities. A notice is something an operator chose, such as a
+// skipped drill or a held cron workload: worth seeing, never an alert.
 const (
+	SeverityNotice   = "notice"
 	SeverityWarning  = "warning"
 	SeverityCritical = "critical"
 )

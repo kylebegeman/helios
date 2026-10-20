@@ -152,6 +152,16 @@ checks:
     contains: hello
 ```
 
+A cron workload runs on its schedule, in UTC, one run at a time, and a run
+still going when the next is due skips that one. `helios jobs <app>` lists its
+runs. To pause it without a deploy, `helios cron hold <app> <workload> --until
+<time> --reason <text>` holds it until an RFC 3339 time at most 14 days ahead.
+A hold doesn't stop a run already going, and when it ends the workload runs at
+its next scheduled time, with no run to catch up on the ones it held. `helios
+cron release <app> <workload>` ends a hold early. `helios status`, `helios
+jobs` and `helios ps` show the hold and its reason, and the daemon sends it as
+a notice, then as a warning on its last day.
+
 <details>
 <summary><b>A larger app, with releases, singletons and derived secrets</b></summary>
 
@@ -509,6 +519,16 @@ of each app's data in `helios backup helios` keep the same reserve.
 snapshot that can't fit at all, say how much the disk keeps free, and go ahead
 without a check when restic can't count the snapshot.
 
+`helios drill <app> --skip-next --reason <text>` skips the next scheduled
+drill when you know it can't run, such as while a disk is being resized. Its
+plan names the drill it skips and the one after it, and running it again skips
+the following one too. A skip is not a failed drill: `helios backups` lists it
+as skipped by operator with the reason, `helios status` shows it, and the
+daemon sends it as a notice. That notice becomes a warning when no drill has
+passed yet, or when the drill after the skip would find the last good drill
+more than 14 days old. Backups are never skipped this way; turning them off is
+a change to `helios.yaml`.
+
 After restoring, a drill runs SQLite's integrity check on every SQLite database
 in the restored volumes, up to 64. A database that is corrupt or won't open
 fails the drill by its path in its volume, and the drill's record lists the
@@ -619,7 +639,7 @@ complete log, and become available when an execution finishes.
 | **Machine** | `target` · `capabilities` · `host` · `daemon` · `doctor` · `upgrade` · `version` · `status` · `alerts` · `watch` |
 | **Apps** | `init` · `check` · `launch` · `deploy` · `preview` · `rollback` · `remove` · `move` · `ls` · `ps` · `logs` · `history` · `gc` |
 | **Data** | `backup` · `backups` · `restore` · `recover` · `rehearse` · `drill` · `psql` |
-| **Access** | `secret` · `integration` · `git` · `exec` · `run` · `jobs` |
+| **Access** | `secret` · `integration` · `git` · `exec` · `run` · `jobs` · `cron` |
 | **Network** | `dns` · `exposure` |
 
 Run `helios <command> --help` for any of them.

@@ -2,7 +2,10 @@ package cli
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
+	"os"
+	"os/user"
 	"text/tabwriter"
 	"time"
 
@@ -10,6 +13,7 @@ import (
 
 	apps "github.com/kylebegeman/helios/internal/app"
 	"github.com/kylebegeman/helios/internal/manifest"
+	"github.com/kylebegeman/helios/internal/state"
 )
 
 func newBackup(a *app) *cobra.Command {
@@ -30,18 +34,43 @@ func newDrill(a *app) *cobra.Command {
 	var (
 		planOnly bool
 		snapshot string
+		skipNext bool
+		reason   string
 	)
 	cmd := &cobra.Command{
 		Use:   "drill <app>",
-		Short: "Prove a backup: restore it beside the app, start the app on it, check, clean up.",
+		Short: "Prove a backup: restore it beside the app, start the app on it, check, clean up. Or skip the next scheduled one.",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if skipNext {
+				if snapshot != "" {
+					return errors.New("--skip-next skips the next scheduled drill, which takes no --snapshot")
+				}
+				return a.operate(cmd.Context(), apps.DrillSkipKind, apps.DrillSkipInput{App: args[0], Reason: reason, By: requester()}, planOnly)
+			}
+			if reason != "" {
+				return errors.New("--reason goes with --skip-next")
+			}
 			return a.operate(cmd.Context(), apps.DrillKind, apps.DrillInput{App: args[0], Snapshot: snapshot}, planOnly)
 		},
 	}
 	cmd.Flags().StringVar(&snapshot, "snapshot", "", "a snapshot id instead of the latest")
+	cmd.Flags().BoolVar(&skipNext, "skip-next", false, "skip the next scheduled drill instead of running one; again before it, the one after")
+	cmd.Flags().StringVar(&reason, "reason", "", "why the drill is skipped; required with --skip-next")
 	a.mutatingFlags(cmd, &planOnly)
 	return cmd
+}
+
+// requester is who asks for a skip or a hold, for its plan and receipt: the
+// person behind sudo, or else the account running the command.
+func requester() string {
+	if name := os.Getenv("SUDO_USER"); name != "" {
+		return name
+	}
+	if u, err := user.Current(); err == nil {
+		return u.Username
+	}
+	return ""
 }
 
 func newRestore(a *app) *cobra.Command {
@@ -89,7 +118,10 @@ func newBackups(a *app) *cobra.Command {
 			fmt.Fprintln(w, "APP\tKIND\tSTARTED\tTOOK\tRESULT\tSNAPSHOT\tDETAIL")
 			for _, r := range runs {
 				result, took, detail := "running", "", r.Detail
-				if r.Finished() {
+				switch {
+				case r.Kind == state.BackupRunDrillSkip:
+					result, detail = "skipped", "skipped by operator: "+r.Detail
+				case r.Finished():
 					took = r.FinishedAt.Sub(r.StartedAt).Round(time.Second).String()
 					if r.OK {
 						result = "ok"

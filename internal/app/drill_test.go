@@ -150,7 +150,7 @@ func drillFixture(t *testing.T, volumes ...string) (*drillState, *dockertest.Ser
 		m.Data.Volumes[v] = manifest.Volume{}
 	}
 	d := &drillState{dr: Drill{Store: r.Store, Secrets: r.Secrets, StateDir: r.StateDir}, app: m.App, snapshot: strings.Repeat("a", 64), m: m,
-		run: &backupRun{store: r.Store, app: m.App, kind: state.BackupRunDrill}, names: newDrillNames(r.StateDir, &m), advice: "free space or skip this drill"}
+		run: &backupRun{store: r.Store, app: m.App, kind: state.BackupRunDrill}, names: newDrillNames(r.StateDir, &m), advice: drillAdvice(m.App)}
 	fake := dockertest.New(t)
 	for _, v := range volumes {
 		fake.AddVolume(docker.VolumeName(m.App, v), nil)
@@ -204,7 +204,7 @@ func TestADrillWithoutRoomForItsRestoreRefuses(t *testing.T) {
 				})
 			}
 			err := d.restoreStep().Apply(ctx, io.Discard)
-			for _, want := range []string{"snapshot aaaaaaaa", c.need + " plus a 5.0 GB reserve", "which has 8.0 GB free", "free space or skip this drill"} {
+			for _, want := range []string{"snapshot aaaaaaaa", c.need + " plus a 5.0 GB reserve", "which has 8.0 GB free", "helios drill hello --skip-next --reason <text>"} {
 				if err == nil || !strings.Contains(err.Error(), want) {
 					t.Fatalf("the refusal should say %q: %v", want, err)
 				}
