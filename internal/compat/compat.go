@@ -58,7 +58,7 @@ func Current(keyPath string) (Info, error) {
 		APIVersion: APIVersion, ManifestVersion: ManifestVersion,
 		StateVersion: StateVersion, MinStateVersion: MinStateVersion, MaxStateVersion: StateVersion,
 		MachineID: id, Build: version.Current(),
-		Capabilities: []string{"kernel.plan.v1", "kernel.apply.v1", "kernel.expect.v1", "operations.history.v1", "operations.output.v1", "manifest.check.v1", "remote.source.v1", "state.migrations.v1", "upgrade.checkpoint.v1", "api.errors.v1", "git.signed.v1"},
+		Capabilities: []string{"kernel.plan.v1", "kernel.apply.v1", "kernel.expect.v1", "operations.history.v1", "operations.output.v1", "manifest.check.v1", "remote.source.v1", "state.migrations.v1", "upgrade.checkpoint.v1", "api.errors.v1", "git.signed.v1", "release.signed.v1"},
 	}, nil
 }
 

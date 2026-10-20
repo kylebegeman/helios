@@ -2,6 +2,7 @@ package release
 
 import (
 	"context"
+	"crypto/ed25519"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
@@ -11,22 +12,39 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync/atomic"
 	"testing"
 )
 
-// serve stands in for the release page: the asset, and the sums beside it.
-func serve(t *testing.T, version string, body []byte, sums string) *httptest.Server {
+// serve stands in for the release page: the asset, the sums beside it, and
+// their signature by a release key this test pins. It returns the key's
+// fingerprint.
+func serve(t *testing.T, version string, body []byte, sums string) string {
 	t.Helper()
+	key, signer := newReleaseKey(t)
+	publish(t, version, body, sums, sign(key, Namespace, []byte(sums)))
+	return signer
+}
+
+// publish serves a release page with sig as its SHA256SUMS.sig, or with no
+// signature when sig is nil. It returns how many times the build was asked
+// for.
+func publish(t *testing.T, version string, body []byte, sums string, sig []byte) *atomic.Int32 {
+	t.Helper()
+	asked := &atomic.Int32{}
 	asset := AssetName(version, runtime.GOOS, runtime.GOARCH)
 	mux := http.NewServeMux()
 	prefix := "/releases/download/v" + version
-	mux.HandleFunc(prefix+"/"+asset, func(w http.ResponseWriter, _ *http.Request) { w.Write(body) })
+	mux.HandleFunc(prefix+"/"+asset, func(w http.ResponseWriter, _ *http.Request) { asked.Add(1); w.Write(body) })
 	mux.HandleFunc(prefix+"/SHA256SUMS", func(w http.ResponseWriter, _ *http.Request) { fmt.Fprint(w, sums) })
+	if sig != nil {
+		mux.HandleFunc(prefix+"/SHA256SUMS.sig", func(w http.ResponseWriter, _ *http.Request) { w.Write(sig) })
+	}
 	srv := httptest.NewServer(mux)
-	old := Repo
+	old := repo
 	repo = srv.URL
 	t.Cleanup(func() { repo = old; srv.Close() })
-	return srv
+	return asked
 }
 
 func sumOf(b []byte) string {
@@ -37,12 +55,16 @@ func sumOf(b []byte) string {
 func TestFetchVerifiesAndMakesRunnable(t *testing.T) {
 	body := []byte("#!/bin/sh\necho bedrock\n")
 	asset := AssetName("0.7.4", runtime.GOOS, runtime.GOARCH)
-	serve(t, "0.7.4", body, sumOf(body)+"  "+asset+"\n")
+	signer := serve(t, "0.7.4", body, sumOf(body)+"  "+asset+"\n")
 
-	path, err := Fetch(context.Background(), "0.7.4", t.TempDir(), "")
+	d, err := Fetch(context.Background(), "0.7.4", t.TempDir(), "")
 	if err != nil {
 		t.Fatal(err)
 	}
+	if d.Signer != signer || d.Unsigned != "" {
+		t.Fatalf("want signed by %s, got %+v", signer, d)
+	}
+	path := d.Path
 	got, err := os.ReadFile(path)
 	if err != nil || string(got) != string(body) {
 		t.Fatalf("%v %q", err, got)
@@ -81,8 +103,13 @@ func TestAPinnedChecksumIsTheOneThatCounts(t *testing.T) {
 	// The published sums say something else entirely.
 	serve(t, "0.7.4", body, strings.Repeat("b", 64)+"  "+asset+"\n")
 
-	if _, err := Fetch(context.Background(), "0.7.4", t.TempDir(), sumOf(body)); err != nil {
+	d, err := Fetch(context.Background(), "0.7.4", t.TempDir(), sumOf(body))
+	if err != nil {
 		t.Fatalf("the pinned checksum matches the bytes: %v", err)
+	}
+	// The signature is good, but it vouches for another build.
+	if d.Signer != "" || d.Unsigned != "the signed SHA256SUMS doesn't list the pinned checksum" {
+		t.Fatalf("the signature must not be credited to this build: %+v", d)
 	}
 	if _, err := Fetch(context.Background(), "0.7.4", t.TempDir(), strings.Repeat("c", 64)); err == nil {
 		t.Fatal("a pinned checksum that does not match must refuse")
@@ -161,14 +188,15 @@ func TestHeliosCanFetchHistoricalBedrockAssetsWithPublishedOrPinnedChecksums(t *
 		t.Run(fmt.Sprint(pinned), func(t *testing.T) {
 			body := []byte("historical verified binary")
 			asset := fmt.Sprintf("bedrock_%s_%s_%s", "0.7.10", runtime.GOOS, runtime.GOARCH)
+			key, signer := newReleaseKey(t)
+			sums := sumOf(body) + "  " + asset + "\n"
 			mux := http.NewServeMux()
 			mux.HandleFunc("/releases/download/v0.7.10/"+asset, func(w http.ResponseWriter, r *http.Request) { w.Write(body) })
-			mux.HandleFunc("/releases/download/v0.7.10/SHA256SUMS", func(w http.ResponseWriter, r *http.Request) {
-				if pinned {
-					t.Error("pinned downloads must not require the published checksum file")
-				}
-				fmt.Fprintln(w, sumOf(body)+"  "+asset)
-			})
+			// Pinned downloads need no published checksum file.
+			if !pinned {
+				mux.HandleFunc("/releases/download/v0.7.10/SHA256SUMS", func(w http.ResponseWriter, r *http.Request) { fmt.Fprint(w, sums) })
+				mux.HandleFunc("/releases/download/v0.7.10/SHA256SUMS.sig", func(w http.ResponseWriter, r *http.Request) { w.Write(sign(key, Namespace, []byte(sums))) })
+			}
 			srv := httptest.NewServer(mux)
 			defer srv.Close()
 			previous := repo
@@ -178,10 +206,14 @@ func TestHeliosCanFetchHistoricalBedrockAssetsWithPublishedOrPinnedChecksums(t *
 			if pinned {
 				pin = sumOf(body)
 			}
-			path, err := Fetch(context.Background(), "0.7.10", t.TempDir(), pin)
+			d, err := Fetch(context.Background(), "0.7.10", t.TempDir(), pin)
 			if err != nil {
 				t.Fatal(err)
 			}
+			if pinned && (d.Signer != "" || !strings.Contains(d.Unsigned, "not published")) || !pinned && d.Signer != signer {
+				t.Fatalf("pinned %v: %+v", pinned, d)
+			}
+			path := d.Path
 			if filepath.Base(path) != asset {
 				t.Fatalf("unexpected asset: %s", path)
 			}
@@ -198,6 +230,8 @@ func TestAHeliosChecksumFailureCannotFallBackToAnotherAsset(t *testing.T) {
 			mux := http.NewServeMux()
 			legacyRequested := false
 			mux.HandleFunc("/releases/download/v0.7.11/"+AssetName("0.7.11", runtime.GOOS, runtime.GOARCH), func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(status); fmt.Fprint(w, "wrong candidate") })
+			mux.HandleFunc("/releases/download/v0.7.11/SHA256SUMS", http.NotFound)
+			mux.HandleFunc("/releases/download/v0.7.11/SHA256SUMS.sig", http.NotFound)
 			mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 				legacyRequested = true
 				fmt.Fprint(w, "fallback must not run")
@@ -219,5 +253,86 @@ func TestAHeliosChecksumFailureCannotFallBackToAnotherAsset(t *testing.T) {
 				t.Fatalf("failed download left files: %v %v", files, err)
 			}
 		})
+	}
+}
+
+// A release signed by ssh-keygen, as scripts/build-release.sh signs one,
+// installs and names its signer.
+func TestASignedReleaseInstallsAndNamesItsSigner(t *testing.T) {
+	pin(t, strings.TrimSpace(string(fixture(t, "release.pub"))))
+	body := fixture(t, "build")
+	publish(t, "0.7.99", body, string(fixture(t, "SHA256SUMS")), fixture(t, "SHA256SUMS.sig"))
+	d, err := Fetch(context.Background(), "0.7.99", t.TempDir(), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d.Signer != fixtureSigner {
+		t.Fatalf("signer %q", d.Signer)
+	}
+	if got, err := os.ReadFile(d.Path); err != nil || string(got) != string(body) {
+		t.Fatalf("%q %v", got, err)
+	}
+}
+
+// Without a pinned checksum, only a pinned release key's signature makes
+// the published checksum count. Anything else stops before the build is
+// downloaded, so nothing unverified is ever written or run.
+func TestAReleaseWithoutAGoodSignatureIsRefusedBeforeItsBuildIsFetched(t *testing.T) {
+	body := []byte("#!/bin/sh\necho helios\n")
+	sums := sumOf(body) + "  " + AssetName("0.7.4", runtime.GOOS, runtime.GOARCH) + "\n"
+	_, stranger, _ := ed25519.GenerateKey(nil)
+	for _, c := range []struct {
+		name, want string
+		sig        func(ed25519.PrivateKey) []byte
+	}{
+		{"no signature", "v0.7.4 publishes no SHA256SUMS.sig; pin its checksum to install it unsigned", func(ed25519.PrivateKey) []byte { return nil }},
+		{"tampered sums", "SHA256SUMS doesn't match the signature", func(k ed25519.PrivateKey) []byte {
+			return sign(k, Namespace, []byte(strings.Repeat("a", 64)+"  "+AssetName("0.7.4", runtime.GOOS, runtime.GOARCH)+"\n"))
+		}},
+		{"another key", "which isn't a Helios release key", func(ed25519.PrivateKey) []byte { return sign(stranger, Namespace, []byte(sums)) }},
+		{"another namespace", `was made for "git", not for helios-release`, func(k ed25519.PrivateKey) []byte { return sign(k, "git", []byte(sums)) }},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			key, _ := newReleaseKey(t)
+			asked := publish(t, "0.7.4", body, sums, c.sig(key))
+			dir := t.TempDir()
+			_, err := Fetch(context.Background(), "0.7.4", dir, "")
+			if err == nil || !strings.Contains(err.Error(), c.want) {
+				t.Fatalf("want an error saying %q, got %v", c.want, err)
+			}
+			if asked.Load() != 0 {
+				t.Fatal("the build was downloaded before its checksum was trusted")
+			}
+			if left, _ := os.ReadDir(dir); len(left) != 0 {
+				t.Fatalf("a refused release left %d file(s) behind", len(left))
+			}
+		})
+	}
+}
+
+// Releases before 0.7.15 publish no signature. Kyle can still install one
+// by pinning its checksum, and the upgrade says it is unsigned.
+func TestAPinnedChecksumInstallsAnUnsignedReleaseAndSaysSo(t *testing.T) {
+	newReleaseKey(t)
+	body := []byte("helios 0.7.14")
+	publish(t, "0.7.14", body, sumOf(body)+"  "+AssetName("0.7.14", runtime.GOOS, runtime.GOARCH)+"\n", nil)
+	d, err := Fetch(context.Background(), "0.7.14", t.TempDir(), sumOf(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d.Signer != "" || d.Unsigned != "v0.7.14 publishes no SHA256SUMS.sig" {
+		t.Fatalf("%+v", d)
+	}
+}
+
+func TestAPinnedChecksumStillNamesTheReleaseKeyThatSignedIt(t *testing.T) {
+	body := []byte("helios 0.7.15")
+	signer := serve(t, "0.7.15", body, sumOf(body)+"  "+AssetName("0.7.15", runtime.GOOS, runtime.GOARCH)+"\n")
+	d, err := Fetch(context.Background(), "0.7.15", t.TempDir(), sumOf(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d.Signer != signer || d.Unsigned != "" {
+		t.Fatalf("want signed by %s, got %+v", signer, d)
 	}
 }

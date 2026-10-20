@@ -5,9 +5,11 @@
 # The bytes come from the GitHub release and are checked against the
 # SHA256SUMS published beside them, once here and again on the machine after
 # transfer. A machine is only ever given a binary whose checksum matched.
-# Downloading the sums from the same release proves only that the two agree;
-# HELIOS_SHA256 (or BEDROCK_SHA256) pins the checksum from reviewed source instead, for the
-# hosts' architecture (run once per architecture when they differ).
+# The published sums count only when SHA256SUMS.sig is a signature by a key in
+# release/allowed_signers, checked with ssh-keygen before any checksum is read.
+# HELIOS_SHA256 (or BEDROCK_SHA256) pins the checksum from reviewed source
+# instead, for the hosts' architecture (run once per architecture when they
+# differ); that also installs a release from before releases were signed.
 #
 # The binary already there is kept as the previous one, with the marker
 # bedrock's own upgrade leaves, so a daemon that fails to start on the new
@@ -27,6 +29,7 @@ if [ -n "${HELIOS_SHA256:-}" ] && [ -n "${BEDROCK_SHA256:-}" ] && [ "$HELIOS_SHA
   exit 1
 fi
 release_pin=${HELIOS_SHA256:-${BEDROCK_SHA256:-}}
+signers=$(cd "$(dirname "$0")/.." && pwd)/release/allowed_signers
 base="https://github.com/kylebegeman/helios/releases/download/v$version"
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
@@ -37,6 +40,16 @@ sum() {
 }
 
 curl -fsSL "$base/SHA256SUMS" -o "$work/SHA256SUMS"
+if [ -z "$release_pin" ]; then
+  curl -fsSL "$base/SHA256SUMS.sig" -o "$work/SHA256SUMS.sig" || {
+    echo "No SHA256SUMS.sig for v$version (releases before 0.7.15 publish none); set HELIOS_SHA256 to install it unsigned" >&2
+    exit 1
+  }
+  ssh-keygen -Y verify -f "$signers" -I helios-release -n helios-release -s "$work/SHA256SUMS.sig" < "$work/SHA256SUMS" >&2 || {
+    echo "SHA256SUMS for v$version is not signed by a Helios release key; refusing it" >&2
+    exit 1
+  }
+fi
 
 # Fetch one asset and verify it against the pinned or published sum.
 fetch() {

@@ -2048,11 +2048,13 @@ Replace helios with a new build and restart the daemon; systemd rolls back if it
 Replace helios with a new build and restart the daemon; systemd rolls back if it can't start.
 
 With --version the build is downloaded from the published release and checked
-against the SHA256SUMS beside it. That proves the two agree and nothing more,
-since whoever can replace one can replace both; pass --sha256 with a checksum
-from reviewed source to pin it.
+against the SHA256SUMS beside it, which counts only when a Helios release key
+pinned in this build signed it. A release without that signature is refused.
+Pass --sha256 with a checksum from reviewed source to pin the build instead;
+that also installs a release from before releases were signed.
 
-  helios upgrade --version 0.7.4
+  helios upgrade --version 0.7.15
+  helios upgrade --version 0.7.14 --sha256 <checksum>
   helios upgrade /tmp/helios-new
 Usage:
   helios upgrade [path-to-new-helios] [flags]

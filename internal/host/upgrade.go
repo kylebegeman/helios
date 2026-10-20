@@ -77,6 +77,23 @@ func askDaemon(socket string) func(context.Context) (version.Info, bool) {
 type UpgradeInput struct {
 	// Path is a helios binary already on this machine.
 	Path string `json:"path"`
+	// Signer is the fingerprint of the Helios release key whose signature
+	// vouched for the build, when it was fetched from a release.
+	Signer string `json:"signer,omitempty"`
+	// Unsigned says why a fetched build has no signer, when a pinned
+	// checksum vouched for it instead.
+	Unsigned string `json:"unsigned,omitempty"`
+}
+
+// vouched says what vouched for the build, for the plan.
+func (in UpgradeInput) vouched() string {
+	switch {
+	case in.Signer != "":
+		return ", signed by Helios release key " + in.Signer
+	case in.Unsigned != "":
+		return ", unsigned (" + in.Unsigned + ") and vouched for by its pinned checksum"
+	}
+	return ""
 }
 
 // Kind implements kernel.Definition.
@@ -121,7 +138,7 @@ func (u Upgrade) Plan(ctx context.Context, raw json.RawMessage) (*kernel.Plan, e
 	plan := &kernel.Plan{Target: BinaryPath, Recovery: kernel.Resume}
 	plan.Steps = append(plan.Steps,
 		kernel.Step{
-			Name: "stage", Change: "keep the running binary as the previous one and stage " + described,
+			Name: "stage", Change: "keep the running binary as the previous one and stage " + described + in.vouched(),
 			Note: doneIf(identity(target) == identity(running), "already the running build", fmt.Sprintf("replacing %s (%s)", running.Version, running.Commit)),
 			Apply: func(ctx context.Context, out io.Writer) error {
 				if u.Store == nil {
