@@ -7,6 +7,7 @@ package watch
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -30,12 +31,27 @@ type Condition struct {
 type Notice struct {
 	Subject string
 	Body    string
+	// IncidentID is the incident the notice is about; zero for one that
+	// isn't about an incident, such as a test or a deploy's outcome.
+	IncidentID int64
+	Key        string
+	// Transition is what the notice announces: TransitionOpen,
+	// TransitionRepeat or TransitionResolved.
+	Transition string
+	Severity   string
+	Host       string
+	// Retry asks for the notice again only where it hasn't arrived.
+	Retry bool
 }
 
 // Notifier delivers notices.
 type Notifier interface {
 	Notify(ctx context.Context, n Notice) error
 }
+
+// NoAlertsSetUp is the notify error of an incident nobody can be told
+// about.
+const NoAlertsSetUp = "no way to send alerts is set up; run helios integration set email"
 
 // Defaults for the watcher's patience.
 const (
@@ -61,12 +77,22 @@ type Watcher struct {
 
 	failing map[string]int
 	passing map[string]int
+	// owed holds each incident whose latest notice some leg missed.
+	owed map[int64]owedNotice
+}
+
+// owedNotice is a notice that hasn't reached every leg yet.
+type owedNotice struct {
+	transition string
+	// told is whether any leg delivered it.
+	told bool
 }
 
 func (w *Watcher) init() {
 	if w.failing == nil {
 		w.failing = map[string]int{}
 		w.passing = map[string]int{}
+		w.owed = map[int64]owedNotice{}
 	}
 	if w.Now == nil {
 		w.Now = func() time.Time { return time.Now().UTC() }
@@ -96,7 +122,9 @@ func (w *Watcher) Round(ctx context.Context, conditions []Condition) error {
 		return err
 	}
 	for _, incident := range pending {
-		w.notify(ctx, &incident, w.resolvedNotice(incident), now)
+		n := w.resolvedNotice(incident)
+		n.Retry = true
+		w.notify(ctx, &incident, n, now)
 		if err := w.Store.UpdateIncident(ctx, incident); err != nil {
 			return err
 		}
@@ -144,7 +172,15 @@ func (w *Watcher) Round(ctx context.Context, conditions []Condition) error {
 		// A notice is told once; it is repeated only once it needs attention.
 		escalated := inc.Severity == state.SeverityNotice && c.Severity != state.SeverityNotice
 		inc.Message, inc.Severity = c.Message, c.Severity
-		if inc.NotifiedAt.IsZero() || escalated || inc.Severity != state.SeverityNotice && now.Sub(inc.NotifiedAt) >= w.Renotify {
+		repeat := escalated || inc.Severity != state.SeverityNotice && !inc.NotifiedAt.IsZero() && now.Sub(inc.NotifiedAt) >= w.Renotify
+		owed, isOwed := w.owed[inc.ID]
+		switch {
+		case isOwed && !repeat:
+			// Only the legs that missed it hear it again.
+			n := w.openNotice(inc)
+			n.Transition, n.Retry = owed.transition, true
+			w.notify(ctx, &inc, n, now)
+		case repeat || inc.NotifiedAt.IsZero() || inc.NotifyError != "":
 			w.notify(ctx, &inc, w.openNotice(inc), now)
 		}
 		if err := w.Store.UpdateIncident(ctx, inc); err != nil {
@@ -182,20 +218,31 @@ func (w *Watcher) Round(ctx context.Context, conditions []Condition) error {
 }
 
 // notify sends a notice and records the outcome on the incident. A
-// failed delivery is kept as the incident's notify error and tried again
-// next round.
+// notice any leg delivered has told the person; a leg that missed it is
+// kept as the incident's notify error and tried again next round.
 func (w *Watcher) notify(ctx context.Context, inc *state.Incident, n Notice, now time.Time) {
 	if w.Notifier == nil {
-		inc.NotifyError = "no way to send alerts is set up; run helios integration set email"
+		inc.NotifyError = NoAlertsSetUp
 		return
 	}
-	if err := w.Notifier.Notify(ctx, n); err != nil {
-		inc.NotifyError = err.Error()
-		w.Log("alert not delivered: %v", err)
+	err := w.Notifier.Notify(ctx, n)
+	var missed *DeliveryError
+	told := err == nil || errors.As(err, &missed) && missed.Partial()
+	before, retried := w.owed[inc.ID]
+	retried = retried && n.Retry && before.transition == n.Transition
+	// A retry that completes a told notice doesn't restart the clock
+	// for the next repeat.
+	if told && !(retried && before.told) {
+		inc.NotifiedAt = now
+	}
+	if err == nil {
+		inc.NotifyError = ""
+		delete(w.owed, inc.ID)
 		return
 	}
-	inc.NotifiedAt = now
-	inc.NotifyError = ""
+	inc.NotifyError = err.Error()
+	w.owed[inc.ID] = owedNotice{transition: n.Transition, told: told || retried && before.told}
+	w.Log("alert not delivered: %v", err)
 }
 
 func (w *Watcher) openNotice(inc state.Incident) Notice {
@@ -207,11 +254,15 @@ func (w *Watcher) openNotice(inc state.Incident) Notice {
 		word, again = "is held by an operator", "You'll hear again if it needs attention, and when it ends."
 	}
 	subject := fmt.Sprintf("%s: %s %s", w.Hostname, inc.Subject, word)
+	transition := TransitionRepeat
+	if inc.NotifiedAt.IsZero() {
+		transition = TransitionOpen
+	}
 	var b strings.Builder
 	fmt.Fprintf(&b, "%s\n\n", inc.Message)
 	fmt.Fprintf(&b, "Since %s (%s), seen in %d rounds.\n", inc.OpenedAt.Format("2006-01-02 15:04 UTC"), ago(inc.OpenedAt, w.Now()), inc.Observations)
 	fmt.Fprintf(&b, "Machine: %s\n\nhelios status and helios alerts on the machine show more. %s\n", w.Hostname, again)
-	return Notice{Subject: subject, Body: b.String()}
+	return Notice{Subject: subject, Body: b.String(), IncidentID: inc.ID, Key: inc.Key, Transition: transition, Severity: inc.Severity, Host: w.Hostname}
 }
 
 func (w *Watcher) resolvedNotice(inc state.Incident) Notice {
@@ -221,7 +272,7 @@ func (w *Watcher) resolvedNotice(inc state.Incident) Notice {
 	}
 	subject := fmt.Sprintf("%s: %s %s", w.Hostname, inc.Subject, word)
 	body := fmt.Sprintf("%s after %s.\n\nIt was: %s\n\nMachine: %s\n", verb, ago(inc.OpenedAt, inc.ResolvedAt), inc.Message, w.Hostname)
-	return Notice{Subject: subject, Body: body}
+	return Notice{Subject: subject, Body: body, IncidentID: inc.ID, Key: inc.Key, Transition: TransitionResolved, Severity: inc.Severity, Host: w.Hostname}
 }
 
 // ago says how long before now a time was, roughly.

@@ -64,7 +64,7 @@ func TestIntegrationsAreSetFromStdinAndListedWithoutValues(t *testing.T) {
 		t.Fatalf("remove: %q", out)
 	}
 	_, errOut, code = run(t, stateDir, "alerts", "test")
-	if code != 1 || !strings.Contains(errOut, "not set up") {
+	if code != 1 || !strings.Contains(errOut, "no way to send alerts is set up") {
 		t.Fatalf("a test alert without email: code %d, err %q", code, errOut)
 	}
 }

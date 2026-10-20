@@ -205,7 +205,8 @@ func Run(ctx context.Context, cfg Config, logw io.Writer) error {
 	sec := secrets.DefaultStore(cfg.StateDir)
 	engine := kernel.New(store, Registry(store, sec, cfg.Socket, cfg.StateDir), cfg.Owner)
 	logf("helios daemon %s, state %s, owner %s", version.Current().Version, store.Path(), cfg.Owner)
-	d := &daemon{cfg: cfg, logf: logf, store: store, sec: sec, api: &api.Server{Engine: engine, Store: store, Lifetime: ctx}, machine: hostname(), cancel: cancel}
+	d := &daemon{cfg: cfg, logf: logf, store: store, sec: sec, api: &api.Server{Engine: engine, Store: store, Lifetime: ctx}, machine: hostname(), cancel: cancel,
+		alerts: &watch.Alerts{Secrets: sec, Store: store}}
 	defer func() {
 		cancel()
 		d.loops.Wait()
@@ -267,9 +268,11 @@ type daemon struct {
 	sec     *secrets.Store
 	api     *api.Server
 	machine string
-	loops   sync.WaitGroup
-	jobs    *app.Jobs
-	cancel  context.CancelFunc
+	// alerts tells a person, for the watcher and for webhook deploys.
+	alerts *watch.Alerts
+	loops  sync.WaitGroup
+	jobs   *app.Jobs
+	cancel context.CancelFunc
 }
 
 // recoverOperations finishes what a previous daemon left mid-way with an
@@ -314,7 +317,7 @@ func (d *daemon) startLoops(ctx context.Context) {
 	d.every(ctx, 30*time.Second, false, func(now time.Time) {
 		guarded(logf, "cron", func() { jobs.Tick(ctx, now, logf) })
 	})
-	watcher := &watch.Watcher{Store: d.store, Notifier: watch.EmailNotifier{Secrets: d.sec, Store: d.store}, Hostname: d.machine, Log: logf}
+	watcher := &watch.Watcher{Store: d.store, Notifier: d.alerts, Hostname: d.machine, Log: logf}
 	prober := watch.NewProber(d.store)
 	prober.CheckSecrets = d.sec.Load
 	d.every(ctx, time.Minute, true, func(time.Time) {
@@ -333,7 +336,7 @@ func (d *daemon) startLoops(ctx context.Context) {
 			}
 		})
 	})
-	scheduler := &Scheduler{Store: d.store, Secrets: d.sec, Server: d.api, Log: logf, Started: time.Now().UTC()}
+	scheduler := &Scheduler{Store: d.store, Secrets: d.sec, Server: d.api, Log: logf, Hostname: d.machine, Started: time.Now().UTC()}
 	d.every(ctx, 30*time.Second, false, func(now time.Time) {
 		guarded(logf, "schedule", func() { scheduler.Tick(ctx, now) })
 	})
@@ -349,7 +352,8 @@ func (d *daemon) serveHooks(ctx context.Context) (*gitdeploy.Receiver, func()) {
 		Store:   d.store, Secrets: d.sec,
 		Deploy: gitdeploy.InProcess(d.api.RunLocked),
 		Notify: func(ctx context.Context, subject, body string) {
-			if err := (watch.EmailNotifier{Secrets: d.sec, Store: d.store}).Notify(ctx, watch.Notice{Subject: d.machine + ": " + subject, Body: body}); err != nil {
+			n := watch.Notice{Subject: d.machine + ": " + subject, Body: body, Severity: state.SeverityWarning, Host: d.machine}
+			if err := d.alerts.Notify(ctx, n); err != nil {
 				d.logf("webhooks: telling you about %s failed: %v", subject, err)
 			}
 		},

@@ -77,6 +77,7 @@ helios host setup                 # prepare a fresh Ubuntu or Debian machine
 helios integration set cloudflare # DNS records for your hosts
 helios integration set storage    # Backblaze B2 or any S3 store, for backups
 helios integration set email      # SMTP, for alerts
+helios integration set pushover   # or ntfy: alerts that reach a phone
 
 mkdir my-app && cd my-app
 helios init my-app --host app.example.com  # write a starting helios.yaml
@@ -448,6 +449,25 @@ problem has to hold for three rounds before it becomes an alert, one alert
 per app, and you hear once when it starts, once a day while it lasts, and
 once when it recovers.
 
+Alerts go out every way that is set up, all at once. Email goes through the
+`email` mail server, and through `email2` only when the first one fails, so the
+same mail never arrives twice. Pushover or ntfy brings warnings and critical
+incidents to a phone. A critical incident rings through Pushover every minute
+until you acknowledge it, for up to an hour, and its recovery stops the
+ringing. A way that fails is tried again on its own, with the wait between
+tries growing to 15 minutes, so the ways that worked don't repeat themselves.
+ntfy needs no account and can run on your own server, but it can't ring until
+acknowledged, and a server of your own reaches an iPhone at once only with
+`upstream-base-url: https://ntfy.sh` in its config.
+
+`helios alerts test` sends a test alert each way and says how each did;
+`--leg pushover` tests one. The daemon runs the same test every Monday at
+09:15 UTC, and a way that fails becomes a warning the others deliver.
+
+A backup stops an app's writers for at most 30 minutes. A writer the backup
+stopped is not an alert until the pause has lasted 35 minutes, and then it is
+a critical one.
+
 | Command | Shows |
 |---|---|
 | `helios alerts` | what is wrong now, and what was |
@@ -602,6 +622,10 @@ and discards writes since that checkpoint. See
 The credentials Helios itself uses are integrations, kept sealed like any
 secret: `helios integration set storage` (Backblaze B2 or any S3 store),
 `helios integration set email` (SMTP, for alerts),
+`helios integration set email2` (a second mail server, tried when the first
+fails), `helios integration set pushover` or `helios integration set ntfy`
+(alerts on a phone; the ntfy topic URL is kept secret, since anyone who knows
+it can read the topic),
 `helios integration set cloudflare` (checked against the API before it is
 kept) and `helios integration set loom` (a Loom Core's verify endpoint, for
 routes behind a sign-in). Setting one again changes only what is answered; a

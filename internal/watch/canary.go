@@ -1,0 +1,183 @@
+package watch
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
+	"slices"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/kylebegeman/helios/internal/secrets"
+	"github.com/kylebegeman/helios/internal/state"
+)
+
+// AlertTestFile records the last test of each way alerts go out, beside
+// the state store.
+const AlertTestFile = "alerts-test.json"
+
+// AlertTest is the record of the last tests of the alerts.
+type AlertTest struct {
+	// At is when every leg was last tested together.
+	At   time.Time          `json:"at"`
+	Legs map[string]LegTest `json:"legs"`
+}
+
+// LegTest is one leg's last test.
+type LegTest struct {
+	At    time.Time `json:"at"`
+	Error string    `json:"error,omitempty"`
+}
+
+// LegResult is how one leg did in a test.
+type LegResult struct {
+	Leg   string `json:"leg"`
+	To    string `json:"to,omitempty"`
+	Error string `json:"error,omitempty"`
+}
+
+func alertTestPath(store *state.Store) string {
+	return filepath.Join(filepath.Dir(store.Path()), AlertTestFile)
+}
+
+// SendTestAlerts sends a test notice through each leg on its own, each
+// mail server as a leg of its own, and records how each did. only names
+// the one leg to test; empty tests them all and replaces the record.
+func SendTestAlerts(ctx context.Context, sec *secrets.Store, store *state.Store, hostname, only string, now time.Time) ([]LegResult, error) {
+	legs := loadLegs(sec, store)
+	if only != "" {
+		i := slices.IndexFunc(legs, func(l legSpec) bool { return l.name == only })
+		if i < 0 {
+			return nil, unknownLeg(only, legs)
+		}
+		legs = legs[i : i+1]
+	}
+	results := make([]LegResult, len(legs))
+	var wg sync.WaitGroup
+	for i, l := range legs {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			results[i] = LegResult{Leg: l.name, To: l.to}
+			if err := deliver(ctx, Leg{Name: l.name, Notifier: l.notifier}, testNotice(hostname)); err != nil {
+				results[i].Error = err.Error()
+			}
+		}()
+	}
+	wg.Wait()
+
+	record, err := ReadAlertTest(store)
+	if only == "" || err != nil || record == nil {
+		record = &AlertTest{}
+	}
+	if only == "" {
+		record.At = now
+	}
+	if record.Legs == nil {
+		record.Legs = map[string]LegTest{}
+	}
+	for _, r := range results {
+		record.Legs[r.Leg] = LegTest{At: now, Error: r.Error}
+	}
+	if err := writeAlertTest(store, record); err != nil {
+		return results, fmt.Errorf("record the test: %w", err)
+	}
+	if len(legs) == 0 {
+		return nil, errors.New(NoAlertsSetUp)
+	}
+	return results, nil
+}
+
+func unknownLeg(name string, legs []legSpec) error {
+	if len(legs) == 0 {
+		return fmt.Errorf("no alert leg named %s: %s", name, NoAlertsSetUp)
+	}
+	names := make([]string, len(legs))
+	for i, l := range legs {
+		names[i] = l.name
+	}
+	return fmt.Errorf("no alert leg named %s; set up: %s", name, strings.Join(names, ", "))
+}
+
+// ReadAlertTest returns the record of the last tests, or nil when there
+// has been none.
+func ReadAlertTest(store *state.Store) (*AlertTest, error) {
+	data, err := os.ReadFile(alertTestPath(store))
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	var record AlertTest
+	if err := json.Unmarshal(data, &record); err != nil {
+		return nil, fmt.Errorf("read %s: %w", AlertTestFile, err)
+	}
+	return &record, nil
+}
+
+func writeAlertTest(store *state.Store, record *AlertTest) error {
+	data, err := json.MarshalIndent(record, "", "  ")
+	if err != nil {
+		return err
+	}
+	path := alertTestPath(store)
+	f, err := os.CreateTemp(filepath.Dir(path), ".alerts-test-*")
+	if err != nil {
+		return err
+	}
+	defer os.Remove(f.Name())
+	_, err = f.Write(append(data, '\n'))
+	if closeErr := f.Close(); err == nil {
+		err = closeErr
+	}
+	if err != nil {
+		return err
+	}
+	return os.Rename(f.Name(), path)
+}
+
+// alertTest is the condition of the alerts themselves: a leg that failed
+// its last test is a warning, which the legs that work deliver.
+func (p *Prober) alertTest() []Condition {
+	record, err := ReadAlertTest(p.Store)
+	if err != nil {
+		return []Condition{{Key: "host:alerts", Subject: "alerts", Severity: state.SeverityWarning, Message: "the record of the last alert test can't be read: " + err.Error()}}
+	}
+	if record == nil {
+		return nil
+	}
+	var failed []string
+	for _, name := range sortedLegs(record.Legs) {
+		if t := record.Legs[name]; t.Error != "" {
+			failed = append(failed, fmt.Sprintf("%s failed its test on %s (%s)", name, t.At.Format("2006-01-02"), t.Error))
+		}
+	}
+	if len(failed) == 0 {
+		return nil
+	}
+	return []Condition{{Key: "host:alerts", Subject: "alerts", Severity: state.SeverityWarning,
+		Message: strings.Join(failed, "; ") + "; fix it, then run helios alerts test"}}
+}
+
+func sortedLegs(legs map[string]LegTest) []string {
+	names := make([]string, 0, len(legs))
+	for name := range legs {
+		names = append(names, name)
+	}
+	slices.Sort(names)
+	return names
+}
+
+// AlertTestDue says whether the weekly test has come round on a schedule
+// since the last full test, or since a starting point when there was none.
+func AlertTestDue(store *state.Store, next func(time.Time) time.Time, since, now time.Time) bool {
+	if record, err := ReadAlertTest(store); err == nil && record != nil && record.At.After(since) {
+		since = record.At
+	}
+	return !since.IsZero() && !next(since).After(now)
+}
