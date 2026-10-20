@@ -20,6 +20,7 @@ import (
 	"net/url"
 	"regexp"
 	"strconv"
+	"strings"
 
 	"github.com/kylebegeman/helios/internal/manifest"
 	"github.com/kylebegeman/helios/internal/remote"
@@ -79,6 +80,9 @@ var (
 	// meshNamePattern is a host name the mesh's DNS answers, one label
 	// or several.
 	meshNamePattern = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)*$`)
+	// numericLabel is a label the system resolvers read as a number,
+	// decimal, octal or hex, the way inet_aton does.
+	numericLabel = regexp.MustCompile(`^([0-9]+|0[xX][0-9a-fA-F]*)$`)
 )
 
 // reservedNames name peer watch's own alerts, peer:self and
@@ -139,7 +143,9 @@ func ParseListen(s string) (netip.AddrPort, error) {
 
 // ParseMesh checks where a peer answers on the mesh and returns it as
 // host:port. The host may be a name, which the mesh's DNS resolves; an
-// address must be on the mesh or loopback. Errors never repeat it.
+// address must be on the mesh or loopback, and written as one, since the
+// system resolvers read a name like 127.1 or 0x7f000001 as an address
+// that was never checked. Errors never repeat it.
 func ParseMesh(s string) (string, error) {
 	host, port, err := net.SplitHostPort(s)
 	if err != nil || host == "" {
@@ -156,10 +162,27 @@ func ParseMesh(s string) (string, error) {
 		if !onMesh(addr) {
 			return "", errors.New("must be a name or an address on the mesh (100.64.0.0/10 or fc00::/7) or loopback")
 		}
+	} else if readsAsIPv4(host) {
+		return "", errors.New("has a host that reads as an IP address; it must be written as one, on the mesh (100.64.0.0/10 or fc00::/7) or loopback")
 	} else if !meshNamePattern.MatchString(host) {
 		return "", errors.New("must name a host in lowercase letters, digits, hyphens and dots")
 	}
 	return net.JoinHostPort(host, strconv.Itoa(n)), nil
+}
+
+// readsAsIPv4 reports whether a resolver may take host for an IPv4
+// address: one to four dot-separated labels, each a number.
+func readsAsIPv4(host string) bool {
+	labels := strings.Split(host, ".")
+	if len(labels) > 4 {
+		return false
+	}
+	for _, l := range labels {
+		if !numericLabel.MatchString(l) {
+			return false
+		}
+	}
+	return true
 }
 
 // ParsePublic checks a public URL: https, on a host name, with no
@@ -271,6 +294,11 @@ func Load(store *secrets.Store) (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
+	return unseal(values)
+}
+
+// unseal reads the configuration from helios's secrets.
+func unseal(values map[string]string) (Config, error) {
 	list, ok := values[ListKey]
 	if !ok {
 		return Config{}, ErrNotSet
@@ -291,25 +319,55 @@ func Load(store *secrets.Store) (Config, error) {
 	return c, nil
 }
 
-// Save seals the configuration in one new version of helios's secrets and
-// returns that version.
-func Save(store *secrets.Store, c Config) (int, error) {
+// Update changes this machine's peer configuration and seals it in one
+// new version of helios's secrets. helios's secrets are held from the
+// read to the write, so two commands at once each keep the other's
+// change, and a key rotated meanwhile is never put back. Where peer
+// watch isn't set up, change starts from nothing when create is set, and
+// Update is ErrNotSet otherwise. The key is written only when change
+// made or replaced it.
+func Update(store *secrets.Store, create bool, change func(*Config) error) (Config, int, error) {
+	var c Config
+	version, err := store.Update(manifest.ReservedApp, func(values map[string]string) (map[string]*string, error) {
+		var err error
+		if c, err = unseal(values); err != nil && !(create && errors.Is(err, ErrNotSet)) {
+			return nil, err
+		}
+		token := c.Token
+		if err := change(&c); err != nil {
+			return nil, err
+		}
+		return c.sealed(c.Token != token)
+	})
+	if err != nil {
+		return Config{}, 0, err
+	}
+	return c, version, nil
+}
+
+// sealed is the configuration as the changes to helios's secrets that
+// keep it: the list and the observers, and the key when withToken is set.
+func (c Config) sealed(withToken bool) (map[string]*string, error) {
 	if err := c.Validate(); err != nil {
-		return 0, err
+		return nil, err
 	}
 	list, err := json.Marshal(c)
 	if err != nil {
-		return 0, err
+		return nil, err
 	}
-	listValue, token := string(list), c.Token
-	changes := map[string]*string{ListKey: &listValue, TokenKey: &token, ObserversKey: nil}
+	listValue := string(list)
+	changes := map[string]*string{ListKey: &listValue, ObserversKey: nil}
+	if withToken {
+		token := c.Token
+		changes[TokenKey] = &token
+	}
 	if len(c.Observers) > 0 {
 		observers, err := json.Marshal(c.Observers)
 		if err != nil {
-			return 0, err
+			return nil, err
 		}
 		observersValue := string(observers)
 		changes[ObserversKey] = &observersValue
 	}
-	return store.SetAll(manifest.ReservedApp, changes)
+	return changes, nil
 }

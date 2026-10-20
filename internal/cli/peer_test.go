@@ -2,12 +2,14 @@ package cli
 
 import (
 	"bytes"
+	"encoding/binary"
 	"encoding/json"
 	"io/fs"
 	"net/netip"
 	"os"
 	"path/filepath"
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -174,6 +176,8 @@ func TestPeerAddRefusesBadInput(t *testing.T) {
 	peerRun(t, dir, "peer", "init", "--name", "web1")
 	mesh, public := "web2.mesh.example.test:7700", "https://web2.example.test"
 	outside := netip.MustParsePrefix("192.0.2.0/24").Addr().Next()
+	// outside as one number, which the system resolvers read as it.
+	whole := uint64(binary.BigEndian.Uint32(outside.AsSlice()))
 	for _, c := range []struct {
 		args []string
 		want string
@@ -190,6 +194,9 @@ func TestPeerAddRefusesBadInput(t *testing.T) {
 		{[]string{"web2", "--mesh", "web2.mesh.example.test:80", "--public", public}, "--mesh must not use port 80 or 443"},
 		{[]string{"web2", "--mesh", outside.String() + ":7700", "--public", public}, "on the mesh"},
 		{[]string{"web2", "--mesh", "Web2.Mesh:7700", "--public", public}, "lowercase letters, digits, hyphens and dots"},
+		{[]string{"web2", "--mesh", strconv.FormatUint(whole, 10) + ":7700", "--public", public}, "--mesh has a host that reads as an IP address"},
+		{[]string{"web2", "--mesh", "0x" + strconv.FormatUint(whole, 16) + ":7700", "--public", public}, "--mesh has a host that reads as an IP address"},
+		{[]string{"web2", "--mesh", "127.1:7700", "--public", public}, "--mesh has a host that reads as an IP address"},
 		{[]string{"web2", "--mesh", mesh, "--public", "http://web2.example.test"}, "--public must be an https:// URL"},
 		{[]string{"web2", "--mesh", mesh, "--public", "https://" + outside.String()}, "--public must be an https:// URL on a host name"},
 		{[]string{"web2", "--mesh", mesh, "--public", "https://user:pw@web2.example.test"}, "credentials"},

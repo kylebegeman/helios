@@ -70,17 +70,16 @@ func newPeerInit(a *app) *cobra.Command {
 			if err := a.ensureSecretsKey(store); err != nil {
 				return err
 			}
-			c, err := peer.Load(store)
-			if err != nil && !errors.Is(err, peer.ErrNotSet) {
-				return err
-			}
-			if c.Token == "" {
-				if c.Token, err = peer.NewToken(); err != nil {
-					return err
+			c, version, err := peer.Update(store, true, func(c *peer.Config) error {
+				if c.Token == "" {
+					var err error
+					if c.Token, err = peer.NewToken(); err != nil {
+						return err
+					}
 				}
-			}
-			c.Self = self
-			version, err := peer.Save(store, c)
+				c.Self = self
+				return nil
+			})
 			if err != nil {
 				return err
 			}
@@ -104,20 +103,22 @@ func newPeerKey(a *app) *cobra.Command {
 		Args:  cobra.NoArgs,
 		RunE: func(_ *cobra.Command, _ []string) error {
 			store := a.secretsStore()
-			c, err := peer.Load(store)
+			var c peer.Config
+			var err error
+			if rotate {
+				c, _, err = peer.Update(store, false, func(c *peer.Config) error {
+					if err := a.ensureSecretsKey(store); err != nil {
+						return err
+					}
+					var err error
+					c.Token, err = peer.NewToken()
+					return err
+				})
+			} else {
+				c, err = peer.Load(store)
+			}
 			if err != nil {
 				return err
-			}
-			if rotate {
-				if err := a.ensureSecretsKey(store); err != nil {
-					return err
-				}
-				if c.Token, err = peer.NewToken(); err != nil {
-					return err
-				}
-				if _, err := peer.Save(store, c); err != nil {
-					return err
-				}
 			}
 			fingerprint := peer.Fingerprint(c.Token)
 			fmt.Fprintln(a.stdout, fingerprint)
@@ -176,28 +177,26 @@ func newPeerAdd(a *app) *cobra.Command {
 				return errors.New("--key must be the sha256:... fingerprint helios peer key prints on that machine")
 			}
 			store := a.secretsStore()
-			c, err := peer.Load(store)
-			if err != nil {
-				return err
-			}
-			if err := a.ensureSecretsKey(store); err != nil {
-				return err
-			}
 			var did []string
-			if watch {
-				c.Peers = slices.DeleteFunc(c.Peers, func(q peer.Peer) bool { return q.Name == name })
-				c.Peers = append(c.Peers, p)
-				slices.SortFunc(c.Peers, func(x, y peer.Peer) int { return strings.Compare(x.Name, y.Name) })
-				did = append(did, "watching "+name)
-			}
-			if key != "" {
-				if c.Observers == nil {
-					c.Observers = map[string]string{}
+			_, version, err := peer.Update(store, false, func(c *peer.Config) error {
+				if err := a.ensureSecretsKey(store); err != nil {
+					return err
 				}
-				c.Observers[name] = key
-				did = append(did, name+" may read this machine")
-			}
-			version, err := peer.Save(store, c)
+				if watch {
+					c.Peers = slices.DeleteFunc(c.Peers, func(q peer.Peer) bool { return q.Name == name })
+					c.Peers = append(c.Peers, p)
+					slices.SortFunc(c.Peers, func(x, y peer.Peer) int { return strings.Compare(x.Name, y.Name) })
+					did = append(did, "watching "+name)
+				}
+				if key != "" {
+					if c.Observers == nil {
+						c.Observers = map[string]string{}
+					}
+					c.Observers[name] = key
+					did = append(did, name+" may read this machine")
+				}
+				return nil
+			})
 			if err != nil {
 				return err
 			}
@@ -220,21 +219,16 @@ func newPeerRemove(a *app) *cobra.Command {
 		RunE: func(_ *cobra.Command, args []string) error {
 			name := args[0]
 			store := a.secretsStore()
-			c, err := peer.Load(store)
-			if err != nil {
-				return err
-			}
-			watched := slices.ContainsFunc(c.Peers, func(p peer.Peer) bool { return p.Name == name })
-			_, observer := c.Observers[name]
-			if !watched && !observer {
-				return fmt.Errorf("no peer named %s", name)
-			}
-			c.Peers = slices.DeleteFunc(c.Peers, func(p peer.Peer) bool { return p.Name == name })
-			delete(c.Observers, name)
-			if err := a.ensureSecretsKey(store); err != nil {
-				return err
-			}
-			version, err := peer.Save(store, c)
+			_, version, err := peer.Update(store, false, func(c *peer.Config) error {
+				watched := slices.ContainsFunc(c.Peers, func(p peer.Peer) bool { return p.Name == name })
+				_, observer := c.Observers[name]
+				if !watched && !observer {
+					return fmt.Errorf("no peer named %s", name)
+				}
+				c.Peers = slices.DeleteFunc(c.Peers, func(p peer.Peer) bool { return p.Name == name })
+				delete(c.Observers, name)
+				return a.ensureSecretsKey(store)
+			})
 			if err != nil {
 				return err
 			}
