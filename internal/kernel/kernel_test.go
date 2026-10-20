@@ -237,6 +237,56 @@ func TestACrashCanBeCompensatedInstead(t *testing.T) {
 	}
 }
 
+// A caller holding only the store reads the receipt the engine would: the
+// one a finished operation saved, the journal's view of one still going,
+// and state.ErrNotFound for one never recorded.
+func TestAStoreAloneReadsTheReceiptTheEngineDoes(t *testing.T) {
+	ctx := context.Background()
+	store := newStore(t)
+	e := New(store, registry(), "daemon-a")
+	finished, err := e.Run(ctx, ExerciseKind, exercise(t, t.TempDir(), 2, 0, Resume), func(Event) {})
+	if err != nil {
+		t.Fatal(err)
+	}
+	crashed := New(store, registry(), "daemon-a")
+	crashed.crashAfterStep = func(i int) bool { return i == 0 }
+	var rec recorder
+	if _, err := crashed.Run(ctx, ExerciseKind, exercise(t, t.TempDir(), 2, 0, Resume), rec.emit); !errors.Is(err, errCrashed) {
+		t.Fatalf("want the simulated crash, got %v", err)
+	}
+	going := rec.events[0].Operation
+	asJSON := func(r *Receipt) string {
+		raw, err := json.Marshal(r)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(raw)
+	}
+
+	saved, err := ReceiptFromStore(ctx, store, finished.ID)
+	if err != nil || asJSON(saved) != asJSON(finished) {
+		t.Fatalf("finished operation: %v\n got %s\nwant %s", err, asJSON(saved), asJSON(finished))
+	}
+	partial, err := ReceiptFromStore(ctx, store, going)
+	if err != nil || partial.Status != state.Applying || len(partial.Steps) != 2 ||
+		partial.Steps[0].Status != state.StepSucceeded || partial.Steps[1].Status != state.StepPending {
+		t.Fatalf("operation still going: %+v %v", partial, err)
+	}
+	for _, id := range []string{finished.ID, going} {
+		fromStore, _ := ReceiptFromStore(ctx, store, id)
+		fromEngine, err := e.ReceiptOf(ctx, id)
+		if err != nil || asJSON(fromEngine) != asJSON(fromStore) {
+			t.Fatalf("%s: the engine read %s (%v), the store %s", id, asJSON(fromEngine), err, asJSON(fromStore))
+		}
+	}
+	if _, err := ReceiptFromStore(ctx, store, "op-never"); !errors.Is(err, state.ErrNotFound) {
+		t.Fatalf("unknown operation from the store: %v", err)
+	}
+	if _, err := e.ReceiptOf(ctx, "op-never"); !errors.Is(err, state.ErrNotFound) {
+		t.Fatalf("unknown operation from the engine: %v", err)
+	}
+}
+
 type otherPlan struct{}
 
 func (otherPlan) Kind() string { return ExerciseKind }

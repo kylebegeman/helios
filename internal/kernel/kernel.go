@@ -546,7 +546,15 @@ func (e *Engine) keepLease(ctx context.Context, id string, lost context.CancelFu
 
 // ReceiptOf builds the receipt for a recorded operation, finished or not.
 func (e *Engine) ReceiptOf(ctx context.Context, id string) (*Receipt, error) {
-	op, steps, err := e.store.Get(ctx, id)
+	return ReceiptFromStore(ctx, e.store, id)
+}
+
+// ReceiptFromStore is ReceiptOf for a caller that holds only the store,
+// such as one reading an incident's last deploy. A finished operation's
+// receipt is the one it saved; state.ErrNotFound when there is no such
+// operation.
+func ReceiptFromStore(ctx context.Context, store *state.Store, id string) (*Receipt, error) {
+	op, steps, err := store.Get(ctx, id)
 	if err != nil {
 		return nil, err
 	}

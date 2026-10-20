@@ -182,12 +182,12 @@ func newJobs(a *app) *cobra.Command {
 				return nil
 			}
 			w := tabwriter.NewWriter(a.stdout, 0, 4, 2, ' ', 0)
-			fmt.Fprintln(w, "WORKLOAD\tKIND\tSTARTED\tTOOK\tRESULT")
+			fmt.Fprintln(w, "ID\tWORKLOAD\tKIND\tSTARTED\tTOOK\tRESULT")
 			for _, r := range runs {
 				result := "running"
 				took := ""
 				if r.Kind == state.JobHold {
-					fmt.Fprintf(w, "%s\t%s\t%s\t\theld until %s: %s\n", r.Workload, r.Kind, r.StartedAt.Local().Format("2006-01-02 15:04:05"), apps.OperatorTime(r.FinishedAt), r.Output)
+					fmt.Fprintf(w, "%d\t%s\t%s\t%s\t\theld until %s: %s\n", r.ID, r.Workload, r.Kind, r.StartedAt.Local().Format("2006-01-02 15:04:05"), apps.OperatorTime(r.FinishedAt), r.Output)
 					continue
 				}
 				if !r.FinishedAt.IsZero() {
@@ -197,7 +197,7 @@ func newJobs(a *app) *cobra.Command {
 						result = r.Error
 					}
 				}
-				fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n", r.Workload, r.Kind, r.StartedAt.Local().Format("2006-01-02 15:04:05"), took, result)
+				fmt.Fprintf(w, "%d\t%s\t%s\t%s\t%s\t%s\n", r.ID, r.Workload, r.Kind, r.StartedAt.Local().Format("2006-01-02 15:04:05"), took, result)
 			}
 			return w.Flush()
 		},

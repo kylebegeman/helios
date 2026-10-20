@@ -421,6 +421,19 @@ func (s *Store) EndJobHold(ctx context.Context, id int64, at time.Time) error {
 	return err
 }
 
+// JobRun returns one run or hold by id. ErrNotFound when the store has no
+// row with that id.
+func (s *Store) JobRun(ctx context.Context, id int64) (*JobRun, error) {
+	rows, err := s.queryJobRuns(ctx, selectJobRun+` WHERE id = ?`, id)
+	if err != nil {
+		return nil, err
+	}
+	if len(rows) == 0 {
+		return nil, ErrNotFound
+	}
+	return &rows[0], nil
+}
+
 // JobRuns lists runs and holds, newest first. An empty workload means
 // every workload.
 func (s *Store) JobRuns(ctx context.Context, app, workload string, limit int) ([]JobRun, error) {

@@ -310,8 +310,8 @@ type NewOperation struct {
 	CreatedAt  time.Time
 }
 
-// ErrNotFound is returned for an operation, revision, watch or webhook the
-// store doesn't have; callers say which.
+// ErrNotFound is returned for an operation, revision, backup or job run,
+// incident, watch or webhook the store doesn't have; callers say which.
 var ErrNotFound = errors.New("not found")
 
 // ErrLeased is returned when another owner holds a live lease.
