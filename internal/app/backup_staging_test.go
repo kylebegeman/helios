@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -14,6 +16,7 @@ import (
 
 	"github.com/kylebegeman/helios/internal/docker"
 	"github.com/kylebegeman/helios/internal/docker/dockertest"
+	"github.com/kylebegeman/helios/internal/integration"
 	"github.com/kylebegeman/helios/internal/kernel"
 	"github.com/kylebegeman/helios/internal/manifest"
 	"github.com/kylebegeman/helios/internal/restic"
@@ -86,6 +89,67 @@ func TestAMachineBackupThatRefusesWhilePreparingRemovesWhatItStaged(t *testing.T
 	}
 	stagingKept(t, r.StateDir, filepath.Join(r.StateDir, "backups", "machine"), false)
 	lastRunFailed(t, r.Store, manifest.ReservedApp, want)
+}
+
+// cpThatFails puts a cp on PATH that refuses with why, for the length of
+// a test.
+func cpThatFails(t *testing.T, why string) {
+	t.Helper()
+	bin := t.TempDir()
+	if err := os.WriteFile(filepath.Join(bin, "cp"), []byte("#!/bin/sh\necho \""+why+"\" >&2\nexit 1\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+}
+
+// A copy that fails while a backup prepares ends the backup, so what it
+// staged goes: an app's backup copying its database's first-run scripts,
+// and the machine's copying its sealed secrets.
+func TestABackupWhoseCopyFailsWhilePreparingRemovesWhatItStaged(t *testing.T) {
+	const why = "cp: cannot open 'schema.sql' for reading: Permission denied"
+	ctx := context.Background()
+	t.Run("app", func(t *testing.T) {
+		r, _ := recoveryFixture(t)
+		m := recoveryManifest()
+		m.Data = &manifest.Data{Postgres: &manifest.Postgres{Init: "db"}}
+		body, _ := json.Marshal(m)
+		if err := r.Store.SaveRevision(ctx, state.Revision{App: m.App, ID: "active-code", Manifest: body, CreatedAt: time.Now().UTC()}); err != nil {
+			t.Fatal(err)
+		}
+		if err := r.Store.Activate(ctx, m.App, "active-code", time.Now().UTC()); err != nil {
+			t.Fatal(err)
+		}
+		init := InitDir(r.StateDir, m.App)
+		if err := os.MkdirAll(init, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(init, "schema.sql"), []byte("create table notes (body text);"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		b := Backup{Store: r.Store, Secrets: r.Secrets, StateDir: r.StateDir}
+		raw, _ := json.Marshal(BackupInput{App: m.App})
+		plan, err := b.Plan(ctx, raw)
+		if err != nil {
+			t.Fatal(err)
+		}
+		cpThatFails(t, why)
+		want := "copy the database's first-run scripts: " + why
+		if err := plan.Steps[0].Apply(ctx, io.Discard); err == nil || err.Error() != want {
+			t.Fatalf("got %v, want %q", err, want)
+		}
+		stagingKept(t, r.StateDir, filepath.Join(r.StateDir, "backups", m.App), false)
+		lastRunFailed(t, r.Store, m.App, want)
+	})
+	t.Run("machine", func(t *testing.T) {
+		r, _ := recoveryFixture(t)
+		cpThatFails(t, why)
+		want := "copy the secrets: " + why
+		if err := machinePrepare(t, r).Apply(ctx, io.Discard); err == nil || err.Error() != want {
+			t.Fatalf("got %v, want %q", err, want)
+		}
+		stagingKept(t, r.StateDir, filepath.Join(r.StateDir, "backups", "machine"), false)
+		lastRunFailed(t, r.Store, manifest.ReservedApp, want)
+	})
 }
 
 // An interrupted prepare keeps what it staged, since its operation
@@ -172,6 +236,80 @@ func TestABackupWhoseSnapshotFailsRemovesWhatItStaged(t *testing.T) {
 			lastRunFailed(t, b.Store, map[bool]string{false: "hello", true: manifest.ReservedApp}[machine], why)
 		})
 	}
+}
+
+// dockerDown points Docker at an address nothing answers, for the length
+// of a test.
+func dockerDown(t *testing.T) {
+	t.Helper()
+	gone := httptest.NewServer(http.NotFoundHandler())
+	gone.Close()
+	t.Setenv("DOCKER_HOST", "tcp"+strings.TrimPrefix(gone.URL, "http"))
+	t.Setenv("DOCKER_API_VERSION", dockertest.APIVersion)
+	t.Setenv("DOCKER_TLS_VERIFY", "")
+	t.Setenv("DOCKER_CERT_PATH", "")
+}
+
+// A snapshot that can't reach Docker to open its repository fails before
+// it reads anything, and ends the operation all the same.
+func TestABackupThatCantReachDockerToSnapshotRemovesWhatItStaged(t *testing.T) {
+	for _, machine := range []bool{false, true} {
+		t.Run(map[bool]string{false: "app", true: "machine"}[machine], func(t *testing.T) {
+			b, raw := backupIdentityFixture(t, machine)
+			dockerDown(t)
+			reg := kernel.Registry{}
+			reg.Add(b)
+			const why = "docker isn't answering"
+			receipt, err := kernel.New(b.Store, reg, "daemon").Run(context.Background(), BackupKind, raw, func(kernel.Event) {})
+			if err != nil || receipt.Status != state.Failed || !strings.Contains(receipt.Error, why) {
+				t.Fatalf("a snapshot without Docker must fail the backup: %+v %v", receipt, err)
+			}
+			stagingKept(t, b.StateDir, backupStaging(b, machine), false)
+			lastRunFailed(t, b.Store, map[bool]string{false: "hello", true: manifest.ReservedApp}[machine], why)
+		})
+	}
+}
+
+// A move's capture writes no owner file and keeps no receipts: the move
+// owns its staging and removes it with the move. So a capture that fails
+// leaves it in place.
+func TestAMovesCaptureThatFailsLeavesItsStagingToTheMove(t *testing.T) {
+	ctx := context.Background()
+	store, m, _, _ := safeMoveFixture(t)
+	m.Data = &manifest.Data{Volumes: map[string]manifest.Volume{"files": {}}}
+	data, _ := json.Marshal(m)
+	if err := store.SaveRevision(ctx, state.Revision{App: m.App, ID: "source-r1", Status: state.RevisionActive, Manifest: data, CreatedAt: time.Now()}); err != nil {
+		t.Fatal(err)
+	}
+	sec := newSecrets(t)
+	if _, _, err := integration.Set(sec, integration.StorageName, map[string]string{"kind": "s3", "endpoint": "https://storage.example.com", "key_id": "fixture", "key": "fixture", "bucket_prefix": "source", "password": "fixture"}); err != nil {
+		t.Fatal(err)
+	}
+	capture := MoveCapture{Backup: Backup{Store: store, Secrets: sec, StateDir: filepath.Dir(store.Path())}}
+	input, err := MoveCaptureInputFor(ctx, store, m.App, "source", "target", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, _ := json.Marshal(input)
+	plan, err := capture.Plan(ctx, raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plan.Steps[0].Name != "prepare" || plan.Steps[1].Name != "snapshot" {
+		t.Fatalf("the rehearsal capture's steps changed: %s, %s", plan.Steps[0].Name, plan.Steps[1].Name)
+	}
+	if err := plan.Steps[0].Apply(ctx, io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	dockerDown(t)
+	if err := plan.Steps[1].Apply(ctx, io.Discard); err == nil || !strings.Contains(err.Error(), "docker isn't answering") {
+		t.Fatalf("got %v, want the capture to fail without Docker", err)
+	}
+	staging := filepath.Join(filepath.Dir(store.Path()), "moves", m.App, "capture")
+	if !onDisk(t, filepath.Join(staging, "manifest.json")) {
+		t.Error("a failed capture removed the staging its move owns")
+	}
+	lastRunFailed(t, store, m.App, "docker isn't answering")
 }
 
 // An interrupted operation resumes, and a resumed snapshot reads the tree
