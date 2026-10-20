@@ -1,0 +1,5 @@
+# The keys a Helios release may be signed by, for ssh-keygen -Y verify in
+# scripts/install-release.sh. internal/release/trust.go pins the same keys
+# in every build, and a test keeps the two lists equal. See "Signed
+# releases" in the README to rotate a key.
+helios-release namespaces="helios-release" ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAII5gDPjs3p6bg31HowOcZKt4PBxDUIUULQoO6z6Gdt10 Helios release signing

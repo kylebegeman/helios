@@ -163,7 +163,12 @@ func (d Definition) Plan(ctx context.Context, raw json.RawMessage) (*kernel.Plan
 			}
 			fetch := d.Fetch
 			if fetch == nil {
-				fetch = release.FetchPlatform
+				// The profile pins the checksum, so the build installs
+				// whether or not its release is signed.
+				fetch = func(ctx context.Context, version, dir, sum, goos, goarch string) (string, error) {
+					d, err := release.FetchPlatform(ctx, version, dir, sum, goos, goarch)
+					return d.Path, err
+				}
 			}
 			var err error
 			path, err = fetch(ctx, in.Profile.Helios.Version, d.CacheDir, checksum, "linux", in.Arch)

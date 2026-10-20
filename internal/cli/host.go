@@ -142,10 +142,12 @@ func newUpgrade(a *app) *cobra.Command {
 		Short: "Replace helios with a new build and restart the daemon; systemd rolls back if it can't start.",
 		Long: "Replace helios with a new build and restart the daemon; systemd rolls back if it can't start.\n\n" +
 			"With --version the build is downloaded from the published release and checked\n" +
-			"against the SHA256SUMS beside it. That proves the two agree and nothing more,\n" +
-			"since whoever can replace one can replace both; pass --sha256 with a checksum\n" +
-			"from reviewed source to pin it.\n\n" +
-			"  helios upgrade --version 0.7.4\n" +
+			"against the SHA256SUMS beside it, which counts only when a Helios release key\n" +
+			"pinned in this build signed it. A release without that signature is refused.\n" +
+			"Pass --sha256 with a checksum from reviewed source to pin the build instead;\n" +
+			"that also installs a release from before releases were signed.\n\n" +
+			"  helios upgrade --version 0.7.15\n" +
+			"  helios upgrade --version 0.7.14 --sha256 <checksum>\n" +
 			"  helios upgrade /tmp/helios-new",
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -155,7 +157,7 @@ func newUpgrade(a *app) *cobra.Command {
 			case len(args) == 1 && toVersion != "":
 				return fmt.Errorf("give either a path or --version, not both")
 			}
-			path := ""
+			in := host.UpgradeInput{}
 			if len(args) == 1 {
 				if sha256Hex != "" {
 					return fmt.Errorf("--sha256 goes with --version; check a local file yourself")
@@ -164,7 +166,7 @@ func newUpgrade(a *app) *cobra.Command {
 				if err != nil {
 					return err
 				}
-				path = abs
+				in.Path = abs
 			} else {
 				if err := release.CheckVersion(toVersion); err != nil {
 					return err
@@ -180,9 +182,14 @@ func newUpgrade(a *app) *cobra.Command {
 				if err != nil {
 					return err
 				}
-				path = got
+				if got.Signer != "" {
+					fmt.Fprintf(a.stderr, "signed by Helios release key %s\n", got.Signer)
+				} else {
+					fmt.Fprintf(a.stderr, "unsigned: %s; the pinned checksum vouches for it\n", got.Unsigned)
+				}
+				in = host.UpgradeInput{Path: got.Path, Signer: got.Signer, Unsigned: got.Unsigned}
 			}
-			return a.operate(cmd.Context(), host.UpgradeKind, host.UpgradeInput{Path: path}, planOnly)
+			return a.operate(cmd.Context(), host.UpgradeKind, in, planOnly)
 		},
 	}
 	cmd.Flags().StringVar(&toVersion, "version", "", "a published release to fetch and install, such as 0.7.4")

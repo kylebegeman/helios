@@ -751,10 +751,47 @@ One static binary, no runtime to install.
 <br>
 
 Run tests and the lane proof, commit, then run
-`scripts/build-release.sh 0.7.0 /tmp/helios-release-0.7.0` from a clean
-checkout. It builds static Linux and macOS binaries for amd64 and arm64 plus
-`SHA256SUMS`, stamped with the version and exact source commit. Publish those
-exact files on the matching GitHub release.
+`HELIOS_RELEASE_SIGNING_KEY=<release key .pub> scripts/build-release.sh 0.7.16 /tmp/helios-release-0.7.16`
+from a clean checkout. It builds static Linux and macOS binaries for amd64
+and arm64 plus `SHA256SUMS`, stamped with the version and exact source
+commit, and signs the sums into `SHA256SUMS.sig`. Publish those exact files
+on the matching GitHub release.
+
+**Signing.** Releases are signed with an Ed25519 SSH key used for nothing
+else. Its private half stays in the key holder's SSH agent, so the build
+script only ever sees the public half. The script signs with
+`ssh-keygen -Y sign -n helios-release`, so the signature can't pass for one
+the same key made for anything else, and checks the result against
+`release/allowed_signers`. Without `HELIOS_RELEASE_SIGNING_KEY` it builds,
+leaves the sums unsigned and prints the command the key holder runs. An
+unsigned release is never published.
+
+**Verifying.** Every build of Helios pins the release keys in
+`internal/release/trust.go`. `helios upgrade --version` and
+`scripts/install-release.sh` download `SHA256SUMS.sig` and refuse a release
+unless a pinned key signed its sums for `helios-release`. The check happens
+before any build is downloaded or run. `helios upgrade` prints the signer's
+fingerprint, and the upgrade plan and its receipt name it. To check a release
+by hand:
+
+```sh
+ssh-keygen -Y verify -f release/allowed_signers -I helios-release \
+  -n helios-release -s SHA256SUMS.sig < SHA256SUMS
+```
+
+A checksum pinned from reviewed source vouches for a build by itself:
+`helios upgrade --version 0.7.15 --sha256 <checksum>`, `HELIOS_SHA256` for
+the install script, or a bootstrap profile. That is how a release from before
+0.7.16, which publishes no signature, still installs, and the upgrade says it
+is unsigned.
+
+**Rotating.** Add the new key to `internal/release/trust.go` and
+`release/allowed_signers` (a test keeps the two equal), and publish that
+release signed by the old key. Machines that install it trust both keys, so
+the release after it can be signed by the new key alone. The old key leaves
+both lists the same way. If a release key may have leaked, stop trusting it:
+publish a release without it and install that release everywhere with a
+pinned checksum, since the leaked key could sign anything else.
 
 Consumers pin the version and SHA-256 in reviewed source, verify before
 execution, and never pipe a downloaded script into a shell. An artifact
@@ -771,11 +808,12 @@ tag, and stays there.
 Helios stays on 0.7.x. There is no 0.8 or 0.9: a finished feature is a patch
 release, cut when that feature is done rather than when a group of them is.
 
-A machine already running helios upgrades itself, checking the download
-against the checksums published beside it:
+A machine already running helios upgrades itself. Helios 0.7.15 and later
+take the download only when a Helios release key signed the checksums
+published beside it:
 
 ```sh
-helios upgrade --version 0.7.5
+helios upgrade --version 0.7.15
 ```
 
 `helios --target <name> host bootstrap --profile <file>` provisions a machine
