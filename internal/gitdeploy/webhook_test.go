@@ -57,7 +57,7 @@ func TestAWebhookFetchesTheBranchAndDeploysIt(t *testing.T) {
 	var mu sync.Mutex
 	var seen []app.DeployInput
 	r := &Receiver{
-		Store: store, Secrets: sec, Log: t.Logf,
+		Store: store, Secrets: sec, Log: t.Logf, SigningDir: filepath.Join(dir, "git"),
 		SourcesDir: filepath.Join(dir, "sources"), BuildsDir: filepath.Join(dir, "builds"),
 		Deploy: func(_ context.Context, in app.DeployInput, emit func(kernel.Event)) (*kernel.Receipt, error) {
 			mu.Lock()

@@ -251,12 +251,13 @@ func TestTheHookDeploysTheBranchAndRefusesAFailure(t *testing.T) {
 	}
 }
 
-// hookWithBuilds runs the hook with its build directory in a temp dir.
+// hookWithBuilds runs the hook with its build directory in a temp dir,
+// and no signing policy.
 func hookWithBuilds(t *testing.T, app, stdin string, out *bytes.Buffer, d Deployer) int {
 	t.Helper()
-	saved := hookBuildsDir
-	hookBuildsDir = t.TempDir()
-	defer func() { hookBuildsDir = saved }()
+	savedBuilds, savedSigning := hookBuildsDir, signingDir
+	hookBuildsDir, signingDir = t.TempDir(), filepath.Join(t.TempDir(), "git")
+	defer func() { hookBuildsDir, signingDir = savedBuilds, savedSigning }()
 	return Hook(context.Background(), app, strings.NewReader(stdin), out, d)
 }
 

@@ -207,6 +207,9 @@ type Receiver struct {
 	// SourcesDir holds the fetched mirrors; BuildsDir the source trees.
 	SourcesDir string
 	BuildsDir  string
+	// SigningDir holds the signing policy a fetched commit is held to;
+	// empty means the machine's, SigningDir.
+	SigningDir string
 
 	mu      sync.Mutex
 	running map[string]bool
@@ -403,13 +406,17 @@ func (r *Receiver) deployOnce(ctx context.Context, appName string) {
 	if err != nil || hook == nil {
 		return
 	}
-	commit, dir, err := r.fetch(ctx, *hook)
+	commit, signer, dir, err := r.fetch(ctx, *hook)
 	var result string
-	if err != nil {
+	var refused refusal
+	switch {
+	case errors.As(err, &refused):
+		result = "refused: " + refused.Error()
+	case err != nil:
 		result = "fetch failed: " + err.Error()
-	} else {
+	default:
 		var log strings.Builder
-		ok, derr := Deploy(ctx, r.Deploy, dir, short(commit), &log)
+		ok, derr := Deploy(ctx, r.Deploy, dir, short(commit), signer, &log)
 		switch {
 		case derr != nil:
 			result = "failed: " + derr.Error()
@@ -422,7 +429,14 @@ func (r *Receiver) deployOnce(ctx context.Context, appName string) {
 	}
 	_ = r.Store.RecordGitHook(ctx, appName, short(commit), result, time.Now().UTC())
 	r.log("webhook deploy of %s %s: %s", appName, short(commit), result)
-	if result != "deployed" && r.Notify != nil && ctx.Err() == nil {
+	switch {
+	case result == "deployed" || r.Notify == nil || ctx.Err() != nil:
+	case refused.error != nil:
+		// Nothing was deployed, so helios history has no receipt; the
+		// webhook's own record is the one to read.
+		r.Notify(ctx, appName+": the deploy from "+hook.Repo+" was refused",
+			fmt.Sprintf("A push to %s of %s asked for a deploy, and the machine refused it: %s.\n\nThe running revision stays. helios git webhooks shows the last result, and helios git signers list shows whose signature deploys.\n", hook.Branch, hook.Repo, refused.Error()))
+	default:
 		r.Notify(ctx, appName+": the deploy from "+hook.Repo+" failed",
 			fmt.Sprintf("A push to %s of %s asked for a deploy, and it %s.\n\nThe running revision stays. helios history on the machine has the receipt.\n", hook.Branch, hook.Repo, result))
 	}
@@ -439,49 +453,55 @@ func lastFailure(log string) string {
 	return lines[len(lines)-1]
 }
 
-// fetch brings the branch's newest commit into the app's mirror and
-// writes its tree out.
-func (r *Receiver) fetch(ctx context.Context, h state.GitHook) (string, string, error) {
+// refusal is a fetched commit the signing policy won't deploy.
+type refusal struct{ error }
+
+func (r refusal) Unwrap() error { return r.error }
+
+// fetch brings the branch's newest commit into the app's mirror, holds it
+// to the signing policy, and writes its tree out. It returns the commit,
+// who signed it when the app deploys only signed commits, and the tree.
+func (r *Receiver) fetch(ctx context.Context, h state.GitHook) (string, string, string, error) {
 	if !ValidApp(h.App) {
-		return "", "", errors.New("invalid webhook app name")
+		return "", "", "", errors.New("invalid webhook app name")
 	}
 	if err := ValidRepo(h.Repo); err != nil {
-		return "", "", err
+		return "", "", "", err
 	}
 	if err := ValidBranch(h.Branch); err != nil {
-		return "", "", err
+		return "", "", "", err
 	}
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Minute)
 	defer cancel()
 	sourceRoot, err := filepath.Abs(r.SourcesDir)
 	if err != nil {
-		return "", "", err
+		return "", "", "", err
 	}
 	mirror := filepath.Join(sourceRoot, h.App+".git")
 	if _, err := os.Stat(filepath.Join(mirror, "HEAD")); errors.Is(err, os.ErrNotExist) {
 		if err := os.MkdirAll(r.SourcesDir, 0o700); err != nil {
-			return "", "", err
+			return "", "", "", err
 		}
 		if out, err := exec.CommandContext(ctx, "git", "init", "--bare", "--quiet", mirror).CombinedOutput(); err != nil {
-			return "", "", fmt.Errorf("%s", strings.TrimSpace(string(out)))
+			return "", "", "", fmt.Errorf("%s", strings.TrimSpace(string(out)))
 		}
 	}
 	env := append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
 	if usesSSH(h.Repo) {
 		values, _, err := r.Secrets.LoadCurrent(integration.App)
 		if err != nil {
-			return "", "", err
+			return "", "", "", err
 		}
 		key := values[integration.DeployKeyName(h.App)]
 		if key == "" {
-			return "", "", errors.New("no deploy key; run helios git webhook again")
+			return "", "", "", errors.New("no deploy key; run helios git webhook again")
 		}
 		// Made afresh, so the file has the mode asked for and not one an
 		// earlier helios left it with.
 		keyFile := filepath.Join(sourceRoot, "."+h.App+".key")
 		_ = os.Remove(keyFile)
 		if err := os.WriteFile(keyFile, []byte(key), 0o600); err != nil {
-			return "", "", err
+			return "", "", "", err
 		}
 		defer os.Remove(keyFile)
 		env = append(env, "GIT_SSH_COMMAND=ssh -i "+remote.Quote(keyFile)+" -o IdentitiesOnly=yes -o IdentityAgent=none -o BatchMode=yes -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile="+remote.Quote(filepath.Join(sourceRoot, "known_hosts")))
@@ -490,24 +510,34 @@ func (r *Receiver) fetch(ctx context.Context, h state.GitHook) (string, string, 
 	fetch := exec.CommandContext(ctx, "git", "-C", mirror, "fetch", "--quiet", "--force", "--depth", "1", h.Repo, ref+":"+ref)
 	fetch.Env = env
 	if out, err := fetch.CombinedOutput(); err != nil {
-		return "", "", fmt.Errorf("git fetch %s %s: %s", h.Repo, h.Branch, strings.TrimSpace(string(out)))
+		return "", "", "", fmt.Errorf("git fetch %s %s: %s", h.Repo, h.Branch, strings.TrimSpace(string(out)))
 	}
 	out, err := exec.CommandContext(ctx, "git", "-C", mirror, "rev-parse", ref).Output()
 	if err != nil {
-		return "", "", err
+		return "", "", "", err
 	}
 	commit := strings.TrimSpace(string(out))
+	// As the push hook does, the commit is checked before its tree is
+	// written anywhere.
+	policy := r.SigningDir
+	if policy == "" {
+		policy = SigningDir
+	}
+	signer, err := CheckTip(ctx, policy, h.App, mirror, commit)
+	if err != nil {
+		return commit, "", "", refusal{err}
+	}
 	dir, err := NewBuildDir(r.BuildsDir, h.App, short(commit))
 	if err != nil {
-		return commit, "", err
+		return commit, signer, "", err
 	}
 	if err := ExportCommit(ctx, mirror, commit, dir); err != nil {
-		return commit, "", err
+		return commit, signer, "", err
 	}
 	if _, err := CheckSource(dir, h.App); err != nil {
-		return commit, "", err
+		return commit, signer, "", err
 	}
-	return commit, dir, nil
+	return commit, signer, dir, nil
 }
 
 // InProcess is a Deployer for the daemon itself, which owns the kernel.

@@ -135,6 +135,9 @@ func Registry(store *state.Store, sec *secrets.Store, socket, stateDir string) k
 	reg.Add(app.CronRelease{Store: store})
 	reg.Add(app.Rehearse{Store: store, Secrets: sec, StateDir: stateDir})
 	reg.Add(app.RestoreDef{Store: store, Secrets: sec, StateDir: stateDir})
+	reg.Add(gitdeploy.SignersAdd{})
+	reg.Add(gitdeploy.SignersRemove{})
+	reg.Add(gitdeploy.RequireSigned{Store: store})
 	for kind, definition := range reg {
 		reg[kind] = recoveryGuard{stateFile: store.Path(), definition: definition}
 	}
@@ -202,6 +205,13 @@ func Run(ctx context.Context, cfg Config, logw io.Writer) error {
 	}
 	defer func() { cancel(); waitAdoptedJobs() }()
 	clearStaleUpgrade(logf)
+	// A machine set up before the signing policy existed keeps /etc/bedrock
+	// to root, and the push hook needs its way through to read the policy.
+	if cfg.StateDir == DefaultStateDir {
+		if err := gitdeploy.ShareSigningDir(); err != nil {
+			logf("signing policy: %v", err)
+		}
+	}
 	sec := secrets.DefaultStore(cfg.StateDir)
 	engine := kernel.New(store, Registry(store, sec, cfg.Socket, cfg.StateDir), cfg.Owner)
 	logf("helios daemon %s, state %s, owner %s", version.Current().Version, store.Path(), cfg.Owner)

@@ -210,7 +210,7 @@ func (r *rollout) pin(ctx context.Context) (*state.Revision, map[string]string, 
 func (r *rollout) recordStep() kernel.Step {
 	return kernel.Step{
 		Name: "record", Change: "record a new revision of " + r.m.App,
-		Note: notes("revision "+r.revision, noteCommit(r.from.commit)),
+		Note: notes("revision "+r.revision, noteCommit(r.from.commit), noteSigner(r.from.signer)),
 		Apply: func(ctx context.Context, out io.Writer) error {
 			existing, err := r.store.GetRevision(ctx, r.m.App, r.revision)
 			if err == nil {

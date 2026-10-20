@@ -273,6 +273,18 @@ func (a *app) dispatchTarget(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
+	if command == "git signers add" && len(args) == 1 {
+		// A public key read here goes to the target as an argument: its
+		// plan and its apply each run with their own stdin.
+		key, err := io.ReadAll(io.LimitReader(os.Stdin, 16<<10))
+		if err != nil {
+			return err
+		}
+		if strings.TrimSpace(string(key)) == "" {
+			return errors.New("give the signer's public key as an argument or on stdin")
+		}
+		args = append(args, strings.TrimSpace(string(key)))
+	}
 	planOnly, _ := cmd.Flags().GetBool("plan")
 	if !planOnly && (command == "move out" || command == "move rehearse" || command == "move final") {
 		a.narrate = a.stderr
@@ -298,6 +310,9 @@ func (a *app) dispatchTarget(cmd *cobra.Command, args []string) error {
 			defer f.Close()
 			input = f
 		}
+	}
+	if (command == "git require-signed" || strings.HasPrefix(command, "git signers")) && !caps.has("git.signed.v1") {
+		return errors.New("target does not gate deploys on signed commits; upgrade it first")
 	}
 	if command == "deploy" || command == "check" || command == "move stage" || command == "move test" || command == "rehearse" {
 		if !caps.has("remote.source.v1") {

@@ -165,6 +165,9 @@ func newLs(a *app) *cobra.Command {
 				engine.Close()
 			}
 			if a.json {
+				if rows == nil {
+					rows = []appRow{}
+				}
 				return json.NewEncoder(a.stdout).Encode(struct {
 					Apps           []appRow `json:"apps"`
 					Unmanaged      []string `json:"unmanaged,omitempty"`

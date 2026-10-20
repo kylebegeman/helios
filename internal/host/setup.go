@@ -644,6 +644,14 @@ func ensurePushUser(ctx context.Context, env Env, socket string, out io.Writer) 
 			return err
 		}
 	}
+	// The signing policy is root's to write and the push hook's to read,
+	// in /etc/bedrock, which helios otherwise keeps to root: the group may
+	// pass through it, and list nothing.
+	for _, args := range [][]string{{"install", "-d", "-o", "root", "-g", gitdeploy.User, "-m", "0750", gitdeploy.SigningDir}, {"chgrp", gitdeploy.User, filepath.Dir(gitdeploy.SigningDir)}, {"chmod", "g=x", filepath.Dir(gitdeploy.SigningDir)}} {
+		if _, err := env.Run(ctx, args[0], args[1:]...); err != nil {
+			return err
+		}
+	}
 	// A push asks the daemon to deploy through its socket, which the
 	// daemon shares with the helios group when it starts; one already
 	// running is given to the group here.

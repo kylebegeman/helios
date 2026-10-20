@@ -83,7 +83,7 @@ func TestThePlansStayWhatTheyWere(t *testing.T) {
 
 	t.Run("deploy", func(t *testing.T) {
 		d := Deploy{Secrets: newSecrets(t), StateDir: t.TempDir(), Addresses: nobody}
-		plan, err := d.rollout(ctx, m, "20260922-120000", &buildFrom{source: dir, commit: "0123456789ab",
+		plan, err := d.rollout(ctx, m, "20260922-120000", &buildFrom{source: dir, commit: "0123456789ab", signer: "kyle@example.com (SHA256:AbCdEfGhIjKlMnOpQrStUvWxYz0123456789abcdefg)",
 			restore: Restore{Postgres: "/restore/pg.dump", Volumes: map[string]string{"files": "/restore/files.tar.gz"}}, secretsFrom: "parent"})
 		if err != nil {
 			t.Fatal(err)

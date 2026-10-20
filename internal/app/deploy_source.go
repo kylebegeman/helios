@@ -432,7 +432,7 @@ func deployCapturePlan(ctx context.Context, d Deploy, in DeployInput, m *manifes
 	}
 	source := deploySourceDir(stateDir, m.App, in.Revision)
 	reservation := deploySourceReservationPath(stateDir, in)
-	from := &buildFrom{source: filepath.Join(source, "source"), commit: commit, restore: in.Restore, secretsFrom: in.SecretsFrom}
+	from := &buildFrom{source: filepath.Join(source, "source"), commit: commit, signer: in.Signer, restore: in.Restore, secretsFrom: in.SecretsFrom}
 	plan, err := d.rollout(ctx, m, in.Revision, from)
 	if err != nil {
 		return nil, err

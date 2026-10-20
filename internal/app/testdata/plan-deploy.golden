@@ -1,5 +1,5 @@
 target loom, resume
- 1 record: record a new revision of loom (revision 20260922-120000; commit 0123456789ab)
+ 1 record: record a new revision of loom (revision 20260922-120000; commit 0123456789ab; signed by kyle@example.com (SHA256:AbCdEfGhIjKlMnOpQrStUvWxYz0123456789abcdefg))
  2 edge: run the edge, the app's own network and the one it shares with the edge alone
  3 dns: confirm core.example.com, runner.example.com point at this machine
  4 inherit: copy parent's secrets to loom, which runs its code
