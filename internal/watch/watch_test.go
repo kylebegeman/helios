@@ -43,6 +43,27 @@ func down(app string) Condition {
 	return Condition{Key: "app:" + app, Subject: app, Severity: state.SeverityCritical, Message: "web isn't running"}
 }
 
+func stale(app string) Condition {
+	return Condition{Key: "app:" + app, Subject: app, Severity: state.SeverityWarning, Message: "the last backup is 2 days old"}
+}
+
+// shopRound runs a round a minute after the last and returns shop's open
+// incident after it, if any.
+func shopRound(t *testing.T, w *Watcher, now *time.Time) func(...Condition) *state.Incident {
+	return func(conditions ...Condition) *state.Incident {
+		t.Helper()
+		*now = now.Add(time.Minute)
+		if err := w.Round(context.Background(), conditions); err != nil {
+			t.Fatal(err)
+		}
+		inc, err := w.Store.OpenIncidentByKey(context.Background(), "app:shop")
+		if err != nil {
+			t.Fatal(err)
+		}
+		return inc
+	}
+}
+
 func TestAnIncidentOpensAfterThreeRoundsAndResolvesAfterTwo(t *testing.T) {
 	ctx := context.Background()
 	n := &fakeNotifier{}
@@ -145,6 +166,74 @@ func TestAnOpenIncidentIsRepeatedAfterADay(t *testing.T) {
 	_ = w.Round(ctx, []Condition{c})
 	if len(n.sent) != 2 || !strings.Contains(n.sent[1].Body, "connection refused") {
 		t.Fatalf("expected a repeat with the latest message: %+v", n.sent)
+	}
+}
+
+// A critical alert rings a phone every minute for an hour, so an app with
+// a warning open whose health check fails for a round or two is not paged
+// and stays a warning. The outage counts only once it has held as long as
+// a new incident must, and any round that breaks it starts the count again.
+func TestAWarningThatBlipsToCriticalNeitherPagesNorBecomesCritical(t *testing.T) {
+	n := &fakeNotifier{}
+	w, now := newWatcher(t, n)
+	round := shopRound(t, w, now)
+	for range DefaultOpenAfter {
+		round(stale("shop"))
+	}
+	if len(n.sent) != 1 || n.sent[0].Subject != "box: shop has a problem" {
+		t.Fatalf("the warning is told once: %+v", n.sent)
+	}
+
+	inc := round(down("shop"))
+	if len(n.sent) != 1 || inc.Severity != state.SeverityWarning || inc.Message != stale("shop").Message {
+		t.Fatalf("one critical round paged or changed the warning: %+v, %+v", n.sent, inc)
+	}
+	// A round back at the warning, a clean round and a round shop couldn't
+	// be looked at each start the count again.
+	for _, between := range [][]Condition{{stale("shop")}, nil, {{Key: "app:shop", Unknown: true}}} {
+		round(between...)
+		for range DefaultOpenAfter - 1 {
+			inc = round(down("shop"))
+		}
+	}
+	if len(n.sent) != 1 || inc.Severity != state.SeverityWarning || inc.Message != stale("shop").Message {
+		t.Fatalf("a flapping health check paged or changed the warning: %+v, %+v", n.sent, inc)
+	}
+}
+
+// A warning that stays an outage as long as a new incident must hold is
+// told then, once, rather than at the warning's next daily repeat. Easing
+// back to a warning for a round and failing again doesn't page again.
+func TestAWarningThatStaysAnOutageIsToldOnceInTheRoundItHolds(t *testing.T) {
+	n := &fakeNotifier{}
+	w, now := newWatcher(t, n)
+	round := shopRound(t, w, now)
+	for range DefaultOpenAfter {
+		round(stale("shop"))
+	}
+	for range DefaultOpenAfter - 1 {
+		round(down("shop"))
+	}
+	if len(n.sent) != 1 {
+		t.Fatalf("the outage is told before it has held: %+v", n.sent)
+	}
+	inc := round(down("shop"))
+	if len(n.sent) != 2 || n.sent[1].Subject != "box: shop is down" || n.sent[1].Severity != state.SeverityCritical ||
+		n.sent[1].Transition != TransitionRepeat || !strings.Contains(n.sent[1].Body, "web isn't running") {
+		t.Fatalf("the outage is told in the round it has held: %+v", n.sent)
+	}
+	if inc.Severity != state.SeverityCritical || inc.Message != "web isn't running" {
+		t.Fatalf("the incident didn't become the outage: %+v", inc)
+	}
+	for range 5 {
+		round(down("shop"))
+	}
+	if inc := round(stale("shop")); inc.Severity != state.SeverityWarning {
+		t.Fatalf("an outage that eased is still critical: %+v", inc)
+	}
+	round(down("shop"))
+	if len(n.sent) != 2 {
+		t.Fatalf("the outage is told once: %+v", n.sent)
 	}
 }
 

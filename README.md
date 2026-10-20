@@ -465,7 +465,9 @@ deploys wait behind it), backup retention deferred for over 3 days, and any
 URL added with `helios watch add` (the other machine's sites, say). A
 problem has to hold for three rounds before it becomes an alert, one alert
 per app, and you hear once when it starts, once a day while it lasts, and
-once when it recovers.
+once when it recovers. An alert that grows graver, a warning that becomes an
+outage, is told as soon as the graver state has held three rounds too, rather
+than at the next daily repeat.
 
 Alerts go out every way that is set up, all at once. Email goes through the
 `email` mail server, and through `email2` only when the first one fails, so the
