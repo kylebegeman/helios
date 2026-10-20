@@ -742,7 +742,7 @@ of each app's data in `helios backup helios` keep the same reserve.
 snapshot that can't fit at all, say how much the disk keeps free, and go ahead
 without a check when restic can't count the snapshot.
 
-Before it copies anything, `helios backup helios` adds up every data app's
+Before it copies any app data, `helios backup helios` adds up every data app's
 pinned snapshot, as its backup recorded it, and the workload images. It checks
 the total fits in `backups/machine` with that reserve, and refuses a pin whose
 backup finished before the app's active revision. A backup of an app or the
