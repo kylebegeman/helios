@@ -14,8 +14,8 @@ import (
 )
 
 // execFixture is a state directory where site's one workload runs as
-// bedrock-site-web-r1, and a docker on PATH that keeps its arguments and
-// whatever it could read from its standard input.
+// bedrock-site-web-r1 beside its database, and a docker on PATH that keeps
+// its arguments and whatever it could read from its standard input.
 func execFixture(t *testing.T) (stateDir, arguments, input string) {
 	t.Helper()
 	stateDir = t.TempDir()
@@ -24,7 +24,7 @@ func execFixture(t *testing.T) (stateDir, arguments, input string) {
 		t.Fatal(err)
 	}
 	defer store.Close()
-	raw, _ := json.Marshal(manifest.Manifest{App: "site", Workloads: map[string]manifest.Workload{"web": {Kind: manifest.Web, Image: "site:r1", Port: 80}}})
+	raw, _ := json.Marshal(manifest.Manifest{App: "site", Workloads: map[string]manifest.Workload{"web": {Kind: manifest.Web, Image: "site:r1", Port: 80}}, Data: &manifest.Data{Postgres: &manifest.Postgres{}}})
 	if err := store.SaveRevision(context.Background(), state.Revision{App: "site", ID: "r1", Status: state.RevisionActive, Manifest: raw, Containers: map[string]string{"web": "bedrock-site-web-r1"}, CreatedAt: time.Now()}); err != nil {
 		t.Fatal(err)
 	}
@@ -169,5 +169,33 @@ func TestExecOnATargetSendsStdinOnlyWhenTheCommandReadsIt(t *testing.T) {
 				t.Fatalf("the script was left %q", left)
 			}
 		})
+	}
+}
+
+// psql at a terminal gets one only when stdin is that terminal too: a dump
+// redirected into it, typed at an interactive shell, would make docker
+// refuse -t.
+func TestPsqlAsksForATerminalOnlyWhenSomeoneIsTyping(t *testing.T) {
+	for _, c := range []struct {
+		terminal bool
+		want     string
+	}{
+		{true, "exec\n-i\n-e\nPGPASSWORD\n-t\nbedrock-site-postgres\npsql\n-h\n127.0.0.1\n-U\nsite\n-d\nsite\n"},
+		{false, "exec\n-i\n-e\nPGPASSWORD\nbedrock-site-postgres\npsql\n-h\n127.0.0.1\n-U\nsite\n-d\nsite\n"},
+	} {
+		stateDir, arguments, input := execFixture(t)
+		stdinOf(t, "select 1;\n", c.terminal)
+		cmd := newPsql(&app{stateDir: stateDir, stdout: io.Discard, stderr: io.Discard, tty: true})
+		cmd.SetArgs([]string{"site"})
+		cmd.SilenceErrors, cmd.SilenceUsage = true, true
+		if err := cmd.ExecuteContext(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		if got := read(t, arguments); got != c.want {
+			t.Fatalf("stdin a terminal %v: docker ran with %q", c.terminal, got)
+		}
+		if got := read(t, input); got != "select 1;\n" {
+			t.Fatalf("stdin a terminal %v: psql read %q", c.terminal, got)
+		}
 	}
 }

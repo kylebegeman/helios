@@ -243,9 +243,11 @@ func newPsql(a *app) *cobra.Command {
 			password := values[apps.PostgresPasswordName]
 			user, database := m.PostgresIdentity()
 			// The password reaches psql through docker's environment,
-			// never an argument anyone on the machine could read.
+			// never an argument anyone on the machine could read. A
+			// terminal only when someone is typing: docker refuses -t
+			// for a dump redirected in.
 			argv := []string{"docker", "exec", "-i", "-e", "PGPASSWORD"}
-			if a.tty {
+			if a.tty && stdinIsTerminal() {
 				argv = append(argv, "-t")
 			}
 			argv = append(argv, apps.PostgresContainer(appName), "psql", "-h", "127.0.0.1", "-U", user, "-d", database)
