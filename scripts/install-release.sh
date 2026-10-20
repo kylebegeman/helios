@@ -42,7 +42,7 @@ sum() {
 curl -fsSL "$base/SHA256SUMS" -o "$work/SHA256SUMS"
 if [ -z "$release_pin" ]; then
   curl -fsSL "$base/SHA256SUMS.sig" -o "$work/SHA256SUMS.sig" || {
-    echo "No SHA256SUMS.sig for v$version (releases before 0.7.15 publish none); set HELIOS_SHA256 to install it unsigned" >&2
+    echo "No SHA256SUMS.sig for v$version (releases before 0.7.16 publish none); set HELIOS_SHA256 to install it unsigned" >&2
     exit 1
   }
   ssh-keygen -Y verify -f "$signers" -I helios-release -n helios-release -s "$work/SHA256SUMS.sig" < "$work/SHA256SUMS" >&2 || {

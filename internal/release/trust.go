@@ -30,7 +30,11 @@ const Namespace = "helios-release"
 // old one. Machines that install it trust both keys, so the release after
 // it can be signed by the new key alone, and the old one leaves both lists
 // the same way.
-var releaseKeys = []string{}
+var releaseKeys = []string{
+	// 1Password SSH key item "Helios release signing", created 20 October
+	// 2026; its private half never leaves 1Password.
+	"ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAII5gDPjs3p6bg31HowOcZKt4PBxDUIUULQoO6z6Gdt10 Helios release signing",
+}
 
 // releaseKey is one key a release may be signed by.
 type releaseKey struct {

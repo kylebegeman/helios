@@ -310,25 +310,25 @@ func TestAReleaseWithoutAGoodSignatureIsRefusedBeforeItsBuildIsFetched(t *testin
 	}
 }
 
-// Releases before 0.7.15 publish no signature. Kyle can still install one
+// Releases before 0.7.16 publish no signature. Kyle can still install one
 // by pinning its checksum, and the upgrade says it is unsigned.
 func TestAPinnedChecksumInstallsAnUnsignedReleaseAndSaysSo(t *testing.T) {
 	newReleaseKey(t)
-	body := []byte("helios 0.7.14")
-	publish(t, "0.7.14", body, sumOf(body)+"  "+AssetName("0.7.14", runtime.GOOS, runtime.GOARCH)+"\n", nil)
-	d, err := Fetch(context.Background(), "0.7.14", t.TempDir(), sumOf(body))
+	body := []byte("helios 0.7.15")
+	publish(t, "0.7.15", body, sumOf(body)+"  "+AssetName("0.7.15", runtime.GOOS, runtime.GOARCH)+"\n", nil)
+	d, err := Fetch(context.Background(), "0.7.15", t.TempDir(), sumOf(body))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if d.Signer != "" || d.Unsigned != "v0.7.14 publishes no SHA256SUMS.sig" {
+	if d.Signer != "" || d.Unsigned != "v0.7.15 publishes no SHA256SUMS.sig" {
 		t.Fatalf("%+v", d)
 	}
 }
 
 func TestAPinnedChecksumStillNamesTheReleaseKeyThatSignedIt(t *testing.T) {
-	body := []byte("helios 0.7.15")
-	signer := serve(t, "0.7.15", body, sumOf(body)+"  "+AssetName("0.7.15", runtime.GOOS, runtime.GOARCH)+"\n")
-	d, err := Fetch(context.Background(), "0.7.15", t.TempDir(), sumOf(body))
+	body := []byte("helios 0.7.16")
+	signer := serve(t, "0.7.16", body, sumOf(body)+"  "+AssetName("0.7.16", runtime.GOOS, runtime.GOARCH)+"\n")
+	d, err := Fetch(context.Background(), "0.7.16", t.TempDir(), sumOf(body))
 	if err != nil {
 		t.Fatal(err)
 	}

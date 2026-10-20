@@ -149,7 +149,7 @@ func TestTheUpgradePlanNamesWhatVouchedForTheBuild(t *testing.T) {
 	allowEverything(m)
 	m.write(BinaryPath, "old binary")
 	m.write("/tmp/bedrock-new", "new binary")
-	m.answers["/tmp/bedrock-new version --json"] = `{"version":"0.7.15","commit":"aaaaaaaaaaaa","go":"go1.26","os":"linux","arch":"amd64"}`
+	m.answers["/tmp/bedrock-new version --json"] = `{"version":"0.7.16","commit":"aaaaaaaaaaaa","go":"go1.26","os":"linux","arch":"amd64"}`
 	m.answers["/tmp/bedrock-new capabilities --json"] = `{"api_version":1,"manifest_version":1,"state_version":1,"min_state_version":0,"max_state_version":1,"capabilities":["kernel.plan.v1","kernel.apply.v1","kernel.expect.v1","state.migrations.v1","upgrade.checkpoint.v1"]}`
 	reg := kernel.Registry{}
 	store := openStore(t)
@@ -159,9 +159,9 @@ func TestTheUpgradePlanNamesWhatVouchedForTheBuild(t *testing.T) {
 		in   UpgradeInput
 		want string
 	}{
-		{UpgradeInput{Path: "/tmp/bedrock-new", Signer: "SHA256:L5pKCki3biS1Qo9z4OnvewnKmMNG9LOj0swiKu+oiG0"}, "stage 0.7.15 (aaaaaaaaaaaa), signed by Helios release key SHA256:L5pKCki3biS1Qo9z4OnvewnKmMNG9LOj0swiKu+oiG0"},
-		{UpgradeInput{Path: "/tmp/bedrock-new", Unsigned: "v0.7.14 publishes no SHA256SUMS.sig"}, "stage 0.7.15 (aaaaaaaaaaaa), unsigned (v0.7.14 publishes no SHA256SUMS.sig) and vouched for by its pinned checksum"},
-		{UpgradeInput{Path: "/tmp/bedrock-new"}, "stage 0.7.15 (aaaaaaaaaaaa)"},
+		{UpgradeInput{Path: "/tmp/bedrock-new", Signer: "SHA256:L5pKCki3biS1Qo9z4OnvewnKmMNG9LOj0swiKu+oiG0"}, "stage 0.7.16 (aaaaaaaaaaaa), signed by Helios release key SHA256:L5pKCki3biS1Qo9z4OnvewnKmMNG9LOj0swiKu+oiG0"},
+		{UpgradeInput{Path: "/tmp/bedrock-new", Unsigned: "v0.7.15 publishes no SHA256SUMS.sig"}, "stage 0.7.16 (aaaaaaaaaaaa), unsigned (v0.7.15 publishes no SHA256SUMS.sig) and vouched for by its pinned checksum"},
+		{UpgradeInput{Path: "/tmp/bedrock-new"}, "stage 0.7.16 (aaaaaaaaaaaa)"},
 	} {
 		raw, _ := json.Marshal(c.in)
 		view, err := engine.PlanOnly(context.Background(), UpgradeKind, raw)

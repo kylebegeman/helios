@@ -30,7 +30,7 @@ another machine's traffic are treated as high priority.
   `SHA256SUMS.sig`, an SSH signature by a release key every build pins.
   `helios upgrade --version` and `scripts/install-release.sh` refuse a
   release whose sums that key didn't sign. `--sha256` pins a checksum from
-  reviewed source instead, which also installs a release from before 0.7.15.
+  reviewed source instead, which also installs a release from before 0.7.16.
 - The daemon listens on `/run/helios/helios.sock`, mode 0660, owned by
   root and the `helios` group that receives pushes. The edge's admin API is
   a Unix socket only the machine reaches.

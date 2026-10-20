@@ -138,7 +138,7 @@ func FetchPlatform(ctx context.Context, version, dir, sha256Hex, goos, goarch st
 }
 
 // errUnsigned is a release that publishes no signature, as every release
-// before 0.7.15 does.
+// before 0.7.16 does.
 var errUnsigned = errors.New("publishes no SHA256SUMS.sig")
 
 // signedSums fetches a release's SHA256SUMS and the signature beside it,

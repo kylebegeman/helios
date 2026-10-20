@@ -751,7 +751,7 @@ One static binary, no runtime to install.
 <br>
 
 Run tests and the lane proof, commit, then run
-`HELIOS_RELEASE_SIGNING_KEY=<release key .pub> scripts/build-release.sh 0.7.15 /tmp/helios-release-0.7.15`
+`HELIOS_RELEASE_SIGNING_KEY=<release key .pub> scripts/build-release.sh 0.7.16 /tmp/helios-release-0.7.16`
 from a clean checkout. It builds static Linux and macOS binaries for amd64
 and arm64 plus `SHA256SUMS`, stamped with the version and exact source
 commit, and signs the sums into `SHA256SUMS.sig`. Publish those exact files
@@ -780,9 +780,9 @@ ssh-keygen -Y verify -f release/allowed_signers -I helios-release \
 ```
 
 A checksum pinned from reviewed source vouches for a build by itself:
-`helios upgrade --version 0.7.14 --sha256 <checksum>`, `HELIOS_SHA256` for
+`helios upgrade --version 0.7.15 --sha256 <checksum>`, `HELIOS_SHA256` for
 the install script, or a bootstrap profile. That is how a release from before
-0.7.15, which publishes no signature, still installs, and the upgrade says it
+0.7.16, which publishes no signature, still installs, and the upgrade says it
 is unsigned.
 
 **Rotating.** Add the new key to `internal/release/trust.go` and
