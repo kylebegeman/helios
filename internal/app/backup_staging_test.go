@@ -88,9 +88,10 @@ func TestAMachineBackupThatRefusesWhilePreparingRemovesWhatItStaged(t *testing.T
 	lastRunFailed(t, r.Store, manifest.ReservedApp, want)
 }
 
-// An interrupted prepare also starts again from nothing when its
-// operation resumes, so it removes what it staged too.
-func TestAnInterruptedMachineBackupPrepareRemovesWhatItStaged(t *testing.T) {
+// An interrupted prepare keeps what it staged, since its operation
+// resumes and the resumed prepare starts again from nothing. Removing a
+// large copy as the daemon stops would run past its stop budget.
+func TestAnInterruptedMachineBackupPrepareLeavesItsStagingToTheResumedPrepare(t *testing.T) {
 	r, _ := recoveryFixture(t)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -100,11 +101,29 @@ func TestAnInterruptedMachineBackupPrepareRemovesWhatItStaged(t *testing.T) {
 		return 0, ctx.Err()
 	}
 	t.Cleanup(func() { recoveryImageSizes = saved })
-	if err := machinePrepare(t, r).Apply(ctx, io.Discard); !errors.Is(err, context.Canceled) {
+	prepare := machinePrepare(t, r)
+	if err := prepare.Apply(ctx, io.Discard); !errors.Is(err, context.Canceled) {
 		t.Fatalf("got %v, want the prepare interrupted", err)
 	}
-	stagingKept(t, r.StateDir, filepath.Join(r.StateDir, "backups", "machine"), false)
+	staging := filepath.Join(r.StateDir, "backups", "machine")
+	stagingKept(t, r.StateDir, staging, true)
 	lastRunFailed(t, r.Store, manifest.ReservedApp, context.Canceled.Error())
+
+	partial := filepath.Join(staging, machineAppDataDir, "hello", "partial")
+	if err := os.MkdirAll(filepath.Dir(partial), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(partial, []byte("an app copy cut short"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	recoveryImageSizes = func(context.Context, func() (*docker.Engine, error), []string) (int64, error) { return 0, nil }
+	if err := prepare.Apply(context.Background(), io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	if onDisk(t, partial) || !onDisk(t, filepath.Join(staging, "state.db")) {
+		t.Error("the resumed prepare didn't stage the machine again from nothing")
+	}
+	stagingKept(t, r.StateDir, staging, true)
 }
 
 // repositoryWhoseBackup answers restic as an existing repository would,

@@ -27,9 +27,9 @@ directory, so there it is twice the images' size. Layers that images share
 count once for each. It refuses unless the total fits with the reserve
 `helios watch` keeps: 5 GB or a tenth of the disk, whichever is larger. It also refuses, before copying,
 a pin whose backup finished before the app's active revision. A machine backup
-that fails removes everything it staged there, unless it was stopped while it
-snapshots: the resumed operation snapshots that copy, or removes it when it
-can't.
+that fails removes everything it staged there. One that is stopped keeps it for
+its operation to resume, which stages it again or snapshots the copy it kept.
+Otherwise the next machine backup replaces it.
 
 A machine that goes 36 hours without a successful machine backup raises a
 warning about machine backups in `helios alerts`, as does one whose machine

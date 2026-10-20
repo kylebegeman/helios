@@ -445,30 +445,21 @@ func (x *backingUp) dropStaging(ctx context.Context) error {
 	return removeStaging(x.staging)
 }
 
-// failStaged records a failed run and removes the staging this operation
-// owns once nothing will reuse it. A prepare always starts again from
-// resetDir, so its staging goes whatever stopped it. A snapshot's staging
-// stays while its context is cancelled, because the resumed operation
-// snapshots that same tree; any other failure ends the operation. Only a
-// backup with receipts writes the owner file that proves the staging is
-// its own, so a move's capture and a release checkpoint keep theirs.
-func (x *backingUp) failStaged(ctx context.Context, err error, resumable bool) error {
-	if x.receiptDir != "" && (!resumable || ctx.Err() == nil) {
-		// Without its cancellation, ctx still names the operation that
-		// owns the staging.
-		if derr := x.dropStaging(context.WithoutCancel(ctx)); derr != nil {
+// failStaged records a failed prepare or snapshot and removes the staging
+// this operation owns, since the failure ends the operation. A step whose
+// context was cancelled keeps it, because its operation resumes: a resumed
+// snapshot snapshots that same tree, and a resumed prepare replaces it with
+// resetDir. A daemon stopping cancels it, and removing a large copy then
+// would run, with no limit, inside the daemon's stop budget. Only a backup
+// with receipts writes the owner file that proves the staging is its own,
+// so a move's capture keeps its staging.
+func (x *backingUp) failStaged(ctx context.Context, err error) error {
+	if x.receiptDir != "" && ctx.Err() == nil {
+		if derr := x.dropStaging(ctx); derr != nil {
 			err = fmt.Errorf("%w; its staging at %s could not be removed: %v", err, x.staging, derr)
 		}
 	}
 	return x.run.fail(err)
-}
-
-func (x *backingUp) failPrepare(ctx context.Context, err error) error {
-	return x.failStaged(ctx, err, false)
-}
-
-func (x *backingUp) failSnapshot(ctx context.Context, err error) error {
-	return x.failStaged(ctx, err, true)
 }
 
 // repo connects to Docker and opens the backup's repository. The caller
@@ -523,21 +514,21 @@ func (x *backingUp) appPrepareStep(rev *state.Revision, m *manifest.Manifest) ke
 				return err
 			}
 			if err := resetDir(x.staging); err != nil {
-				return x.failPrepare(ctx, err)
+				return x.failStaged(ctx, err)
 			}
 			if x.receiptDir != "" {
 				if err := writeRecoveryJSON(x.staging+".operation.json", x.receipt); err != nil {
-					return x.failPrepare(ctx, err)
+					return x.failStaged(ctx, err)
 				}
 			}
 			if err := os.WriteFile(filepath.Join(x.staging, "manifest.json"), append(rev.Manifest, '\n'), 0o600); err != nil {
-				return x.failPrepare(ctx, err)
+				return x.failStaged(ctx, err)
 			}
 			// The volumes mount over these inside the read-only tree, so
 			// the mountpoints have to be there already.
 			for _, v := range m.BackedUpVolumes() {
 				if err := os.MkdirAll(filepath.Join(x.staging, "volumes", v), 0o700); err != nil {
-					return x.failPrepare(ctx, err)
+					return x.failStaged(ctx, err)
 				}
 			}
 			if m.PostgresVersion() == "" {
@@ -547,7 +538,7 @@ func (x *backingUp) appPrepareStep(rev *state.Revision, m *manifest.Manifest) ke
 			// new machine runs them again before it loads the dump.
 			if init := InitDir(x.b.StateDir, x.target); keepsOwners(m) && dirExists(init) {
 				if out, err := exec.CommandContext(ctx, "cp", "-a", init, filepath.Join(x.staging, initSnapshotDir)).CombinedOutput(); err != nil {
-					return x.failPrepare(ctx, fmt.Errorf("copy the database's first-run scripts: %s", strings.TrimSpace(string(out))))
+					return x.failStaged(ctx, fmt.Errorf("copy the database's first-run scripts: %s", strings.TrimSpace(string(out))))
 				}
 			}
 			return nil
@@ -569,26 +560,26 @@ func (x *backingUp) appSnapshotStep(rev *state.Revision, m *manifest.Manifest) k
 			if x.receiptDir != "" && x.summary != nil {
 				e, err := docker.Connect(ctx)
 				if err != nil {
-					return x.failSnapshot(ctx, err)
+					return x.failStaged(ctx, err)
 				}
 				defer e.Close()
 				unlock, err := lockAppData(ctx, x.b.Store.Path(), app, true)
 				if err != nil {
-					return x.failSnapshot(ctx, err)
+					return x.failStaged(ctx, err)
 				}
 				defer unlock()
 				return resumeWriters(ctx, e, quiesceFile(x.b.Store.Path(), app))
 			}
 			if err := x.requireSnapshotStaging(ctx); err != nil {
-				return x.failSnapshot(ctx, err)
+				return x.failStaged(ctx, err)
 			}
 			e, r, err := x.repo(ctx)
 			if err != nil {
-				return x.failSnapshot(ctx, err)
+				return x.failStaged(ctx, err)
 			}
 			defer e.Close()
 			if err := x.ensure(ctx, r, out); err != nil {
-				return x.failSnapshot(ctx, err)
+				return x.failStaged(ctx, err)
 			}
 			mounts := snapshotMounts(x.staging, app, m)
 			err = withQuiescedWriters(ctx, e, x.b.Store.Path(), m, out, func(ctx context.Context) error {
@@ -616,7 +607,7 @@ func (x *backingUp) appSnapshotStep(rev *state.Revision, m *manifest.Manifest) k
 				return x.captureSnapshot(ctx, r, mounts)
 			})
 			if err != nil {
-				return x.failSnapshot(ctx, err)
+				return x.failStaged(ctx, err)
 			}
 			_ = x.b.Store.RecordIntegrationUse(ctx, integration.StorageName, "backup "+app, time.Now().UTC())
 			fmt.Fprintf(out, "snapshot %s: %d files, %s, %s new\n", short(x.summary.SnapshotID), x.summary.TotalFiles, HumanBytes(x.summary.TotalBytes), HumanBytes(x.summary.DataAdded))
@@ -679,19 +670,19 @@ func (x *backingUp) machinePrepareStep(hostname string) kernel.Step {
 				return err
 			}
 			if err := resetDir(x.staging); err != nil {
-				return x.failPrepare(ctx, err)
+				return x.failStaged(ctx, err)
 			}
 			if x.receiptDir != "" {
 				if err := writeRecoveryJSON(x.staging+".operation.json", x.receipt); err != nil {
-					return x.failPrepare(ctx, err)
+					return x.failStaged(ctx, err)
 				}
 			}
 			if err := b.Store.BackupTo(ctx, filepath.Join(x.staging, "state.db")); err != nil {
-				return x.failPrepare(ctx, fmt.Errorf("copy the state store: %w", err))
+				return x.failStaged(ctx, fmt.Errorf("copy the state store: %w", err))
 			}
 			if secretsDir := b.Secrets.Dir; dirExists(secretsDir) {
 				if out, err := exec.CommandContext(ctx, "cp", "-a", secretsDir, filepath.Join(x.staging, "secrets")).CombinedOutput(); err != nil {
-					return x.failPrepare(ctx, fmt.Errorf("copy the secrets: %s", strings.TrimSpace(string(out))))
+					return x.failStaged(ctx, fmt.Errorf("copy the secrets: %s", strings.TrimSpace(string(out))))
 				}
 			}
 			for _, f := range []string{b.Profile, b.Secrets.KeyPath + ".pub"} {
@@ -700,16 +691,16 @@ func (x *backingUp) machinePrepareStep(hostname string) kernel.Step {
 				}
 				if data, err := os.ReadFile(f); err == nil {
 					if err := os.WriteFile(filepath.Join(x.staging, filepath.Base(f)), data, 0o600); err != nil {
-						return x.failPrepare(ctx, err)
+						return x.failStaged(ctx, err)
 					}
 				}
 			}
 			info, _ := json.MarshalIndent(map[string]any{"hostname": hostname, "bedrock": version.Current().Version, "taken_at": time.Now().UTC()}, "", "  ")
 			if err := os.WriteFile(filepath.Join(x.staging, "machine.json"), append(info, '\n'), 0o600); err != nil {
-				return x.failPrepare(ctx, err)
+				return x.failStaged(ctx, err)
 			}
 			if err := b.prepareMachineRecoveryCatalog(ctx, hostname, x.staging, out); err != nil {
-				return x.failPrepare(ctx, err)
+				return x.failStaged(ctx, err)
 			}
 			fmt.Fprintln(out, "state, secrets, profile and workload images copied")
 			return nil
@@ -731,18 +722,18 @@ func (x *backingUp) machineSnapshotStep() kernel.Step {
 				return nil
 			}
 			if err := x.requireSnapshotStaging(ctx); err != nil {
-				return x.failSnapshot(ctx, err)
+				return x.failStaged(ctx, err)
 			}
 			e, r, err := x.repo(ctx)
 			if err != nil {
-				return x.failSnapshot(ctx, err)
+				return x.failStaged(ctx, err)
 			}
 			defer e.Close()
 			if err := x.ensure(ctx, r, out); err != nil {
-				return x.failSnapshot(ctx, err)
+				return x.failStaged(ctx, err)
 			}
 			if err := x.captureSnapshot(ctx, r, []string{restic.DirMount(x.staging, true)}); err != nil {
-				return x.failSnapshot(ctx, err)
+				return x.failStaged(ctx, err)
 			}
 			_ = x.b.Store.RecordIntegrationUse(ctx, integration.StorageName, "backup of the machine", time.Now().UTC())
 			fmt.Fprintf(out, "snapshot %s: %d files, %s\n", short(x.summary.SnapshotID), x.summary.TotalFiles, HumanBytes(x.summary.TotalBytes))
