@@ -46,6 +46,17 @@ func pinOf(app string) string {
 // prepare step does before its catalog runs.
 func stageMachineBackup(t *testing.T, r RecoverMachine, apps ...stagedApp) string {
 	t.Helper()
+	activateApps(t, r, apps...)
+	stage := t.TempDir()
+	if err := r.Store.BackupTo(context.Background(), filepath.Join(stage, "state.db")); err != nil {
+		t.Fatal(err)
+	}
+	return stage
+}
+
+// activateApps activates each app and records its backup.
+func activateApps(t *testing.T, r RecoverMachine, apps ...stagedApp) {
+	t.Helper()
 	ctx := context.Background()
 	for _, a := range apps {
 		m := recoveryManifest()
@@ -80,11 +91,6 @@ func stageMachineBackup(t *testing.T, r RecoverMachine, apps ...stagedApp) strin
 			t.Fatal(err)
 		}
 	}
-	stage := t.TempDir()
-	if err := r.Store.BackupTo(ctx, filepath.Join(stage, "state.db")); err != nil {
-		t.Fatal(err)
-	}
-	return stage
 }
 
 // pinnedRepository answers restic as each app's repository would: its

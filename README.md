@@ -743,7 +743,9 @@ without a check when restic can't count the snapshot.
 Before it copies anything, `helios backup helios` adds up every data app's
 pinned snapshot, as its backup recorded it, and the workload images. It checks
 the total fits in `backups/machine` with that reserve, and refuses a pin whose
-backup finished before the app's active revision.
+backup finished before the app's active revision. A backup that fails, of an
+app or the machine, removes what it staged. One stopped while it snapshots
+keeps it for the operation to resume, which removes it if it can't use it.
 
 `helios drill <app> --skip-next --reason <text>` skips the next scheduled
 drill when you know it can't run, such as while a disk is being resized. Its

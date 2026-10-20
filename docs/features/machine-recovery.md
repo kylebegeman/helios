@@ -22,7 +22,10 @@ Before it copies any app data, it adds up the pinned snapshots, as their
 backups recorded them, and the images, with room for the archive's framing,
 and refuses unless the total fits with the reserve `helios watch` keeps: 5 GB
 or a tenth of the disk, whichever is larger. It also refuses, before copying,
-a pin whose backup finished before the app's active revision.
+a pin whose backup finished before the app's active revision. A machine backup
+that fails removes everything it staged there, unless it was stopped while it
+snapshots: the resumed operation snapshots that copy, or removes it when it
+can't.
 
 The backup omits the machine's private identity. Keep the source recovery
 identity and storage backup password separately. Workload images are archived
