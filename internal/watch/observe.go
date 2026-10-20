@@ -557,7 +557,8 @@ func (p *Prober) machineBackupProblem(ctx context.Context, now time.Time) string
 	// machine closed as interrupted there, though it never failed here. So
 	// until a backup finishes here, a recovered machine gets BackupStale
 	// from its import, as a new app gets it from its first deploy. One that
-	// fails here ends that at once: what it says is this machine's own.
+	// fails here ends that at once: what it says is this machine's own. A
+	// good backup imported fresh still keeps it quiet, as on any machine.
 	if last != nil {
 		imported, err := p.Store.LastMachineRecoveryImportedAt(ctx)
 		if err != nil {

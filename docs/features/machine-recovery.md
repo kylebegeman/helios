@@ -43,7 +43,9 @@ the warning quotes the first line of its error, so a backup refused for space
 is told even when no operation is stuck. A recovered machine counts the 36
 hours from its recovery until a machine backup finishes on it, since the
 backup it was recovered from is recorded as interrupted on the source. One that
-fails on it is told at once.
+fails on it ends that grace, and is told at once unless the source's last good
+machine backup is under 36 hours old. As on any machine, a good backup keeps
+the warning quiet until it is 36 hours old.
 
 The backup omits the machine's private identity. Keep the source recovery
 identity and storage backup password separately. Workload images are archived

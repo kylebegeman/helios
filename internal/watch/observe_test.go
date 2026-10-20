@@ -469,8 +469,8 @@ func TestARecoveredMachineCountsADayAndAHalfFromItsRecovery(t *testing.T) {
 	// recovered imports a machine backup taken two hours ago into a new
 	// machine. Its state store holds that backup's own run still open, as
 	// every machine backup's does. With good, the source's backup before
-	// it succeeded three days earlier.
-	recovered := func(t *testing.T, good bool) (*state.Store, time.Time) {
+	// it succeeded that long before, and started at goodAt.
+	recovered := func(t *testing.T, good time.Duration) (store *state.Store, imported, goodAt time.Time) {
 		t.Helper()
 		taken := time.Now().UTC().Add(-2 * time.Hour)
 		path := filepath.Join(t.TempDir(), "source.db")
@@ -478,12 +478,13 @@ func TestARecoveredMachineCountsADayAndAHalfFromItsRecovery(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if good {
-			id, err := source.StartBackupRun(ctx, manifest.ReservedApp, state.BackupRunBackup, taken.Add(-72*time.Hour))
+		if good != 0 {
+			goodAt = taken.Add(-good).Truncate(time.Millisecond)
+			id, err := source.StartBackupRun(ctx, manifest.ReservedApp, state.BackupRunBackup, goodAt)
 			if err != nil {
 				t.Fatal(err)
 			}
-			if err := source.FinishBackupRun(ctx, id, state.BackupRun{FinishedAt: taken.Add(-71 * time.Hour), OK: true}); err != nil {
+			if err := source.FinishBackupRun(ctx, id, state.BackupRun{FinishedAt: goodAt.Add(time.Hour), OK: true}); err != nil {
 				t.Fatal(err)
 			}
 		}
@@ -497,11 +498,11 @@ func TestARecoveredMachineCountsADayAndAHalfFromItsRecovery(t *testing.T) {
 		if err := w.Store.ImportMachineRecovery(ctx, path, "recovery-1", nil, nil); err != nil {
 			t.Fatal(err)
 		}
-		imported, err := w.Store.LastMachineRecoveryImportedAt(ctx)
+		imported, err = w.Store.LastMachineRecoveryImportedAt(ctx)
 		if err != nil || imported.IsZero() {
 			t.Fatalf("the recovery's import time is %v: %v", imported, err)
 		}
-		return w.Store, imported
+		return w.Store, imported, goodAt
 	}
 	warning := func(t *testing.T, store *state.Store, now time.Time) string {
 		t.Helper()
@@ -518,13 +519,14 @@ func TestARecoveredMachineCountsADayAndAHalfFromItsRecovery(t *testing.T) {
 	}
 	for _, tc := range []struct {
 		name string
-		good bool
+		good time.Duration
 	}{
-		{"after a good backup on the source", true},
-		{"from the source's first machine backup", false},
+		{"after a good backup on the source", 72 * time.Hour},
+		{"after a good backup on the source that morning", 10 * time.Hour},
+		{"from the source's first machine backup", 0},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			store, imported := recovered(t, tc.good)
+			store, imported, goodAt := recovered(t, tc.good)
 			// The backup that captured the machine is recorded as
 			// interrupted on the source, which is no failure here.
 			if found := warning(t, store, imported.Add(time.Hour)); found != "" {
@@ -544,11 +546,23 @@ func TestARecoveredMachineCountsADayAndAHalfFromItsRecovery(t *testing.T) {
 				t.Fatalf("a recovered machine whose first backup is still running is warned: %q", found)
 			}
 			// A backup that fails here is this machine's own failure, and
-			// it is told at once rather than after the grace.
+			// it ends the grace. It is told at once unless the backup good
+			// on the source is still fresh, which keeps the warning quiet
+			// until it is a day and a half old, as on any machine.
 			if err := store.FinishBackupRun(ctx, id, state.BackupRun{FinishedAt: imported.Add(2 * time.Hour), Error: refused}); err != nil {
 				t.Fatal(err)
 			}
-			if found := warning(t, store, imported.Add(3*time.Hour)); !strings.HasSuffix(found, "failed: "+refused) {
+			told := imported.Add(3 * time.Hour)
+			if fresh := goodAt.Add(BackupStale); fresh.After(told) {
+				if found := warning(t, store, told); found != "" {
+					t.Fatalf("a failure was told while the source's good backup is fresh: %q", found)
+				}
+				if found := warning(t, store, fresh); found != "" {
+					t.Fatalf("a failure was told while the source's good backup is a day and a half old: %q", found)
+				}
+				told = fresh.Add(time.Minute)
+			}
+			if found := warning(t, store, told); !strings.HasSuffix(found, "failed: "+refused) {
 				t.Fatalf("a recovered machine whose first backup failed must be warned with why: %q", found)
 			}
 		})
