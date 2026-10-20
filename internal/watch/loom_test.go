@@ -194,9 +194,11 @@ func constantTimeEquals(a, b string) bool {
 // fakeNtfy is the person's leg: an ntfy server that counts what it is
 // sent, and fails while told to.
 type fakeNtfy struct {
-	mu     sync.Mutex
-	fail   bool
-	sent   int
+	mu   sync.Mutex
+	fail bool
+	sent int
+	// at is when each push it took arrived.
+	at     []time.Time
 	server *httptest.Server
 }
 
@@ -210,6 +212,7 @@ func newFakeNtfy(t *testing.T) *fakeNtfy {
 			return
 		}
 		f.sent++
+		f.at = append(f.at, time.Now())
 	}))
 	t.Cleanup(f.server.Close)
 	return f
@@ -225,6 +228,19 @@ func (f *fakeNtfy) count() int {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return f.sent
+}
+
+// since is how long after start each push since then arrived.
+func (f *fakeNtfy) since(start time.Time) []time.Duration {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var after []time.Duration
+	for _, at := range f.at {
+		if !at.Before(start) {
+			after = append(after, at.Sub(start))
+		}
+	}
+	return after
 }
 
 // noisyJournal has one container that wrote far more in the window than
@@ -868,4 +884,63 @@ func TestWhatTheRelayHoldsProvesNothing(t *testing.T) {
 	if n := len(r.loom.got()); n != 4 {
 		t.Fatalf("Loom got %d requests", n)
 	}
+}
+
+// A page never waits on a Loom leg, whether it is another outage's that
+// opens in the same round or a retry that is due as an incident
+// recovers: every notice of a round goes out at once.
+func TestAPageNeverWaitsOnALoomLeg(t *testing.T) {
+	was := loomRequestTimeout
+	loomRequestTimeout = 2 * time.Second
+	t.Cleanup(func() { loomRequestTimeout = was })
+	// timed runs one round and says how long after it started each page
+	// arrived, failing if the round didn't wait out a hanging Loom leg.
+	timed := func(r *loomRig, conditions ...Condition) []time.Duration {
+		t.Helper()
+		start := time.Now()
+		r.rounds(1, conditions...)
+		if took := time.Since(start); took < loomRequestTimeout {
+			t.Fatalf("the round took %s, so no Loom leg hung in it", took)
+		}
+		return r.ntfy.since(start)
+	}
+	// prompt is well before a Loom leg that hangs gives up.
+	prompt := loomRequestTimeout / 2
+
+	t.Run("two outages in a round", func(t *testing.T) {
+		r := newLoomRig(t)
+		r.loom.answer(loomHang, loomHang)
+		r.rounds(2, down("hello"), down("shop"))
+		pages := timed(r, down("hello"), down("shop"))
+		if len(pages) != 2 || pages[0] >= prompt || pages[1] >= prompt {
+			t.Fatalf("both outages should be paged at once: %v", pages)
+		}
+		if n := len(r.loom.got()); n != 2 {
+			t.Fatalf("Loom got %d requests", n)
+		}
+	})
+
+	t.Run("a Loom retry as another incident recovers", func(t *testing.T) {
+		r := newLoomRig(t)
+		r.rounds(1, down("shop"))
+		r.rounds(2, down("shop"), down("hello"))
+		r.setLoomURL("https://127.0.0.1:" + closedPort(t) + loomPath)
+		r.rounds(1, down("hello"))
+		r.setLoomURL(r.loom.url())
+		r.loom.answer(loomHang)
+		pages := timed(r, down("hello"))
+		if len(pages) != 1 || pages[0] >= prompt {
+			t.Fatalf("shop's recovery should be paged at once: %v", pages)
+		}
+		if inc := openIncident(t, r.w); inc.Key != "app:hello" {
+			t.Fatalf("shop should have recovered: %+v", inc)
+		}
+		var statuses []int
+		for _, q := range r.loom.got() {
+			statuses = append(statuses, q.status)
+		}
+		if !slices.Equal(statuses, []int{http.StatusAccepted, loomHang}) {
+			t.Fatalf("Loom should take shop, then hang on hello's retry: %v", statuses)
+		}
+	})
 }

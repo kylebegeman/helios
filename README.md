@@ -707,7 +707,9 @@ rounds too, rather than at the next daily repeat. One that eases, an outage
 back to a warning, stays the outage until the milder state has held two
 rounds, so an outage that flaps is told once.
 
-Alerts go out every way that is set up, all at once. Email goes through the
+Alerts go out every way that is set up, all at once, and every incident told
+in a round goes out together, so a slow way, such as Loom while it collects
+an outage's evidence, never holds back a page. Email goes through the
 `email` mail server, and through `email2` only when the first one fails, so the
 same mail never arrives twice. Pushover or ntfy brings warnings and critical
 incidents to a phone. A critical incident rings through Pushover every minute

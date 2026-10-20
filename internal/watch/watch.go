@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/kylebegeman/helios/internal/state"
@@ -143,17 +144,52 @@ func (w *Watcher) init() {
 func (w *Watcher) Round(ctx context.Context, conditions []Condition) error {
 	w.init()
 	now := w.Now()
+	round, err := w.weigh(ctx, conditions, now)
+	w.tell(ctx, round)
+	// Every notice has gone out by now, so each incident is saved even
+	// when another can't be, and the first failure is returned.
+	for _, t := range round {
+		if t.notice != nil {
+			w.record(&t.inc, *t.notice, t.err, now)
+		}
+		if saveErr := w.Store.UpdateIncident(ctx, t.inc); saveErr != nil {
+			if err == nil {
+				err = saveErr
+			}
+			continue
+		}
+		if t.saved != nil {
+			t.saved()
+		}
+	}
+	return err
+}
+
+// telling is an incident the round saves, with the notice it is told, if
+// any, and what came of it.
+type telling struct {
+	inc state.Incident
+	// notice is nil for an incident saved without being told.
+	notice *Notice
+	err    error
+	// saved runs once the incident is saved.
+	saved func()
+}
+
+// weigh works out what a round changes: the incidents that open, change,
+// repeat or resolve, and what each is told. A new incident is opened in
+// the store to give it an id; nothing is told or saved yet. On a failure
+// it returns what it worked out before it, which is still told and saved.
+func (w *Watcher) weigh(ctx context.Context, conditions []Condition, now time.Time) ([]telling, error) {
+	var round []telling
 	pending, err := w.Store.PendingResolvedIncidentNotices(ctx)
 	if err != nil {
-		return err
+		return round, err
 	}
 	for _, incident := range pending {
 		n := w.resolvedNotice(incident)
 		n.Retry = true
-		w.notify(ctx, &incident, n, now)
-		if err := w.Store.UpdateIncident(ctx, incident); err != nil {
-			return err
-		}
+		round = append(round, telling{inc: incident, notice: &n})
 	}
 	current := map[string]Condition{}
 	for _, c := range conditions {
@@ -161,7 +197,7 @@ func (w *Watcher) Round(ctx context.Context, conditions []Condition) error {
 	}
 	open, err := w.Store.OpenIncidents(ctx)
 	if err != nil {
-		return err
+		return round, err
 	}
 	openByKey := map[string]state.Incident{}
 	for _, inc := range open {
@@ -186,14 +222,12 @@ func (w *Watcher) Round(ctx context.Context, conditions []Condition) error {
 			inc = state.Incident{Key: key, Subject: c.Subject, Severity: c.Severity, Message: c.Message, OpenedAt: now, Observations: w.failing[key]}
 			id, err := w.Store.OpenIncident(ctx, inc)
 			if err != nil {
-				return err
+				return round, err
 			}
 			inc.ID = id
 			w.Log("alert: %s: %s", c.Subject, c.Message)
-			w.notify(ctx, &inc, w.openNotice(inc), now)
-			if err := w.Store.UpdateIncident(ctx, inc); err != nil {
-				return err
-			}
+			n := w.openNotice(inc)
+			round = append(round, telling{inc: inc, notice: &n})
 			continue
 		}
 		inc.Observations++
@@ -224,19 +258,19 @@ func (w *Watcher) Round(ctx context.Context, conditions []Condition) error {
 		}
 		inc.Message, inc.Severity = c.Message, c.Severity
 		repeat := escalated || inc.Severity != state.SeverityNotice && !inc.NotifiedAt.IsZero() && now.Sub(inc.NotifiedAt) >= w.Renotify
+		t := telling{inc: inc}
 		owed, isOwed := w.owed[inc.ID]
 		switch {
 		case isOwed && !repeat:
 			// Only the legs that missed it hear it again.
 			n := w.openNotice(inc)
 			n.Transition, n.Retry = owed.transition, true
-			w.notify(ctx, &inc, n, now)
+			t.notice = &n
 		case repeat || inc.NotifiedAt.IsZero() || inc.NotifyError != "":
-			w.notify(ctx, &inc, w.openNotice(inc), now)
+			n := w.openNotice(inc)
+			t.notice = &n
 		}
-		if err := w.Store.UpdateIncident(ctx, inc); err != nil {
-			return err
-		}
+		round = append(round, t)
 	}
 
 	for key, inc := range openByKey {
@@ -252,11 +286,8 @@ func (w *Watcher) Round(ctx context.Context, conditions []Condition) error {
 		}
 		inc.ResolvedAt = now
 		w.Log("recovered: %s", inc.Subject)
-		w.notify(ctx, &inc, w.resolvedNotice(inc), now)
-		if err := w.Store.UpdateIncident(ctx, inc); err != nil {
-			return err
-		}
-		delete(w.passing, key)
+		n := w.resolvedNotice(inc)
+		round = append(round, telling{inc: inc, notice: &n, saved: func() { delete(w.passing, key) }})
 	}
 
 	for key := range w.failing {
@@ -269,18 +300,47 @@ func (w *Watcher) Round(ctx context.Context, conditions []Condition) error {
 			}
 		}
 	}
-	return nil
+	return round, nil
 }
 
-// notify sends a notice and records the outcome on the incident. A
-// notice any leg delivered has told the person; a leg that missed it is
-// kept as the incident's notify error and tried again next round.
-func (w *Watcher) notify(ctx context.Context, inc *state.Incident, n Notice, now time.Time) {
+// tell sends every notice of a round at once and waits for them all. An
+// incident comes up at most once a round, so no incident's notice waits
+// on another's: a page never waits on an earlier incident's Loom leg and
+// the evidence it collects.
+func (w *Watcher) tell(ctx context.Context, round []telling) {
+	if w.Notifier == nil {
+		return
+	}
+	var wg sync.WaitGroup
+	for i := range round {
+		t := &round[i]
+		if t.notice == nil {
+			continue
+		}
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			// A notifier that panics has failed this notice; it never
+			// takes the daemon down.
+			defer func() {
+				if r := recover(); r != nil {
+					t.err = fmt.Errorf("failed unexpectedly: %v", r)
+				}
+			}()
+			t.err = w.Notifier.Notify(ctx, *t.notice)
+		}()
+	}
+	wg.Wait()
+}
+
+// record keeps what came of a notice on its incident. A notice any leg
+// delivered has told the person; a leg that missed it is kept as the
+// incident's notify error and tried again next round.
+func (w *Watcher) record(inc *state.Incident, n Notice, err error, now time.Time) {
 	if w.Notifier == nil {
 		inc.NotifyError = NoAlertsSetUp
 		return
 	}
-	err := w.Notifier.Notify(ctx, n)
 	var missed *DeliveryError
 	told := err == nil || errors.As(err, &missed) && missed.Partial()
 	before, retried := w.owed[inc.ID]

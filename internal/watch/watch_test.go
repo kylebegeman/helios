@@ -6,6 +6,7 @@ import (
 	"errors"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -14,12 +15,17 @@ import (
 	"github.com/kylebegeman/helios/internal/state"
 )
 
+// fakeNotifier keeps what it is told. A round tells its incidents at
+// once, so it is read only between rounds.
 type fakeNotifier struct {
+	mu   sync.Mutex
 	sent []Notice
 	fail bool
 }
 
 func (f *fakeNotifier) Notify(_ context.Context, n Notice) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	if f.fail {
 		return errors.New("mail server down")
 	}
