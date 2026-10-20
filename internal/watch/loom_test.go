@@ -952,6 +952,12 @@ func TestWhatTheRelayHoldsProvesNothing(t *testing.T) {
 		}
 	}
 	raised("the refusal")
+	// The weekly test tests every leg and starts the record again.
+	r.loom.answer(loomHeld)
+	if l := test(""); l.Error != "" || !l.Held || !l.Probe {
+		t.Fatalf("a held probe after the refusal: %+v", l)
+	}
+	raised("after a held probe")
 	r.loom.answer(loomHeld)
 	if l := test(LoomWebhookLeg); l.Error != "" || !l.Held || l.Probe {
 		t.Fatalf("a held test: %+v", l)
@@ -967,7 +973,7 @@ func TestWhatTheRelayHoldsProvesNothing(t *testing.T) {
 		t.Fatalf("a held incident is sent: %+v, %q", m, shop.NotifyError)
 	}
 	raised("after a held incident")
-	if n := len(r.loom.got()); n != 4 {
+	if n := len(r.loom.got()); n != 5 {
 		t.Fatalf("Loom got %d requests", n)
 	}
 }
