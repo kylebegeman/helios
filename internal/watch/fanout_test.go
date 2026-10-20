@@ -252,6 +252,33 @@ func TestAFailedLegIsRetriedAlone(t *testing.T) {
 	}
 }
 
+// A leg that hears every notice is owed only the latest, so the recovery
+// of an outage it missed reaches it in the round the outage recovers,
+// without waiting out the backoff of the outage's notice.
+func TestARecoveryReachesALegThatMissedTheOutageAtOnce(t *testing.T) {
+	ctx := context.Background()
+	mails, api := &mailbox{}, newPushoverAPI(t)
+	api.setFail(true)
+	f := emailAndPushover(mails, api)
+	w, now := newWatcher(t, f)
+	f.Now = func() time.Time { return *now }
+	// Pushover misses the outage as it opens, a minute on and two minutes
+	// after that, and then waits four.
+	rounds(t, w, now, 7, down("hello"))
+	if attempts := len(api.paths()); attempts != 3 {
+		t.Fatalf("Pushover should miss the outage three times: %v", api.paths())
+	}
+	api.setFail(false)
+	rounds(t, w, now, 2)
+	all, err := w.Store.Incidents(ctx, 10)
+	if err != nil || len(all) != 1 || all[0].Open() {
+		t.Fatalf("hello should have recovered: %+v, %v", all, err)
+	}
+	if got := api.messages(); len(got) != 1 || !strings.Contains(got[0].Get("title"), "hello recovered") || all[0].NotifyError != "" {
+		t.Fatalf("Pushover should have the recovery at once: %v, %q", api.paths(), all[0].NotifyError)
+	}
+}
+
 // The recovery of a critical incident stops its Pushover emergency, then
 // says so quietly.
 func TestAResolvedIncidentCancelsItsPushoverTag(t *testing.T) {
