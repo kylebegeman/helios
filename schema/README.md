@@ -38,14 +38,14 @@ can answer its HTTP health path, DNS points at a target, certificates are
 ready, secret values exist, images can be pulled or the machine has capacity.
 Run `helios check <source-dir> --host` on the target to apply the deploy
 planner's read-only preflight after the offline check passes. This checks
-required integrations, exact host/path ownership, shared-host DNS and origin
-pull modes and published-port ownership against the target's existing apps,
-that the target's edge trusts a CA for every host with
-`origin_pull: required`, and named secrets (including generated, derived and
-inherited names), then returns the plan without applying or journaling an
-operation. It does not establish runtime readiness, DNS resolution or
-certificate issuance. `--json` includes `host_preflight.valid` and the plan
-when successful.
+required integrations, exact host/path ownership, shared-host DNS modes and
+published-port ownership against the target's existing apps, that the
+target's edge trusts a CA for every host that would require origin pull,
+whether this app or another app sharing the host requires it, and named
+secrets (including generated, derived and inherited names), then returns
+the plan without applying or journaling an operation. It does not establish
+runtime readiness, DNS resolution or certificate issuance. `--json` includes
+`host_preflight.valid` and the plan when successful.
 
 When adding manifest fields, update the authoritative types and validation,
 add any editor constraints in `schema.go`, then regenerate the checked-in

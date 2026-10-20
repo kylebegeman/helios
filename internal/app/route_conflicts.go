@@ -12,8 +12,10 @@ import (
 
 // CheckRouteConflicts refuses exact host/path ownership conflicts before a
 // deploy builds or runs releases. Different prefixes may share one host, but
-// that host's DNS and origin-pull modes must agree. The app may replace its
-// own active routes.
+// that host's DNS mode must agree. Its origin-pull modes need not: the edge
+// takes the strictest any app asks for (settleOriginPull), which is how
+// apps sharing a host switch it one at a time, and the trust check holds
+// each of them to that mode. The app may replace its own active routes.
 func CheckRouteConflicts(ctx context.Context, store *state.Store, m *manifest.Manifest) error {
 	if store == nil {
 		return nil
@@ -43,9 +45,6 @@ func CheckRouteConflicts(ctx context.Context, store *state.Store, m *manifest.Ma
 	if len(mine) == 0 {
 		return nil
 	}
-	// The edge checks a client per host name, not per route, so a host's
-	// origin-pull mode is the strictest any of its app's routes asks for.
-	pulls := m.OriginPullHosts()
 	active, err := store.ActiveRevisions(ctx)
 	if err != nil {
 		return err
@@ -60,14 +59,10 @@ func CheckRouteConflicts(ctx context.Context, store *state.Store, m *manifest.Ma
 			return fmt.Errorf("revision %s/%s manifest: %w", rev.App, rev.ID, err)
 		}
 		byHost := map[string][]ownedRoute{}
-		otherPulls := map[string]manifest.OriginPullMode{}
 		for _, name := range other.WorkloadNames() {
 			for _, r := range other.Workloads[name].Routes {
 				if hosts[r.Host] {
 					byHost[r.Host] = append(byHost[r.Host], ownedRoute{name, r.Host, r.NormalizedPath(), r.DNS})
-					if mode := originPullOf(r.OriginPull); mode.Stricter(otherPulls[r.Host]) {
-						otherPulls[r.Host] = mode
-					}
 				}
 			}
 		}
@@ -77,8 +72,6 @@ func CheckRouteConflicts(ctx context.Context, store *state.Store, m *manifest.Ma
 					clashes = append(clashes, fmt.Sprintf("%s%s for %s is already routed to %s's %s", candidate.host, candidate.path, candidate.workload, other.App, existing.workload))
 				} else if candidate.dns != existing.dns {
 					clashes = append(clashes, fmt.Sprintf("%s uses dns %q here and %q in %s; routes sharing a host must use one DNS mode", candidate.host, candidate.dns, existing.dns, other.App))
-				} else if pulls[candidate.host] != otherPulls[candidate.host] {
-					clashes = append(clashes, fmt.Sprintf("%s uses origin_pull %q here and %q in %s; routes sharing a host must use one origin-pull mode", candidate.host, pulls[candidate.host], otherPulls[candidate.host], other.App))
 				}
 			}
 		}

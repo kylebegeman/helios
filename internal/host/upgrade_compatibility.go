@@ -5,9 +5,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"os"
+	"slices"
+	"strings"
 	"time"
 
+	"github.com/kylebegeman/helios/internal/app"
 	"github.com/kylebegeman/helios/internal/compat"
 	"github.com/kylebegeman/helios/internal/kernel"
 	"github.com/kylebegeman/helios/internal/state"
@@ -37,6 +41,30 @@ func probeCapabilities(ctx context.Context, env Env, path string) (compat.Info, 
 		}
 	}
 	return info, nil
+}
+
+// originPullCapability is what a build's edge needs to keep checking
+// Cloudflare's client certificate on a host that sets origin_pull.
+const originPullCapability = "edge.origin-pull.v1"
+
+// checkOriginPullCandidate refuses a candidate without
+// originPullCapability while an app here sets origin_pull for a host. Such
+// a build reads a stored manifest's origin_pull as nothing, so its edge
+// would check no certificate on those hosts, and nothing it has would say
+// so.
+func checkOriginPullCandidate(ctx context.Context, store *state.Store, candidate compat.Info) error {
+	if store == nil || slices.Contains(candidate.Capabilities, originPullCapability) {
+		return nil
+	}
+	modes, err := app.OriginPullModes(ctx, store)
+	if err != nil {
+		return fmt.Errorf("upgrade preflight: %w", err)
+	}
+	if len(modes) == 0 {
+		return nil
+	}
+	return fmt.Errorf("upgrade preflight: candidate lacks %s, so its edge would stop checking Cloudflare's client certificate on %s, which set origin_pull; upgrade to a build that has it, or deploy those apps without origin_pull first",
+		originPullCapability, strings.Join(slices.Sorted(maps.Keys(modes)), ", "))
 }
 
 type upgradeCheckpoint struct {

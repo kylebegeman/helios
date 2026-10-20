@@ -18,6 +18,13 @@ writes a private consistent SQLite checkpoint before staging the binary.
 Checkpoint metadata is bound to the kernel operation ID so an interrupted
 upgrade cannot adopt a checkpoint from a different attempt.
 
+When an app's active revision sets `origin_pull` for a host, the candidate
+must also report `edge.origin-pull.v1`: an older build reads the stored
+`origin_pull` as nothing, and its edge would stop checking Cloudflare's
+client certificate on that host. The upgrade names those hosts and stops
+before the journal or binary changes; upgrade to a build that has it, or
+deploy those apps without `origin_pull` first.
+
 Automatic binary rollback requires both binaries to read the resulting state.
 A candidate that migrates beyond the running binary's reader is refused with
 instructions for a coordinated migration. A state checkpoint is evidence and

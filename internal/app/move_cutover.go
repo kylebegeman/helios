@@ -67,7 +67,7 @@ func (c MoveCutover) Plan(ctx context.Context, raw json.RawMessage) (*kernel.Pla
 	// A CA trusted when the move was staged can have been forgotten since:
 	// forget guards only what the edge already serves.
 	if rev.Status == revisionStaged {
-		if err := checkMovedOriginPullTrust(&m, c.Deploy.Secrets, time.Now(), "cut over again"); err != nil {
+		if err := checkMovedOriginPullTrust(ctx, c.Deploy.Store, &m, c.Deploy.Secrets, time.Now(), "cut over again"); err != nil {
 			return nil, err
 		}
 	}

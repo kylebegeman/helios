@@ -114,7 +114,7 @@ func (s MoveStage) Plan(ctx context.Context, raw json.RawMessage) (*kernel.Plan,
 			return nil, errors.New("guarded staging requires the loom integration before cutover")
 		}
 	}
-	if err := checkMovedOriginPullTrust(m, s.Deploy.Secrets, time.Now(), "stage again"); err != nil {
+	if err := checkMovedOriginPullTrust(ctx, s.Deploy.Store, m, s.Deploy.Secrets, time.Now(), "stage again"); err != nil {
 		return nil, err
 	}
 	if m.HasData() {

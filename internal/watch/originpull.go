@@ -21,8 +21,16 @@ func originPullKey(host string) string { return "edge:origin-pull:" + host }
 // edge can't use, or soon can't. The edge checks the certificate
 // Cloudflare presents against them, so a required host left without one
 // is refused to everyone, and a CA that runs out takes the leaf minted
-// with it, the one Cloudflare presents, along. Only the latest CA counts:
-// once a new one is minted, the old one is on its way out by design.
+// with it, the one Cloudflare presents, along.
+//
+// Every CA a host trusts counts until it is forgotten, not only the
+// newest. helios can't see which leaf Cloudflare presents, and minting a
+// new CA changes nothing there until its certificate is uploaded, so an
+// old CA nearing its end warns even beside a newer one. One that runs out
+// while a newer one is trusted beside it is critical in either mode: the
+// edge then checks against the newer CA alone and refuses the old leaf,
+// which Cloudflare keeps presenting, expired, until the new one replaces
+// it.
 //
 // A host that trusts a CA but that no app sets origin_pull for says
 // nothing, however near its CA's end. The edge asks it for no
@@ -71,26 +79,32 @@ func (p *Prober) originPull(ctx context.Context) []Condition {
 			continue
 		}
 		cas := trust[strings.ToLower(host)]
-		usable, lapsed := originPullExpiry(cas, now)
-		switch {
-		case !usable.IsZero():
-			if usable.Sub(now) >= OriginPullWarn {
-				continue
+		usable, lapsed := originPullCAs(cas, now)
+		if len(usable) > 0 {
+			if rotation, found := originPullRotation(host, usable, lapsed, now, mint); found {
+				conditions = append(conditions, rotation)
 			}
-			c.Severity = state.SeverityWarning
-			c.Message = fmt.Sprintf("the newest origin-pull CA %s trusts runs out on %s, in %s, and the certificate Cloudflare presents with it; %s before then (the old CA stays trusted until it runs out)", host, usable.UTC().Format(time.DateOnly), ago(now, usable), mint)
-		case required && !lapsed.IsZero():
+			continue
+		}
+		var ranOut time.Time
+		if len(lapsed) > 0 {
+			ranOut = lapsed[len(lapsed)-1].notAfter
+		}
+		switch {
+		case required && !ranOut.IsZero():
 			c.Severity = state.SeverityCritical
-			c.Message = fmt.Sprintf("the edge refuses every connection to %s: it requires origin pull, and the last CA it trusts for it ran out on %s, with the certificate Cloudflare presents; %s", host, lapsed.UTC().Format(time.DateOnly), mint)
+			c.Message = fmt.Sprintf("the edge refuses every connection to %s: it requires origin pull, and the last CA it trusts for it ran out on %s, with the certificate Cloudflare presents; %s", host, ranOut.UTC().Format(time.DateOnly), mint)
 		case required && len(cas) == 0:
 			c.Severity = state.SeverityCritical
 			c.Message = fmt.Sprintf("the edge refuses every connection to %s: it requires origin pull and trusts no CA for it; %s, or deploy it with origin_pull: optional until then", host, mint)
 		case required:
 			c.Severity = state.SeverityCritical
 			c.Message = fmt.Sprintf("the edge refuses every connection to %s: it requires origin pull and none of the CAs it trusts for it is usable; %s", host, mint)
-		case !lapsed.IsZero():
+		case !ranOut.IsZero():
+			// The daemon reloads the edge when a CA runs out, so it no
+			// longer asks for a certificate it can't check.
 			c.Severity = state.SeverityWarning
-			c.Message = fmt.Sprintf("the last origin-pull CA %s trusts ran out on %s, and the certificate Cloudflare presents with it; %s", host, lapsed.UTC().Format(time.DateOnly), mint)
+			c.Message = fmt.Sprintf("the last origin-pull CA %s trusts ran out on %s, and the certificate Cloudflare presents with it, so the edge checks no certificate for it; %s", host, ranOut.UTC().Format(time.DateOnly), mint)
 		case len(cas) > 0:
 			c.Severity = state.SeverityWarning
 			c.Message = fmt.Sprintf("none of the origin-pull CAs %s trusts is usable, so the edge checks no certificate for it; %s", host, mint)
@@ -104,23 +118,71 @@ func (p *Prober) originPull(ctx context.Context) []Condition {
 	return conditions
 }
 
-// originPullExpiry is when the latest of cas the edge takes at now runs
-// out, zero when it takes none, and when the latest of those that already
-// ran out did. The edge takes what edge.OriginPullTrust.ClientCAs gives
-// it: CA certificates inside their validity.
-func originPullExpiry(cas []edge.OriginPullCA, now time.Time) (usable, lapsed time.Time) {
+// originPullRotation is the condition of a host the edge still has a CA
+// to check against: critical for each CA that ran out while still
+// trusted beside it, a warning for each that runs out within
+// OriginPullWarn. found is false when neither is so.
+func originPullRotation(host string, usable, lapsed []originPullCA, now time.Time, mint string) (c Condition, found bool) {
+	c = Condition{Key: originPullKey(host), Subject: host, Severity: state.SeverityWarning}
+	clears := func(ca originPullCA) string {
+		return fmt.Sprintf("upload the newer certificate at Cloudflare if it isn't there, and this clears once Cloudflare presents it and helios edge origin-pull forget %s %s drops the old CA", host, ca.fingerprint)
+	}
+	var says []string
+	for _, ca := range lapsed {
+		c.Severity = state.SeverityCritical
+		says = append(says, fmt.Sprintf("the origin-pull CA %s that %s trusts ran out on %s, and while Cloudflare still presents the certificate minted with it, the edge refuses every connection Cloudflare makes to %s: %s",
+			ca.fingerprint, host, ca.notAfter.UTC().Format(time.DateOnly), host, clears(ca)))
+	}
+	for i, ca := range usable {
+		if ca.notAfter.Sub(now) >= OriginPullWarn {
+			continue
+		}
+		if i == len(usable)-1 {
+			says = append(says, fmt.Sprintf("the newest origin-pull CA %s trusts runs out on %s, in %s, and the certificate Cloudflare presents with it: %s before then",
+				host, ca.notAfter.UTC().Format(time.DateOnly), ago(now, ca.notAfter), mint))
+			continue
+		}
+		says = append(says, fmt.Sprintf("the origin-pull CA %s that %s trusts runs out on %s, in %s, and if Cloudflare still presents the certificate minted with it then, the edge refuses every connection Cloudflare makes to %s: %s",
+			ca.fingerprint, host, ca.notAfter.UTC().Format(time.DateOnly), ago(now, ca.notAfter), host, clears(ca)))
+	}
+	if len(says) == 0 {
+		return Condition{}, false
+	}
+	c.Message = strings.Join(says, "; ")
+	return c, true
+}
+
+// originPullCA is one CA a host trusts, by the fingerprint helios edge
+// origin-pull forget takes, and when it runs out.
+type originPullCA struct {
+	fingerprint string
+	notAfter    time.Time
+}
+
+// originPullCAs sorts cas into the ones the edge takes at now and the ones
+// that already ran out, each oldest expiry first. The edge takes what
+// edge.OriginPullTrust.ClientCAs gives it: CA certificates inside their
+// validity. One that isn't a CA's certificate, or isn't valid yet, is in
+// neither.
+func originPullCAs(cas []edge.OriginPullCA, now time.Time) (usable, lapsed []originPullCA) {
 	for _, ca := range cas {
 		cert, err := edge.ParseOriginPullCA(ca.PEM)
-		switch {
-		case err != nil, now.Before(cert.NotBefore):
-			// The edge leaves it out.
-		case !now.Before(cert.NotAfter):
-			if cert.NotAfter.After(lapsed) {
-				lapsed = cert.NotAfter
-			}
-		case cert.NotAfter.After(usable):
-			usable = cert.NotAfter
+		if err != nil || now.Before(cert.NotBefore) {
+			continue
 		}
+		fingerprint, err := app.OriginPullFingerprint(ca.PEM)
+		if err != nil {
+			continue
+		}
+		trusted := originPullCA{fingerprint: fingerprint, notAfter: cert.NotAfter}
+		if now.Before(cert.NotAfter) {
+			usable = append(usable, trusted)
+		} else {
+			lapsed = append(lapsed, trusted)
+		}
+	}
+	for _, list := range [][]originPullCA{usable, lapsed} {
+		sort.SliceStable(list, func(i, j int) bool { return list[i].notAfter.Before(list[j].notAfter) })
 	}
 	return usable, lapsed
 }

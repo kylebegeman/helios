@@ -232,10 +232,13 @@ func Run(ctx context.Context, cfg Config, logw io.Writer) error {
 	// The edge gets the configuration this build of helios makes for the
 	// active revisions, in case the shape changed since the last deploy;
 	// an edge an older helios made is replaced, keeping its routes.
+	edgeLoaded := time.Now().UTC()
 	if err := app.UpgradeEdge(ctx, store, sec, logWriter{logf}); err != nil {
 		logf("edge: %v", err)
+		// What the edge runs may then hold a CA that ran out long ago.
+		edgeLoaded = time.Time{}
 	}
-	d.startLoops(ctx)
+	d.startLoops(ctx, edgeLoaded)
 	receiver, stopHooks := d.serveHooks(ctx)
 	defer stopHooks()
 	defer func() { cancel(); receiver.Wait(context.Background()) }()
@@ -318,9 +321,11 @@ func (d *daemon) recoverOperations(ctx context.Context) error {
 }
 
 // startLoops starts what runs on the daemon's own clocks: cron workloads,
-// outside the operation lock; watching; signals; and scheduled backups,
-// drills and collection.
-func (d *daemon) startLoops(ctx context.Context) {
+// outside the operation lock; watching; reloading the edge as origin-pull
+// CAs run out; signals; and scheduled backups, drills and collection.
+// edgeLoaded is when the edge was given its configuration at start, zero
+// when it wasn't.
+func (d *daemon) startLoops(ctx context.Context, edgeLoaded time.Time) {
 	logf := d.logf
 	jobs := app.NewJobs(d.store, d.sec)
 	d.jobs = jobs
@@ -337,6 +342,21 @@ func (d *daemon) startLoops(ctx context.Context) {
 				logf("watch: %v", err)
 			}
 		})
+	})
+	reloader := &originPullReloader{Trust: prober.OriginPullTrust, Log: logf, loaded: edgeLoaded,
+		Reload: func(ctx context.Context) error {
+			// Under the operation lock, so a configuration built here from
+			// the revisions active now can't land after one a deploy built
+			// from newer ones.
+			unlock, err := api.LockOperations(ctx, d.store.Path())
+			if err != nil {
+				return err
+			}
+			defer unlock()
+			return app.ReloadEdge(ctx, d.store, d.sec)
+		}}
+	d.every(ctx, time.Minute, false, func(now time.Time) {
+		guarded(logf, "origin pull", func() { reloader.Tick(ctx, now) })
 	})
 	sampler := signals.NewSampler(d.store)
 	sampler.Log = logf

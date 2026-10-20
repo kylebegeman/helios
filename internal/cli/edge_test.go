@@ -1,11 +1,13 @@
 package cli
 
 import (
+	"bytes"
 	"context"
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/json"
 	"encoding/pem"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -336,7 +338,10 @@ func TestListFlagsARequiredHostTheEdgeRefuses(t *testing.T) {
 }
 
 // originPullTarget is a target that names capabilities, and keeps the
-// arguments and stdin of the last command it ran other than capabilities.
+// arguments and stdin of the last command it ran other than capabilities
+// and origin-pull list. Its list shows shop.example.com trusting the CA it
+// was last sent when BEDROCK_TEST_REMOTE_KEPT is set, and no host
+// otherwise, and exits BEDROCK_TEST_REMOTE_LIST_EXIT.
 func originPullTarget(t *testing.T, capabilities ...string) (config, record, stdin string) {
 	t.Helper()
 	dir := t.TempDir()
@@ -346,6 +351,13 @@ func originPullTarget(t *testing.T, capabilities ...string) (config, record, std
 	script := `#!/bin/sh
 case "$*" in
  *capabilities*) printf '%s\n' '{"api_version":1,"manifest_version":1,"state_version":1,"machine_id":"fixture-machine","capabilities":` + string(caps) + `}'; exit 0 ;;
+ *"origin-pull list"*)
+  if [ -n "$BEDROCK_TEST_REMOTE_KEPT" ]; then
+   awk 'BEGIN { printf "[{\"host\":\"shop.example.com\",\"cas\":[{\"ca_pem\":\"" } { printf "%s\\n", $0 } END { print "\"}]}]" }' "$BEDROCK_TEST_REMOTE_STDIN"
+  else
+   echo '[]'
+  fi
+  exit "${BEDROCK_TEST_REMOTE_LIST_EXIT:-0}" ;;
 esac
 printf '%s\n' "$@" > "$BEDROCK_TEST_REMOTE_ARGS"
 cat > "$BEDROCK_TEST_REMOTE_STDIN"
@@ -419,7 +431,8 @@ func TestMintForATargetKeepsTheKeyHere(t *testing.T) {
 	}
 	keyNotShown(t, keyPEM, out, stderr)
 
-	// A target that won't trust the CA leaves no file behind.
+	// A target that won't trust the CA, and then says it doesn't, leaves
+	// no file behind.
 	t.Setenv("BEDROCK_TEST_REMOTE_EXIT", "3")
 	refused := filepath.Join(t.TempDir(), "refused.pem")
 	if _, stderr, code := targetRun(t, config, "edge", "origin-pull", "mint", "shop.example.com", "--out", refused); code != 3 {
@@ -427,6 +440,66 @@ func TestMintForATargetKeepsTheKeyHere(t *testing.T) {
 	}
 	if _, err := os.Stat(refused); !os.IsNotExist(err) {
 		t.Fatalf("the file was left: %v", err)
+	}
+}
+
+func TestAMintForATargetWhoseTrustFailedKeepsTheFileUnlessTheCAWasntKept(t *testing.T) {
+	config, _, stdin := originPullTarget(t, "edge.origin-pull.v1")
+	t.Setenv("BEDROCK_TEST_REMOTE_EXIT", "1")
+
+	// The target kept the CA, and only its edge's reload failed: the
+	// certificate is the only one that CA will ever sign.
+	t.Setenv("BEDROCK_TEST_REMOTE_KEPT", "1")
+	kept := filepath.Join(t.TempDir(), "kept.pem")
+	out, stderr, code := targetRun(t, config, "edge", "origin-pull", "mint", "shop.example.com", "--out", kept)
+	if code != 1 || !strings.Contains(stderr, "shop.example.com trusts the new CA, but the edge didn't reload") || !strings.Contains(out, "shop.example.com trusts a new origin-pull CA") {
+		t.Fatalf("code %d, out %q, err %q", code, out, stderr)
+	}
+	sent, _ := os.ReadFile(stdin)
+	leaf, _, _ := mintedFile(t, kept)
+	verifiesAgainst(t, leaf, string(sent))
+
+	// The target can't be asked whether it kept the CA: the file stays,
+	// with how to check and how to forget the CA on that target.
+	t.Setenv("BEDROCK_TEST_REMOTE_KEPT", "")
+	t.Setenv("BEDROCK_TEST_REMOTE_LIST_EXIT", "1")
+	unknown := filepath.Join(t.TempDir(), "unknown.pem")
+	out, stderr, code = targetRun(t, config, "edge", "origin-pull", "mint", "shop.example.com", "--out", unknown)
+	sent, _ = os.ReadFile(stdin)
+	fp, _ := apps.OriginPullFingerprint(string(sent))
+	helios := "helios --target one --targets-file " + shellArgument(config) + " edge origin-pull "
+	for _, want := range []string{"asking it whether it kept the CA", helios + "list", "CA " + fp + " for shop.example.com", helios + "forget shop.example.com " + fp, "delete the file and mint again"} {
+		if code != 1 || !strings.Contains(stderr, want) {
+			t.Fatalf("code %d, err lacks %q:\n%s", code, want, stderr)
+		}
+	}
+	if !strings.Contains(out, "shop.example.com may trust a new origin-pull CA") {
+		t.Fatalf("the output claims more than is known:\n%s", out)
+	}
+	leaf, _, _ = mintedFile(t, unknown)
+	verifiesAgainst(t, leaf, string(sent))
+}
+
+func TestAMintWhoseEdgeDidntReloadStillWritesTheFile(t *testing.T) {
+	// The edge's admin socket is the machine's own, so a reload can't be
+	// made to fail here; this is what the local trust step reports when
+	// TrustOriginPull saved the CA and then failed to reload the edge.
+	var stdout, stderr bytes.Buffer
+	a := &app{stdout: &stdout, stderr: &stderr, stateDir: t.TempDir()}
+	path := filepath.Join(t.TempDir(), "shop.pem")
+	var sent string
+	err := a.mintOriginPull("shop.example.com", path, func(caPEM string) (originPullKept, error) {
+		sent = caPEM
+		return caKept, errors.New("edge rejected the configuration: 400 Bad Request")
+	})
+	if err == nil || !strings.Contains(err.Error(), "shop.example.com trusts the new CA, but the edge didn't reload: edge rejected the configuration") {
+		t.Fatalf("err %v", err)
+	}
+	leaf, _, keyPEM := mintedFile(t, path)
+	verifiesAgainst(t, leaf, sent)
+	keyNotShown(t, keyPEM, stdout.String(), stderr.String(), err.Error())
+	if !strings.Contains(stdout.String(), "shop.example.com trusts a new origin-pull CA") || !strings.Contains(stdout.String(), "Next:") {
+		t.Fatalf("the output lacks the CA or what to do next:\n%s", stdout.String())
 	}
 }
 

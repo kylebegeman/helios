@@ -81,6 +81,12 @@ func (c RecoverCutover) Plan(ctx context.Context, raw json.RawMessage) (*kernel.
 		if err := CheckRouteConflicts(ctx, c.Recovery.Store, &m); err != nil {
 			return nil, err
 		}
+		// Activation loads the edge, which would refuse every connection
+		// to a host that requires origin pull and has no CA here, and then
+		// DNS points the host at this machine.
+		if err := checkRecoveredOriginPullTrust(ctx, c.Recovery.Store, &m, c.Recovery.Secrets, time.Now(), in.ID); err != nil {
+			return nil, err
+		}
 	}
 	plan := &kernel.Plan{Target: "recovery " + in.ID, Recovery: kernel.Resume, Steps: []kernel.Step{
 		{Name: "begin", Change: "record the start of reviewed cutover before changing target runtime", Apply: func(ctx context.Context, out io.Writer) error {

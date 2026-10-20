@@ -349,30 +349,79 @@ func TestAPreviewTakesNoOriginPull(t *testing.T) {
 	}
 }
 
-func TestAppsSharingAHostMustAgreeOnOriginPull(t *testing.T) {
+// Apps on different paths of one host switch it to origin pull one deploy
+// at a time, in either order, and back. The edge checks the host by the
+// strictest mode any of them asks for, so an app asking less of it, or
+// nothing, leaves it as strict as the other and is held to the same CA.
+func TestAppsSharingAHostTakeItsStrictestOriginPull(t *testing.T) {
 	ctx := context.Background()
-	store, err := state.Open(filepath.Join(t.TempDir(), "state.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer store.Close()
-	shared := func(app, path string, mode manifest.OriginPullMode) *manifest.Manifest {
-		m := routeFixture(t, app, path, manifest.DNSProxied)
+	now := time.Now()
+	host := "shared.example.com"
+	paths := map[string]string{"site": "/", "api": "/api"}
+	shared := func(app string, mode manifest.OriginPullMode) *manifest.Manifest {
+		m := routeFixture(t, app, paths[app], manifest.DNSProxied)
 		w := m.Workloads["web"]
 		w.Routes[0].OriginPull = mode
 		m.Workloads["web"] = w
 		return m
 	}
-	saveActive(t, store, shared("site", "/", manifest.OriginPullRequired))
-	err = CheckRouteConflicts(ctx, store, shared("api", "/api", manifest.OriginPullOff))
-	if err == nil || !strings.Contains(err.Error(), `shared.example.com uses origin_pull "" here and "required" in site; routes sharing a host must use one origin-pull mode`) {
-		t.Fatalf("a host left half open wasn't refused: %v", err)
+	for _, order := range [][]string{{"site", "api"}, {"api", "site"}} {
+		store := goldenStore(t)
+		sec := newSecrets(t)
+		d := Deploy{Store: store, Secrets: sec, StateDir: t.TempDir()}
+		for _, app := range order {
+			saveActive(t, store, shared(app, manifest.OriginPullOff))
+		}
+		if _, err := TrustOriginPull(ctx, store, sec, host, mintCA(t, host, now).PEM, now); err != nil {
+			t.Fatal(err)
+		}
+		for _, mode := range []manifest.OriginPullMode{manifest.OriginPullOptional, manifest.OriginPullRequired, manifest.OriginPullOptional, manifest.OriginPullOff} {
+			for _, app := range order {
+				m := shared(app, mode)
+				if _, err := d.rollout(ctx, m, "r2", &buildFrom{source: t.TempDir()}); err != nil {
+					t.Fatalf("%s first: %s switching %s to origin_pull %q was refused: %v", order[0], app, host, mode, err)
+				}
+				saveActive(t, store, m)
+			}
+		}
 	}
-	if err := CheckRouteConflicts(ctx, store, shared("api", "/api", manifest.OriginPullOptional)); err == nil {
-		t.Fatal("a host weakened to optional wasn't refused")
+
+	// site requires the host and the edge has no CA for it, as when the
+	// one it trusted ran out: api asking less of the host doesn't open it.
+	store := goldenStore(t)
+	sec := newSecrets(t)
+	d := Deploy{Store: store, Secrets: sec, StateDir: t.TempDir()}
+	saveActive(t, store, shared("site", manifest.OriginPullRequired))
+	for _, mode := range []manifest.OriginPullMode{manifest.OriginPullOptional, manifest.OriginPullOff} {
+		_, err := d.rollout(ctx, shared("api", mode), "r2", &buildFrom{source: t.TempDir()})
+		if err == nil || !strings.Contains(err.Error(), "site requires origin pull on shared.example.com, but the edge trusts no CA for it") {
+			t.Fatalf("api with origin_pull %q was planned onto a host site requires and the edge would refuse: %v", mode, err)
+		}
 	}
-	if err := CheckRouteConflicts(ctx, store, shared("api", "/api", manifest.OriginPullRequired)); err != nil {
-		t.Fatalf("apps agreeing on origin pull were refused: %v", err)
+	_, err := d.rollout(ctx, shared("api", manifest.OriginPullRequired), "r2", &buildFrom{source: t.TempDir()})
+	if err == nil || !strings.Contains(err.Error(), "api and site require origin pull on shared.example.com") {
+		t.Fatalf("both apps requiring the host weren't named: %v", err)
+	}
+	if _, err := TrustOriginPull(ctx, store, sec, host, mintCA(t, host, now).PEM, now); err != nil {
+		t.Fatal(err)
+	}
+	relaxed := shared("api", manifest.OriginPullOptional)
+	if _, err := d.rollout(ctx, relaxed, "r2", &buildFrom{source: t.TempDir()}); err != nil {
+		t.Fatalf("api relaxing a host site still requires was refused: %v", err)
+	}
+	saveActive(t, store, relaxed)
+	routes, err := edgeRoutes(ctx, store, sec, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, r := range routes {
+		if r.Host == host && (r.OriginPull != edge.OriginPullRequired || len(r.ClientCAs) != 1) {
+			t.Fatalf("%s%s takes origin pull %q with %d CAs, want required with the host's CA", r.Host, r.Path, r.OriginPull, len(r.ClientCAs))
+		}
+	}
+	modes, err := OriginPullModes(ctx, store)
+	if err != nil || modes[host] != manifest.OriginPullRequired {
+		t.Fatalf("the host reads as %q, %v", modes[host], err)
 	}
 }
 
@@ -465,6 +514,127 @@ func TestAMoveIsNotCutOverOntoAnEdgeThatForgotTheCA(t *testing.T) {
 	}
 	if _, err := c.Plan(ctx, raw); err != nil {
 		t.Fatalf("a target trusting the CA was refused: %v", err)
+	}
+}
+
+// A recovery brings back the trust the source had when it was backed up,
+// which can lack a host's CA, or hold one that ran out since. Cutover
+// would load the edge refusing that host and then point its name here.
+func TestARecoveryIsNotCutOverOntoAnEdgeThatTrustsNoCAForARequiredHost(t *testing.T) {
+	ctx := context.Background()
+	now := time.Now()
+	r, _ := recoveryFixture(t)
+	in := recoveryInput(false)
+	x := &machineRecovering{r: r, in: in, dir: RecoveryDirectory(r.StateDir, in.ID)}
+	m := recoveryManifest()
+	host := "hello.example.test"
+	w := m.Workloads["web"]
+	w.Routes = []manifest.Route{{Host: host, DNS: manifest.DNSProxied, OriginPull: manifest.OriginPullRequired}}
+	m.Workloads["web"] = w
+	body, _ := json.Marshal(m)
+	rec := &machineRecoveryRecord{Input: in, FinishedAt: now, StateInstalled: true,
+		Catalog: machineRecoveryCatalog{Revisions: []state.Revision{{App: m.App, Manifest: body, Images: map[string]string{"web": "sha256:" + strings.Repeat("b", 64)}}}}, Ready: map[string]bool{m.App: true}}
+	if err := x.save(rec); err != nil {
+		t.Fatal(err)
+	}
+	c := RecoverCutover{Recovery: r}
+	raw, _ := json.Marshal(RecoverCutoverInput{ID: in.ID})
+	_, err := c.Plan(ctx, raw)
+	for _, want := range []string{"hello requires origin pull on hello.example.test", "helios edge origin-pull trust <host>", "helios recover cutover " + in.ID + " again"} {
+		if err == nil || !strings.Contains(err.Error(), want) {
+			t.Fatalf("a recovery was cut over onto an edge that would refuse its host: %v", err)
+		}
+	}
+	if err := saveOriginPullTrust(r.Secrets, edge.OriginPullTrust{host: {mintCA(t, host, now.Add(-2*edge.OriginPullLifetime))}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.Plan(ctx, raw); err == nil {
+		t.Fatal("a recovered CA that ran out was taken for one the edge checks against")
+	}
+	if _, err := TrustOriginPull(ctx, r.Store, r.Secrets, host, mintCA(t, host, now).PEM, now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.Plan(ctx, raw); err != nil {
+		t.Fatalf("a target trusting the CA was refused: %v", err)
+	}
+}
+
+// Rollback plans the revision it goes back to as a deploy would. A host's
+// CAs can be forgotten while a later revision has it optional, and going
+// back to one that requires it would then leave the edge refusing it.
+func TestARollbackToARevisionRequiringOriginPullWithoutACAIsRefused(t *testing.T) {
+	ctx := context.Background()
+	now := time.Now()
+	store := goldenStore(t)
+	sec := newSecrets(t)
+	host := "a-required.example.com"
+	save := func(m *manifest.Manifest, id string, status state.RevisionStatus) {
+		t.Helper()
+		raw, _ := json.Marshal(m)
+		if err := store.SaveRevision(ctx, state.Revision{App: m.App, ID: id, Status: status, Manifest: raw, Images: map[string]string{}, Containers: map[string]string{}, CreatedAt: now}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	required := originPullSite("site")
+	save(required, "r1", state.RevisionActive)
+	if _, err := TrustOriginPull(ctx, store, sec, host, mintCA(t, host, now).PEM, now); err != nil {
+		t.Fatal(err)
+	}
+	optional := originPullSite("site")
+	w := optional.Workloads["web"]
+	for i := range w.Routes {
+		if w.Routes[i].Host == host {
+			w.Routes[i].OriginPull = manifest.OriginPullOptional
+		}
+	}
+	optional.Workloads["web"] = w
+	save(required, "r1", state.RevisionPrevious)
+	save(optional, "r2", state.RevisionActive)
+	if n, err := ForgetOriginPull(ctx, store, sec, host, "", now); err != nil || n != 1 {
+		t.Fatalf("forgetting the CA of a host now optional: %d %v", n, err)
+	}
+	rollback := Rollback{Deploy: Deploy{Store: store, Secrets: sec, StateDir: t.TempDir()}}
+	_, err := rollback.Plan(ctx, json.RawMessage(`{"app":"site"}`))
+	if err == nil || !strings.Contains(err.Error(), "site requires origin pull on a-required.example.com, but the edge trusts no CA for it") {
+		t.Fatalf("a rollback onto a host the edge would refuse was planned: %v", err)
+	}
+	if ops, err := store.List(ctx, 20); err != nil || len(ops) != 0 {
+		t.Fatalf("planning changed the operation journal: %v %v", ops, err)
+	}
+	if _, err := TrustOriginPull(ctx, store, sec, host, mintCA(t, host, now).PEM, now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := rollback.Plan(ctx, json.RawMessage(`{"app":"site"}`)); err != nil {
+		t.Fatalf("a rollback with a trusted CA was refused: %v", err)
+	}
+}
+
+// The edge checks against no CA that ran out, so one kept beside the last
+// usable CA of a required host doesn't make that CA safe to forget.
+func TestTheLastUsableCAOfARequiredHostIsKeptBesideOneThatRanOut(t *testing.T) {
+	ctx := context.Background()
+	now := time.Now()
+	store := goldenStore(t)
+	sec := newSecrets(t)
+	saveRunning(t, store, originPullSite("site"), false)
+	host := "a-required.example.com"
+	expired, usable := mintCA(t, host, now.Add(-2*edge.OriginPullLifetime)), mintCA(t, host, now)
+	trust := edge.OriginPullTrust{}
+	trust.Trust(host, expired)
+	trust.Trust(host, usable)
+	if err := saveOriginPullTrust(sec, trust); err != nil {
+		t.Fatal(err)
+	}
+	fingerprint, err := OriginPullFingerprint(usable.PEM)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ForgetOriginPull(ctx, store, sec, host, fingerprint, now); err == nil || !strings.Contains(err.Error(), "refuse every connection") {
+		t.Fatalf("the required host's last usable CA was forgotten: %v", err)
+	}
+	kept, err := LoadOriginPullTrust(sec)
+	if err != nil || len(kept[host]) != 2 {
+		t.Fatalf("a refused forget changed the trust: %v, %v", kept[host], err)
 	}
 }
 

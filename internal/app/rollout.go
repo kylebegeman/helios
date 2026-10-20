@@ -74,7 +74,7 @@ func (d Deploy) rollout(ctx context.Context, m *manifest.Manifest, revision stri
 	// A host that requires origin pull with no CA to check against would
 	// be refused every connection, which the certificate step would find
 	// only after the switch.
-	if err := checkOriginPullTrust(m, d.Secrets, time.Now()); err != nil {
+	if err := checkOriginPullTrust(ctx, r.store, m, d.Secrets, time.Now()); err != nil {
 		return nil, err
 	}
 	for _, name := range m.WorkloadNames() {

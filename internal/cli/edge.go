@@ -1,6 +1,8 @@
 package cli
 
 import (
+	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -83,23 +85,25 @@ out or helios edge origin-pull forget drops it, so the host keeps working
 while Cloudflare takes the new one.`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return a.mintOriginPull(args[0], out, func(caPEM string) (bool, error) {
+			return a.mintOriginPull(args[0], out, func(caPEM string) (originPullKept, error) {
 				store, err := a.openState()
 				if err != nil {
-					return false, err
+					return caNotKept, err
 				}
 				defer store.Close()
 				sec := a.secretsStore()
 				if err := a.ensureSecretsKey(sec); err != nil {
-					return false, err
+					return caNotKept, err
 				}
 				if _, err := apps.TrustOriginPull(cmd.Context(), store, sec, args[0], caPEM, time.Now()); err != nil {
 					// The CA may be kept with only the edge's reload failing,
 					// and then the certificate is still worth having.
-					t, loadErr := apps.LoadOriginPullTrust(sec)
-					return loadErr == nil && trustsCA(t, args[0], caPEM), err
+					if t, loadErr := apps.LoadOriginPullTrust(sec); loadErr == nil && trustsCA(t, args[0], caPEM) {
+						return caKept, err
+					}
+					return caNotKept, err
 				}
-				return true, nil
+				return caKept, nil
 			})
 		},
 	}
@@ -111,12 +115,24 @@ while Cloudflare takes the new one.`,
 // key are made and written here, and the target is given only the CA.
 func (a *app) mintOriginPullOnTarget(cmd *cobra.Command, t remote.Target, args []string) error {
 	out, _ := cmd.Flags().GetString("out")
-	err := a.mintOriginPull(args[0], out, func(caPEM string) (bool, error) {
-		argv := append(a.targetStateArgs(), "edge", "origin-pull", "trust", strings.ToLower(args[0]))
-		if err := targetTransport().Run(cmd.Context(), t, argv, strings.NewReader(caPEM), io.Discard, a.stderr); err != nil {
-			return false, remoteExit(err)
+	err := a.mintOriginPull(args[0], out, func(caPEM string) (originPullKept, error) {
+		host := strings.ToLower(args[0])
+		argv := append(a.targetStateArgs(), "edge", "origin-pull", "trust", host)
+		err := targetTransport().Run(cmd.Context(), t, argv, strings.NewReader(caPEM), io.Discard, a.stderr)
+		if err == nil {
+			return caKept, nil
 		}
-		return true, nil
+		// The target may have kept the CA with only its edge's reload
+		// failing, or the connection may have dropped once it had; the
+		// exit code doesn't say which, so ask it.
+		trust, askErr := a.targetOriginPullTrust(cmd.Context(), t)
+		switch {
+		case askErr != nil:
+			return caMaybeKept, fmt.Errorf("trust on the target failed, and so did asking it whether it kept the CA: %w", askErr)
+		case trustsCA(trust, host, caPEM):
+			return caKept, fmt.Errorf("trust on the target: %w", err)
+		}
+		return caNotKept, remoteExit(err)
 	})
 	if err != nil {
 		return err
@@ -124,12 +140,48 @@ func (a *app) mintOriginPullOnTarget(cmd *cobra.Command, t remote.Target, args [
 	return quietError{0}
 }
 
+// targetOriginPullTrust asks the target which origin-pull CAs it trusts,
+// from its helios edge origin-pull list --json.
+func (a *app) targetOriginPullTrust(ctx context.Context, t remote.Target) (edge.OriginPullTrust, error) {
+	var out bytes.Buffer
+	argv := append(a.targetStateArgs(), "edge", "origin-pull", "list", "--json")
+	if err := targetTransport().Run(ctx, t, argv, nil, &boundedBuffer{Buffer: &out, Max: 1 << 20}, a.stderr); err != nil {
+		return nil, err
+	}
+	var hosts []apps.OriginPullHost
+	if err := json.Unmarshal(out.Bytes(), &hosts); err != nil {
+		return nil, fmt.Errorf("target returned an invalid origin-pull list: %w", err)
+	}
+	trust := edge.OriginPullTrust{}
+	for _, h := range hosts {
+		for _, ca := range h.CAs {
+			trust[h.Host] = append(trust[h.Host], edge.OriginPullCA{PEM: ca.PEM, NotAfter: ca.NotAfter})
+		}
+	}
+	return trust, nil
+}
+
+// originPullKept is what mint's trust step knows of the new CA once it
+// has run.
+type originPullKept int
+
+const (
+	caNotKept originPullKept = iota
+	caKept
+	// caMaybeKept is a target whose trust failed and that couldn't then
+	// be asked whether it kept the CA.
+	caMaybeKept
+)
+
 // mintOriginPull makes host's CA and certificate, has trust keep the CA,
 // and only then writes the certificate and its key to out. out is made
 // before anything else, so a file already there stops the mint before
 // any CA is trusted. trust reports whether it kept the CA, which it can
-// have done even when it fails, if only the edge's reload did.
-func (a *app) mintOriginPull(host, out string, trust func(caPEM string) (bool, error)) error {
+// have done even when it fails, if only the edge's reload did. The file
+// is written unless the CA is known not to be kept: a CA trusted with
+// no certificate anywhere is of no use, and minting again only adds
+// another beside it.
+func (a *app) mintOriginPull(host, out string, trust func(caPEM string) (originPullKept, error)) error {
 	host = strings.ToLower(host)
 	if !manifest.ValidHost(host) {
 		return fmt.Errorf("%q is not a host name", host)
@@ -160,14 +212,19 @@ func (a *app) mintOriginPull(host, out string, trust func(caPEM string) (bool, e
 		return err
 	}
 	kept, trustErr := trust(minted.CA.PEM)
-	if !kept {
+	if kept == caNotKept {
 		if trustErr == nil {
 			trustErr = errors.New("the CA wasn't trusted")
 		}
 		return trustErr
 	}
+	trusts := "trusts"
+	if kept == caMaybeKept {
+		trusts = "may trust"
+	}
+	forget := a.originPullCommand("forget", host, fingerprint)
 	if err := writeOriginPull(f, minted); err != nil {
-		return fmt.Errorf("%s trusts the new CA %s, but %s couldn't be written: %w; forget the CA with helios edge origin-pull forget %s %s and mint again", host, fingerprint, out, err, host, fingerprint)
+		return fmt.Errorf("%s %s the new CA %s, but %s couldn't be written: %w; forget the CA with %s and mint again", host, trusts, fingerprint, out, err, forget)
 	}
 	written = true
 	path, err := filepath.Abs(out)
@@ -180,7 +237,7 @@ func (a *app) mintOriginPull(host, out string, trust func(caPEM string) (bool, e
 			return err
 		}
 	} else {
-		fmt.Fprintf(a.stdout, "%s trusts a new origin-pull CA:\n  CA        %s\n  Expires   %s\n  File      %s, the certificate and then its key\n", host, fingerprint, expires, path)
+		fmt.Fprintf(a.stdout, "%s %s a new origin-pull CA:\n  CA        %s\n  Expires   %s\n  File      %s, the certificate and then its key\n", host, trusts, fingerprint, expires, path)
 	}
 	fmt.Fprintf(a.prose(), `Next:
   1. At Cloudflare, under SSL/TLS, Origin Server, upload the file as a per-hostname authenticated origin pull certificate and associate it with %s.
@@ -189,10 +246,30 @@ func (a *app) mintOriginPull(host, out string, trust func(caPEM string) (bool, e
   4. Then deploy with origin_pull: required.
 Delete %s once it is uploaded: it holds the only copy of the key.
 `, host, host, path)
-	if trustErr != nil {
+	switch {
+	case kept == caMaybeKept:
+		return fmt.Errorf("%w; check with %s: if it shows CA %s for %s, upload %s, or forget the CA with %s; if it doesn't, delete the file and mint again", trustErr, a.originPullCommand("list"), fingerprint, host, path, forget)
+	case trustErr != nil:
 		return fmt.Errorf("%s trusts the new CA, but the edge didn't reload: %w; it takes the CA when it next reloads", host, trustErr)
 	}
 	return nil
+}
+
+// originPullCommand is helios edge origin-pull with args as a hint names
+// it: on the same target and state as the command giving the hint, since
+// the CA it is about is kept there.
+func (a *app) originPullCommand(args ...string) string {
+	command := "helios"
+	if a.targetName != "" {
+		command += " --target " + shellArgument(a.targetName)
+		if a.targetsFile != defaultTargetsFile() {
+			command += " --targets-file " + shellArgument(a.targetsFile)
+		}
+	}
+	if a.stateDir != "" && a.stateDir != defaultStateDir() {
+		command += " --state-dir " + shellArgument(a.stateDir)
+	}
+	return command + " edge origin-pull " + strings.Join(args, " ")
 }
 
 // writeOriginPull writes the certificate and then its key, and makes sure

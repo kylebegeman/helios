@@ -70,8 +70,11 @@ CA, never the certificate uploaded to Cloudflare.
 
 `helios move stage` refuses the app until the target trusts a CA for each
 such host, and `helios move cutover` refuses it again if that CA was
-forgotten since. Machine recovery brings the source's trust along with its
-other operational keys.
+forgotten since. A host another app on the target already requires origin
+pull for needs a CA there too, even if the moved app sets `origin_pull:
+optional` for it or leaves it out. Machine recovery adds each CA the source
+trusts to the ones the target already trusts, host by host, so a target
+that already trusts some hosts still gains the source's.
 
 ## Rehearse before downtime
 

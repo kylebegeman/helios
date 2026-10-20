@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/kylebegeman/helios/internal/edge"
 	"github.com/kylebegeman/helios/internal/secrets"
 )
 
@@ -142,24 +143,148 @@ func TestIntegrationConflictAndRecoveryPreserveTargetConfiguration(t *testing.T)
 // minted again to match the certificate Cloudflare holds.
 func TestRecoveryCarriesOriginPullTrustTheTargetLacks(t *testing.T) {
 	source, target, _ := transferStores(t)
-	trust := `{"shop.example.com":[{"ca_pem":"source CA","not_after":"2027-10-20T00:00:00Z"}]}`
-	source.Set(App, OriginPullName, trust)
+	now := time.Now()
+	shop, api, www := mintedCA(t, "shop.example.com", now), mintedCA(t, "api.example.com", now), mintedCA(t, "www.example.com", now)
+	setTrust(t, source, edge.OriginPullTrust{"shop.example.com": {shop}, "api.example.com": {api}})
 	changed, err := RecoverMissing(target, source)
 	if err != nil {
 		t.Fatal(err)
 	}
-	raw, _, _ := target.LoadCurrent(App)
-	if raw[OriginPullName] != trust || len(changed) != 1 || changed[0] != "operational-keys" {
-		t.Fatalf("trust not recovered: %q %v", raw[OriginPullName], changed)
+	got := loadTrust(t, target)
+	if len(got) != 2 || !trustsOnly(got["shop.example.com"], shop) || !trustsOnly(got["api.example.com"], api) || len(changed) != 1 || changed[0] != "operational-keys" {
+		t.Fatalf("trust not recovered: %v %v", caCounts(got), changed)
 	}
-	// A machine that already trusts CAs of its own keeps them.
-	own := `{"www.example.com":[{"ca_pem":"target CA","not_after":"2027-10-20T00:00:00Z"}]}`
-	target.Set(App, OriginPullName, own)
+	// A machine that trusts a host of its own, left by an app it ran once
+	// or trusted ahead of the recovery, keeps it and still takes every
+	// host the source trusts.
+	setTrust(t, target, edge.OriginPullTrust{"www.example.com": {www}})
 	if _, err := RecoverMissing(target, source); err != nil {
 		t.Fatal(err)
 	}
-	raw, _, _ = target.LoadCurrent(App)
-	if raw[OriginPullName] != own {
-		t.Fatalf("recovery replaced the target's trust: %q", raw[OriginPullName])
+	got = loadTrust(t, target)
+	if len(got) != 3 || !trustsOnly(got["www.example.com"], www) || !trustsOnly(got["shop.example.com"], shop) || !trustsOnly(got["api.example.com"], api) {
+		t.Fatalf("recovery lost a host's trust: %v", caCounts(got))
 	}
+	// Once it trusts them all, recovering again writes nothing.
+	_, version, _ := target.LoadCurrent(App)
+	changed, err = RecoverMissing(target, source)
+	if _, again, _ := target.LoadCurrent(App); err != nil || len(changed) != 0 || again != version {
+		t.Fatalf("a recovery with nothing to add changed the target: %v %v, version %d to %d", changed, err, version, again)
+	}
+}
+
+// A host both machines trust keeps the target's CA and gains the
+// source's: the leaf Cloudflare presents may be either one's, and the
+// edge takes a leaf any of the host's CAs signed.
+func TestRecoveryAddsTheSourcesCAsBesideTheTargetsForTheSameHost(t *testing.T) {
+	source, target, _ := transferStores(t)
+	now := time.Now()
+	ours, theirs := mintedCA(t, "shop.example.com", now), mintedCA(t, "shop.example.com", now.Add(time.Hour))
+	ranOut := mintedCA(t, "shop.example.com", now.Add(-2*edge.OriginPullLifetime))
+	setTrust(t, target, edge.OriginPullTrust{"shop.example.com": {ours}})
+	// The source trusts the target's CA too, spaced as a hand-edited value
+	// might hold it, which is still one certificate. It also trusts CAs
+	// that ran out, for this host and for one it no longer serves.
+	respaced := edge.OriginPullCA{PEM: "\n" + strings.TrimSpace(ours.PEM) + "\n\n", NotAfter: ours.NotAfter}
+	setTrust(t, source, edge.OriginPullTrust{
+		"shop.example.com": {respaced, theirs, ranOut},
+		"old.example.com":  {ranOut},
+	})
+	if _, err := RecoverMissing(target, source); err != nil {
+		t.Fatal(err)
+	}
+	got := loadTrust(t, target)
+	if len(got) != 1 || !trustsOnly(got["shop.example.com"], ours, theirs) {
+		t.Fatalf("CAs by host: %v", caCounts(got))
+	}
+}
+
+// Neither value can be merged if it doesn't parse, and keeping either one
+// whole is how a host's CAs get lost, so recovery stops before it changes
+// anything on the target.
+func TestRecoveryStopsOnOriginPullTrustThatDoesntParse(t *testing.T) {
+	source, target, _ := transferStores(t)
+	Set(source, "loom", map[string]string{"verify_url": "https://auth.example.com/verify"})
+	source.Set(App, OriginPullName, "{not json")
+	if _, err := RecoverMissing(target, source); err == nil || !strings.Contains(err.Error(), "the source's origin-pull trust") {
+		t.Fatalf("err %v", err)
+	}
+	if _, version, _ := target.LoadCurrent(App); version != 0 {
+		t.Fatal("a source trust that doesn't parse partly changed the target")
+	}
+	setTrust(t, source, edge.OriginPullTrust{"shop.example.com": {mintedCA(t, "shop.example.com", time.Now())}})
+	target.Set(App, OriginPullName, "[")
+	_, before, _ := target.LoadCurrent(App)
+	if _, err := RecoverMissing(target, source); err == nil || !strings.Contains(err.Error(), "this machine's origin-pull trust") {
+		t.Fatalf("err %v", err)
+	}
+	if raw, after, _ := target.LoadCurrent(App); after != before || raw[OriginPullName] != "[" {
+		t.Fatalf("a target trust that doesn't parse was changed: %q, version %d to %d", raw[OriginPullName], before, after)
+	}
+	// With no CA to add, the target's value is no reason to stop.
+	source.SetAll(App, map[string]*string{OriginPullName: nil})
+	if _, err := RecoverMissing(target, source); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := Get(target, "loom"); err != nil || got["verify_url"] != "https://auth.example.com/verify" {
+		t.Fatalf("loom not recovered: %v", err)
+	}
+}
+
+// mintedCA is a CA helios edge origin-pull mint makes for host, lasting a
+// year from now.
+func mintedCA(t *testing.T, host string, now time.Time) edge.OriginPullCA {
+	t.Helper()
+	minted, err := edge.MintOriginPull(host, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return minted.CA
+}
+
+func setTrust(t *testing.T, s *secrets.Store, trust edge.OriginPullTrust) {
+	t.Helper()
+	text, err := trust.Encode()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Set(App, OriginPullName, text); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func loadTrust(t *testing.T, s *secrets.Store) edge.OriginPullTrust {
+	t.Helper()
+	raw, _, err := s.LoadCurrent(App)
+	if err != nil {
+		t.Fatal(err)
+	}
+	trust, err := edge.ParseOriginPullTrust(raw[OriginPullName])
+	if err != nil {
+		t.Fatal(err)
+	}
+	return trust
+}
+
+// caCounts is how many CAs each host trusts, for a failure message that
+// doesn't print every certificate.
+func caCounts(trust edge.OriginPullTrust) map[string]int {
+	out := map[string]int{}
+	for host, cas := range trust {
+		out[host] = len(cas)
+	}
+	return out
+}
+
+// trustsOnly reports whether have is exactly want, in order.
+func trustsOnly(have []edge.OriginPullCA, want ...edge.OriginPullCA) bool {
+	if len(have) != len(want) {
+		return false
+	}
+	for i := range want {
+		if have[i].PEM != want[i].PEM {
+			return false
+		}
+	}
+	return true
 }

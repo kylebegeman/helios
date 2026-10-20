@@ -60,9 +60,13 @@ long-running workloads on internal networks. It publishes no ports, installs
 no live app routes, changes no DNS records and runs no release or cron jobs.
 Restored file contents are verified against their snapshot before private
 health probes verify the restored runtime. The source host profile is
-applied; missing non-storage integrations and operational keys, among them
-the CAs the edge trusts for origin pull, are recovered while target storage
-and already configured target values remain authoritative.
+applied; missing non-storage integrations and operational keys are
+recovered while target storage and already configured target values remain
+authoritative. The CAs the edge trusts for origin pull are merged host by
+host: the target keeps every CA it already trusts and gains each one the
+source trusts that it lacks, leaving behind any that ran out. If either
+machine's origin-pull trust doesn't parse, recovery stops before it changes
+the target.
 
 The source state is imported additively. The target operation journal, identity
 and configured integrations stay in place. Original source revisions remain
@@ -87,6 +91,15 @@ readiness does it activate recovered revisions, load edge routes and explicitly
 point managed DNS records at the target. Cron jobs become eligible after
 cutover completes and releases the reservation. DNS modes configured as manual
 remain manual.
+
+Cutover refuses, while it is still a plan, an app with a host that requires
+origin pull while the target trusts no usable CA for it. The recovered trust
+is the source's as of the backup, so a CA can be missing from it or have run
+out since. Trust the CA the source trusts with
+`helios edge origin-pull trust <host> ca.pem`, or, with the source gone,
+mint one with `helios edge origin-pull mint <host> --out FILE` and upload it
+at Cloudflare, then run `helios recover cutover <recovery-id>` again.
+
 Cutover durably records its start before changing the target runtime. A failed
 or interrupted cutover reports `cutover-incomplete` and is retried with the same
 recovery ID; it cannot be abandoned after that start marker.

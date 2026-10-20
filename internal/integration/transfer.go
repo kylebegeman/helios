@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/kylebegeman/helios/internal/edge"
 	"github.com/kylebegeman/helios/internal/secrets"
 )
 
@@ -194,10 +195,10 @@ func applyValues(store *secrets.Store, values map[string]map[string]string, repl
 }
 
 // RecoverMissing restores missing non-storage integrations and operational keys,
-// among them the CAs the edge's origin-pull hosts trust. The source store has
-// already been resealed to the target identity by recovery. Target storage,
-// configured integrations, existing hook/deploy keys and origin-pull trust
-// prevail.
+// and adds to the target's origin-pull trust each CA the source trusts that it
+// lacks. The source store has already been resealed to the target identity by
+// recovery. Target storage, configured integrations, existing hook/deploy keys
+// and every CA the target already trusts prevail.
 func RecoverMissing(target, source *secrets.Store) ([]string, error) {
 	raw, _, err := source.LoadCurrent(App)
 	if err != nil {
@@ -235,12 +236,19 @@ func RecoverMissing(target, source *secrets.Store) ([]string, error) {
 		if !secrets.ValidName(name) {
 			return nil, errors.New("invalid operational secret name in recovery")
 		}
-		if strings.HasPrefix(name, "WEBHOOK_SECRET_") || strings.HasPrefix(name, "DEPLOY_KEY_") || name == OriginPullName {
+		if strings.HasPrefix(name, "WEBHOOK_SECRET_") || strings.HasPrefix(name, "DEPLOY_KEY_") {
 			if current[name] == "" {
 				v := value
 				keys[name] = &v
 			}
 		}
+	}
+	trust, err := mergeOriginPull(current[OriginPullName], raw[OriginPullName], transferNow())
+	if err != nil {
+		return nil, err
+	}
+	if trust != "" {
+		keys[OriginPullName] = &trust
 	}
 	changed, err := applyValues(target, values, false, true)
 	if err != nil {
@@ -253,6 +261,43 @@ func RecoverMissing(target, source *secrets.Store) ([]string, error) {
 		changed = append(changed, "operational-keys")
 	}
 	return changed, nil
+}
+
+// mergeOriginPull is the target's origin-pull trust with each CA the
+// source trusts and the target lacks added, or "" when that adds none.
+// One value holds every host's CAs, so letting the target's value prevail
+// whole, as its hook and deploy keys do, would drop each host only the
+// source trusts, and once DNS points here the edge would refuse every
+// Cloudflare connection to it. Nothing can mint those CAs again, since
+// their keys were forgotten at mint. A source CA that ran out stays
+// behind, as Prune forgets one; the target keeps all of its own.
+func mergeOriginPull(target, source string, now time.Time) (string, error) {
+	from, err := edge.ParseOriginPullTrust(source)
+	if err != nil {
+		return "", fmt.Errorf("the source's origin-pull trust can't be recovered: %w", err)
+	}
+	from.Prune(now)
+	if len(from) == 0 {
+		return "", nil
+	}
+	// Merging needs both values whole: keeping either one as it stands
+	// is how a host's CAs get lost.
+	into, err := edge.ParseOriginPullTrust(target)
+	if err != nil {
+		return "", fmt.Errorf("this machine's origin-pull trust can't take the source's CAs: %w", err)
+	}
+	added := 0
+	for host, cas := range from {
+		for _, ca := range cas {
+			if into.Trust(host, ca) {
+				added++
+			}
+		}
+	}
+	if added == 0 {
+		return "", nil
+	}
+	return into.Encode()
 }
 
 // ValidateVersion checks selected definitions in a pinned source secret version.
