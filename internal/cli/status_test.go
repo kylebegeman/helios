@@ -210,6 +210,11 @@ func TestLsJSONFreshStateWithoutDockerReportsUnknownInventory(t *testing.T) {
 		t.Fatalf("fresh state unexpectedly has apps or unmanaged containers: %+v", result)
 	}
 	assertLsInventoryKnown(t, result, false)
+	// A script reads apps as a list; a machine with none is an empty one.
+	out, _, _ := run(t, dir, "ls", "--json")
+	if !strings.Contains(out, `"apps":[]`) {
+		t.Fatalf("ls JSON must give a machine with no apps an empty list, not null: %s", out)
+	}
 }
 
 func TestLsPlainReportsUnknownUnmanagedInventoryWithoutDisclosingDetails(t *testing.T) {

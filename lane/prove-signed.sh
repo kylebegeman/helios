@@ -42,7 +42,7 @@ expect_refusal() {
   grep -E "refused|$message" "$work/refusal.log" | quiet | head -3 || true
   grep -qE "$message" "$work/refusal.log" || { cat "$work/refusal.log" >&2; fail "the refusal didn't say $message"; }
 }
-running_commit() { run 'bedrock ls --json' | python3 -c 'import json,sys; print(next((a.get("commit","") for a in json.load(sys.stdin)["apps"] if a["name"]==sys.argv[1]), ""))' "$1"; }
+running_commit() { run 'bedrock ls --json' | python3 -c 'import json,sys; print(next((a.get("commit","") for a in json.load(sys.stdin)["apps"] or [] if a["name"]==sys.argv[1]), ""))' "$1"; }
 hello_builds() { run 'ls -A /var/lib/bedrock-git/builds/hello 2>/dev/null || true'; }
 # nothing_built fails if hello runs another commit, or has another source
 # tree, than it had before the refusals began.
