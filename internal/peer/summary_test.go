@@ -14,6 +14,7 @@ import (
 	"github.com/kylebegeman/helios/internal/manifest"
 	"github.com/kylebegeman/helios/internal/state"
 	"github.com/kylebegeman/helios/internal/version"
+	"github.com/kylebegeman/helios/internal/watch"
 )
 
 func seconds(n int64) *int64 { return &n }
@@ -65,9 +66,9 @@ func opened(t *testing.T, store *state.Store, i state.Incident) int64 {
 // drills, when each alert leg last worked, its disk, and its own last
 // look at its peers. A peer incident reads as told only when this
 // machine sent it itself, and as owed never while another observer is to
-// send it; the peer notices it is sending right now are listed. It never
-// says why a notice failed or what a leg delivered, and no address it
-// knows.
+// send it; the peer notices it is sending right now are listed, and the
+// last recovery of each peer it sent itself. It never says why a notice
+// failed or what a leg delivered, and no address it knows.
 func TestSummaryReports(t *testing.T) {
 	w := setUpWeb1(t)
 	store, ctx := w.store, context.Background()
@@ -94,6 +95,18 @@ func TestSummaryReports(t *testing.T) {
 		OpenedAt: now.Add(-20 * time.Minute), NotifiedAt: now.Add(-19 * time.Minute), NotifyError: failure})
 	opened(t, store, state.Incident{Key: "peer:web4", Subject: "web4", Severity: state.SeverityWarning,
 		OpenedAt: now.Add(-10 * time.Minute), NotifyError: (&Deferred{To: "web3"}).Error()})
+	// It sent the recovery of two earlier outages of web3, and of one of
+	// the edge provider.
+	var recoveries []Told
+	for _, r := range []struct {
+		key string
+		ago time.Duration
+	}{{"peer:web3", 30 * time.Minute}, {"peer:edge-provider", 45 * time.Minute}, {"peer:web3", 50 * time.Minute}} {
+		id := opened(t, store, state.Incident{Key: r.key, Subject: strings.TrimPrefix(r.key, keyPrefix), Severity: state.SeverityCritical,
+			OpenedAt: now.Add(-r.ago - 5*time.Minute), ResolvedAt: now.Add(-r.ago), NotifiedAt: now.Add(-r.ago)})
+		recoveries = append(recoveries, Told{IncidentID: id, Key: r.key, Transition: watch.TransitionResolved, Severity: state.SeverityCritical,
+			By: "web1", At: now.Add(-r.ago)})
+	}
 
 	if _, _, err := integration.Set(w.secrets, integration.EmailName, map[string]string{"smtp_host": "smtp.example.test", "smtp_port": "587",
 		"from": "helios@example.test", "to": "ops@example.test"}); err != nil {
@@ -112,7 +125,7 @@ func TestSummaryReports(t *testing.T) {
 			Findings: []Finding{{Key: "peer:web2", Severity: state.SeverityWarning}},
 			Paths:    map[string]Paths{"web2": {WordOK, WordOK, "timeout"}},
 			Sending:  []string{"peer:web2"},
-			Sent:     []Told{{IncidentID: web2, Key: "peer:web2", Severity: state.SeverityCritical, By: "web1", At: now.Add(-19 * time.Minute)}}}
+			Sent:     append([]Told{{IncidentID: web2, Key: "peer:web2", Severity: state.SeverityCritical, By: "web1", At: now.Add(-19 * time.Minute)}}, recoveries...)}
 	}
 	rec := asked(s, at(in("100.64.0.0/10"), 7700), http.MethodGet, SummaryPath, w.keys["web2"], "")
 	if rec.Code != http.StatusOK || rec.Header().Get("Content-Type") != "application/json" {
@@ -139,9 +152,10 @@ func TestSummaryReports(t *testing.T) {
 			{App: "shop", LastGoodBackupAgeS: seconds(54 * 3600), DeployedAgeS: seconds(10 * 86400),
 				LastGoodDrillAgeS: seconds(9*86400 + 170*60), DrillOverdueS: seconds(2*86400 + 170*60)},
 			{App: manifest.ReservedApp, LastGoodBackupAgeS: seconds(3600)}},
-		Legs:     []SummaryLeg{{Name: integration.EmailName, LastOKAgeS: seconds(3600)}, {Name: integration.PushoverName}},
-		Findings: []Finding{{Key: "peer:web2", Severity: state.SeverityWarning}},
-		Views:    []SummaryView{{Subject: "web2", AgeS: 41, Paths: Paths{WordOK, WordOK, "timeout"}}},
+		Legs:      []SummaryLeg{{Name: integration.EmailName, LastOKAgeS: seconds(3600)}, {Name: integration.PushoverName}},
+		Findings:  []Finding{{Key: "peer:web2", Severity: state.SeverityWarning}},
+		Views:     []SummaryView{{Subject: "web2", AgeS: 41, Paths: Paths{WordOK, WordOK, "timeout"}}},
+		Recovered: []SummaryRecovery{{Key: "peer:edge-provider", AgeS: 2700}, {Key: "peer:web3", AgeS: 1800}},
 	}
 	if !reflect.DeepEqual(got, want) {
 		gotJSON, _ := json.Marshal(got)
