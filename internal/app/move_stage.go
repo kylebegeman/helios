@@ -209,7 +209,11 @@ func (s MoveStage) Plan(ctx context.Context, raw json.RawMessage) (*kernel.Plan,
 		}
 		plan.Steps = append(plan.Steps, fetch, x.pinned(moveRestoreVolumes(x, h, in.Revision)), x.pinned(moveRestoreDatabase(x, h, in.Revision)))
 		plan.Steps = append(plan.Steps, x.pinned(kernel.Step{Name: "restore-record", Change: "record completion of exact final restore " + h.Snapshot, Apply: func(ctx context.Context, out io.Writer) error {
-			return x.run.done(ctx, state.BackupRun{Snapshot: h.Snapshot, SnapshotAt: h.TakenAt, Detail: "exact final move snapshot restored under destination fence"})
+			detail := "exact final move snapshot restored under destination fence"
+			if mf, err := x.manifest(); err == nil {
+				detail += createdEmptyNote(mf)
+			}
+			return x.run.done(ctx, state.BackupRun{Snapshot: h.Snapshot, SnapshotAt: h.TakenAt, Detail: detail})
 		}}))
 	}
 	recordStep := r.recordStep()

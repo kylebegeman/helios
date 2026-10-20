@@ -152,7 +152,7 @@ func (c MoveCapture) Plan(ctx context.Context, raw json.RawMessage) (*kernel.Pla
 			}
 			plan.Steps = append(plan.Steps, step)
 		} else {
-			plan.Steps = append(plan.Steps, kernel.Step{Name: "snapshot", Change: "capture the final database and volumes while the source remains fenced for " + identity,
+			plan.Steps = append(plan.Steps, kernel.Step{Name: "snapshot", Change: "capture the final database and volumes while the source remains fenced for " + identity + leftOut(m),
 				Apply: func(ctx context.Context, out io.Writer) (captureErr error) {
 					if err := x.run.begin(ctx); err != nil {
 						return err
@@ -204,11 +204,7 @@ func (c MoveCapture) Plan(ctx context.Context, raw json.RawMessage) (*kernel.Pla
 					if err := writeAppBackupProvenance(x.staging, *rev, time.Now().UTC()); err != nil {
 						return err
 					}
-					mounts := []string{restic.DirMount(x.staging, true)}
-					for _, v := range m.DataVolumes() {
-						mounts = append(mounts, restic.VolumeMount(docker.VolumeName(in.App, v), v, true))
-					}
-					x.summary, err = r.Backup(ctx, in.App, mounts, restic.DataRoot)
+					x.summary, err = r.Backup(ctx, in.App, snapshotMounts(x.staging, in.App, m), restic.DataRoot)
 					if err != nil {
 						return err
 					}

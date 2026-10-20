@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"path/filepath"
+	"slices"
 
 	"github.com/kylebegeman/helios/internal/docker"
 	"github.com/kylebegeman/helios/internal/kernel"
@@ -47,7 +48,7 @@ func moveRestoreVolumes(x *restoring, h Handoff, revision string) kernel.Step {
 					return err
 				}
 			}
-			if err := x.checkVolumesSpace(ctx, e, rs, m.DataVolumes(), out); err != nil {
+			if err := x.checkVolumesSpace(ctx, e, rs, m.BackedUpVolumes(), out); err != nil {
 				return err
 			}
 		}
@@ -72,14 +73,21 @@ func moveRestoreVolumes(x *restoring, h Handoff, revision string) kernel.Step {
 					return err
 				}
 			}
-			if _, err := rs.Restore(ctx, h.Snapshot, x.app, []string{restic.VolumeMount(vol, v, false)}, restic.VolumePath(v)); err != nil {
-				return err
+			backedUp := slices.Contains(m.BackedUpVolumes(), v)
+			if backedUp {
+				if _, err := rs.Restore(ctx, h.Snapshot, x.app, []string{restic.VolumeMount(vol, v, false)}, restic.VolumePath(v)); err != nil {
+					return err
+				}
 			}
 			record.RestoredVolumes[v] = true
 			if err := saveMigration(x.r.Store.Path(), record); err != nil {
 				return err
 			}
-			fmt.Fprintf(out, "%s restored from exact final snapshot %s\n", v, short(h.Snapshot))
+			if backedUp {
+				fmt.Fprintf(out, "%s restored from exact final snapshot %s\n", v, short(h.Snapshot))
+			} else {
+				fmt.Fprintf(out, "volume %s created empty: backup: false leaves it out of backups\n", v)
+			}
 		}
 		return nil
 	}}

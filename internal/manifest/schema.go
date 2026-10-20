@@ -140,6 +140,7 @@ func (g *schemaGenerator) constrain() {
 	g.describe("Manifest", "description", "One line about what this app is for.")
 	g.describe("Manifest", "owner", "Who owns the app, such as personal or a business name.")
 	g.describe("Manifest", "repo", "Where the app's source lives.")
+	g.describe("Volume", "backup", "false leaves the volume out of backups, for caches and copies the app rebuilds or fetches again; a restore, drill or move creates it empty. Default true.")
 	g.prop("ReleasePolicy", "data_compatibility")["enum"] = []string{DataBackwardCompatible, DataRestoreRequired}
 	g.describe("ReleasePolicy", "data_compatibility", "Whether older code can use data changed by release jobs; restore-required blocks rollback until a compatible checkpoint is restored.")
 

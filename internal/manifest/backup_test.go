@@ -86,3 +86,84 @@ backup:
 		}
 	}
 }
+
+const optOutApp = `app: notes
+workloads:
+  web:
+    kind: web
+    image: example.test/notes:1
+    port: 3000
+    routes:
+      - host: notes.example.com
+data:
+  volumes:
+    state: {}
+    scratch:
+      backup: false
+`
+
+// A volume marked backup: false is left out of the app's backups; every
+// other volume, and the object store's, stays in.
+func TestAVolumeMarkedBackupFalseIsLeftOutOfBackups(t *testing.T) {
+	m, err := Parse([]byte(optOutApp))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := m.BackedUpVolumes(); strings.Join(got, ",") != "state" {
+		t.Fatalf("backed up volumes are %v, want state", got)
+	}
+	if got := m.VolumesOutOfBackups(); strings.Join(got, ",") != "scratch" {
+		t.Fatalf("volumes out of backups are %v, want scratch", got)
+	}
+	if got := m.DataVolumes(); strings.Join(got, ",") != "scratch,state" {
+		t.Fatalf("data volumes are %v, want both", got)
+	}
+	if !m.Data.Volumes["state"].InBackups() || m.Data.Volumes["scratch"].InBackups() {
+		t.Fatal("only scratch is out of backups")
+	}
+	withObjects, err := Parse([]byte(optOutApp + "  objects: {}\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := withObjects.BackedUpVolumes(); strings.Join(got, ",") != "objects,state" {
+		t.Fatalf("backed up volumes with an object store are %v", got)
+	}
+	explicit, err := Parse([]byte(strings.Replace(optOutApp, "state: {}", "state:\n      backup: true", 1)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := explicit.BackedUpVolumes(); strings.Join(got, ",") != "state" {
+		t.Fatalf("backup: true keeps a volume in backups: %v", got)
+	}
+}
+
+// The database is always backed up, and a backup that would hold nothing
+// is backup.off by another name.
+func TestLeavingTheDatabaseOrEveryVolumeOutOfBackupsFailsValidation(t *testing.T) {
+	for _, c := range []struct {
+		name, manifest, want string
+	}{
+		{"the database's volume", strings.Replace(optOutApp, "data:\n", "data:\n  postgres: {}\n", 1) + "    postgres:\n      backup: false\n",
+			"data.volumes.postgres.backup: helios always backs up the app's database; it can't be left out"},
+		{"every volume", strings.Replace(optOutApp, "state: {}", "state:\n      backup: false", 1),
+			"data.volumes.scratch.backup: false leaves no data in the app's backups; to back up none of it, set backup.off: true instead"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			if _, err := Parse([]byte(c.manifest)); err == nil || !strings.Contains(err.Error(), c.want) {
+				t.Fatalf("got %v, want %q", err, c.want)
+			}
+		})
+	}
+	for _, c := range []struct {
+		name, manifest string
+	}{
+		{"every volume of an app with a database", strings.Replace(strings.Replace(optOutApp, "state: {}", "state:\n      backup: false", 1), "data:\n", "data:\n  postgres: {}\n", 1)},
+		{"every volume of an app whose backups are off", strings.Replace(optOutApp, "state: {}", "state:\n      backup: false", 1) + "backup:\n  off: true\n"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			if _, err := Parse([]byte(c.manifest)); err != nil {
+				t.Fatalf("%s is valid: %v", c.name, err)
+			}
+		})
+	}
+}

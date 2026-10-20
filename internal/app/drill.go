@@ -9,6 +9,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -155,7 +156,7 @@ func (dr Drill) Plan(ctx context.Context, raw json.RawMessage) (*kernel.Plan, er
 		advice: drillAdvice(in.App)}
 	plan := &kernel.Plan{Target: in.App, Recovery: kernel.Resume}
 	plan.Steps = append(plan.Steps, d.restoreStep())
-	if len(d.names.volumes) > 0 {
+	if len(m.BackedUpVolumes()) > 0 {
 		plan.Steps = append(plan.Steps, d.sqliteStep())
 	}
 	// The scratch services answer, on the drill's own network, to the
@@ -177,7 +178,7 @@ func (dr Drill) Plan(ctx context.Context, raw json.RawMessage) (*kernel.Plan, er
 
 func (d *drillState) restoreStep() kernel.Step {
 	return kernel.Step{
-		Name: "restore", Change: fmt.Sprintf("restore snapshot %s into scratch volumes beside the app", d.snapshot),
+		Name: "restore", Change: fmt.Sprintf("restore snapshot %s into scratch volumes beside the app", d.snapshot) + startsEmpty(&d.m),
 		Apply: func(ctx context.Context, out io.Writer) error {
 			d.started = time.Now().UTC()
 			if err := d.run.begin(ctx); err != nil {
@@ -199,12 +200,14 @@ func (d *drillState) restoreStep() kernel.Step {
 			if d.found, err = d.pick(ctx, r); err != nil {
 				return d.abort(e, err)
 			}
-			mounts := []string{restic.DirMount(d.names.dir, false)}
 			for _, v := range sortedKeys(d.names.volumes) {
-				if err := os.MkdirAll(filepath.Join(d.names.dir, "volumes", v), 0o700); err != nil {
+				if err := e.EnsureVolume(ctx, d.names.volumes[v]); err != nil {
 					return d.abort(e, err)
 				}
-				if err := e.EnsureVolume(ctx, d.names.volumes[v]); err != nil {
+			}
+			mounts := []string{restic.DirMount(d.names.dir, false)}
+			for _, v := range d.m.BackedUpVolumes() {
+				if err := os.MkdirAll(filepath.Join(d.names.dir, "volumes", v), 0o700); err != nil {
 					return d.abort(e, err)
 				}
 				mounts = append(mounts, restic.VolumeMount(d.names.volumes[v], v, false))
@@ -218,8 +221,26 @@ func (d *drillState) restoreStep() kernel.Step {
 			}
 			d.details = append(d.details, fmt.Sprintf("%d files (%s) restored", d.restored.FilesRestored, HumanBytes(d.restored.BytesRestored)))
 			fmt.Fprintf(out, "snapshot %s from %s: %s\n", d.found.ShortID, d.found.Time.Local().Format("2006-01-02 15:04"), d.details[0])
+			for _, v := range d.m.VolumesOutOfBackups() {
+				d.details = append(d.details, "volume "+v+" created empty")
+				fmt.Fprintf(out, "volume %s created empty: backup: false leaves it out of backups\n", v)
+			}
 			return nil
 		},
+	}
+}
+
+// startsEmpty names the scratch volumes a drill creates empty, for its
+// plan; with none, it is empty and the plan reads as it always has.
+func startsEmpty(m *manifest.Manifest) string {
+	out := m.VolumesOutOfBackups()
+	switch len(out) {
+	case 0:
+		return ""
+	case 1:
+		return "; volume " + out[0] + " starts empty (backup: false)"
+	default:
+		return "; volumes " + strings.Join(out, ", ") + " start empty (backup: false)"
 	}
 }
 
@@ -233,7 +254,7 @@ func (d *drillState) checkSpace(ctx context.Context, e *docker.Engine, r restore
 		return err
 	}
 	paths := []string{d.names.dir}
-	for _, v := range sortedKeys(d.names.volumes) {
+	for _, v := range d.m.BackedUpVolumes() {
 		dir, err := e.VolumeMountpoint(ctx, d.names.volumes[v])
 		if err != nil {
 			return fmt.Errorf("finding scratch volume %s: %w", v, err)
@@ -319,7 +340,7 @@ func (d *drillState) sqliteStep() kernel.Step {
 			defer e.Close()
 			var checked, uncheckable []string
 			unchecked := 0
-			for _, v := range sortedKeys(d.names.volumes) {
+			for _, v := range d.m.BackedUpVolumes() {
 				dir, err := e.VolumeMountpoint(ctx, d.names.volumes[v])
 				if err != nil {
 					return d.abort(e, fmt.Errorf("finding scratch volume %s: %w", v, err))
@@ -599,6 +620,15 @@ func (d *drillState) startScratch(ctx context.Context, e *docker.Engine, name st
 	u, err := isolate(ctx, e, &spec, w, image)
 	if err != nil {
 		return err
+	}
+	// A volume left out of backups starts empty and Docker's, as on a
+	// restored machine, where a deploy gives it to the workload's user.
+	for _, mt := range w.Mounts {
+		if slices.Contains(d.m.VolumesOutOfBackups(), mt.Volume) {
+			if _, err := e.EnsureVolumeOwner(ctx, d.names.volumes[mt.Volume], u); err != nil {
+				return err
+			}
+		}
 	}
 	mountpoint := func(volume string) (string, error) { return e.VolumeMountpoint(ctx, volume) }
 	if err := restoredWritable(name, w, u, d.names.volumes, mountpoint); err != nil {

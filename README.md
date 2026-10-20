@@ -469,6 +469,26 @@ that were running, with the object store first. Retention runs after service is
 restored. A forced shutdown aborts the capture instead of certifying an
 inconsistent snapshot.
 
+A volume the app rebuilds or fetches again, such as a cache, build output or a
+local copy of data kept elsewhere, can stay out of its backups:
+
+```yaml
+data:
+  volumes:
+    state: {}
+    cache:
+      backup: false
+```
+
+The backup's plan names each volume it leaves out. Such a volume is empty after
+every restore, drill and move: Helios creates it with nothing in it and says so,
+and a drill gives it to its workload's user as a deploy does. Keep anything the
+app can't rebuild in a volume that is backed up. A release's safety checkpoint
+still copies every volume, so a rollback puts each back as it was. The
+PostgreSQL dump is always backed up, and leaving out every volume of an app
+with no database fails validation; to back up none of it, set `backup.off:
+true` instead.
+
 Every restic call a backup makes has a limit, so one stuck call can't hold the
 machine's operations: opening the repository and clearing stale locks 5
 minutes each, a machine backup's upload 2 hours, forgetting old snapshots 15

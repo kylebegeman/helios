@@ -765,6 +765,17 @@
     "Volume": {
       "additionalProperties": false,
       "properties": {
+        "backup": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "false leaves the volume out of backups, for caches and copies the app rebuilds or fetches again; a restore, drill or move creates it empty. Default true."
+        },
         "description": {
           "type": "string"
         }

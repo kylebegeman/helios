@@ -228,24 +228,47 @@ func (x *restoring) volumesStep() kernel.Step {
 				if !empty {
 					return x.run.fail(fmt.Errorf("volume %s already has files; a restore is for an empty volume", v))
 				}
-				mounts = append(mounts, restic.VolumeMount(vol, v, false))
+			}
+			for _, v := range mf.BackedUpVolumes() {
+				mounts = append(mounts, restic.VolumeMount(docker.VolumeName(x.app, v), v, false))
 				includes = append(includes, restic.VolumePath(v))
 			}
-			rs, _, err := openRepo(x.r.Secrets, e, x.app, x.app, nil)
-			if err != nil {
-				return x.run.fail(err)
+			if len(mounts) > 0 {
+				rs, _, err := openRepo(x.r.Secrets, e, x.app, x.app, nil)
+				if err != nil {
+					return x.run.fail(err)
+				}
+				if err := x.checkVolumesSpace(ctx, e, rs, mf.BackedUpVolumes(), out); err != nil {
+					return x.run.fail(err)
+				}
+				sum, err := rs.Restore(ctx, x.id(), x.app, mounts, includes...)
+				if err != nil {
+					return x.run.fail(err)
+				}
+				fmt.Fprintf(out, "%d volume(s) restored: %d files, %s\n", len(mounts), sum.FilesRestored, HumanBytes(sum.BytesRestored))
 			}
-			if err := x.checkVolumesSpace(ctx, e, rs, mf.DataVolumes(), out); err != nil {
-				return x.run.fail(err)
-			}
-			sum, err := rs.Restore(ctx, x.id(), x.app, mounts, includes...)
-			if err != nil {
-				return x.run.fail(err)
-			}
-			fmt.Fprintf(out, "%d volume(s) restored: %d files, %s\n", len(mounts), sum.FilesRestored, HumanBytes(sum.BytesRestored))
+			createdEmpty(out, mf)
 			return nil
 		},
 	}
+}
+
+// createdEmpty says which volumes a restore made without restoring
+// anything into them, because the app's backups leave them out.
+func createdEmpty(out io.Writer, m *manifest.Manifest) {
+	for _, v := range m.VolumesOutOfBackups() {
+		fmt.Fprintf(out, "volume %s created empty: backup: false leaves it out of backups\n", v)
+	}
+}
+
+// createdEmptyNote names the volumes a restore created empty, for its
+// record; with none, it is empty.
+func createdEmptyNote(m *manifest.Manifest) string {
+	var note string
+	for _, v := range m.VolumesOutOfBackups() {
+		note += "; volume " + v + " created empty"
+	}
+	return note
 }
 
 // resolve finds the snapshot fetched by id with the summary its backup
@@ -387,6 +410,9 @@ func (x *restoring) doneStep() kernel.Step {
 		Name: "done", Change: "record the restore; the app is ready to deploy",
 		Apply: func(ctx context.Context, out io.Writer) error {
 			result := state.BackupRun{Detail: "data restored; deploy the app to run it"}
+			if mf, err := x.manifest(); err == nil {
+				result.Detail = "data restored" + createdEmptyNote(mf) + "; deploy the app to run it"
+			}
 			if x.snapshot != nil {
 				result.Snapshot, result.SnapshotAt = x.snapshot.ShortID, x.snapshot.Time
 			} else {
