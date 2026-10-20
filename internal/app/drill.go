@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -147,6 +148,9 @@ func (dr Drill) Plan(ctx context.Context, raw json.RawMessage) (*kernel.Plan, er
 		run: &backupRun{store: dr.Store, app: in.App, kind: state.BackupRunDrill}, names: newDrillNames(dr.StateDir, &m)}
 	plan := &kernel.Plan{Target: in.App, Recovery: kernel.Resume}
 	plan.Steps = append(plan.Steps, d.restoreStep())
+	if len(d.names.volumes) > 0 {
+		plan.Steps = append(plan.Steps, d.sqliteStep())
+	}
 	// The scratch services answer, on the drill's own network, to the
 	// names the app's services have on the app's: the app's secrets,
 	// DATABASE_URL and every derived URL included, work unchanged against
@@ -198,6 +202,9 @@ func (d *drillState) restoreStep() kernel.Step {
 				}
 				mounts = append(mounts, restic.VolumeMount(d.names.volumes[v], v, false))
 			}
+			if err := d.checkSpace(ctx, e, r); err != nil {
+				return d.abort(e, err)
+			}
 			d.restored, err = r.Restore(ctx, d.found.ID, d.app, mounts)
 			if err != nil {
 				return d.abort(e, err)
@@ -207,6 +214,48 @@ func (d *drillState) restoreStep() kernel.Step {
 			return nil
 		},
 	}
+}
+
+// checkSpace refuses a restore that would leave less than the reserve
+// free on the disk under the drill's files or any of its scratch volumes:
+// a drill that fills the disk takes the running app down with it.
+func (d *drillState) checkSpace(ctx context.Context, e *docker.Engine, r restoreSizer) error {
+	need, err := snapshotSize(ctx, r, d.found, d.app)
+	if err != nil {
+		return err
+	}
+	paths := []string{d.names.dir}
+	for _, v := range sortedKeys(d.names.volumes) {
+		dir, err := e.VolumeMountpoint(ctx, d.names.volumes[v])
+		if err != nil {
+			return fmt.Errorf("finding scratch volume %s: %w", v, err)
+		}
+		paths = append(paths, dir)
+	}
+	if err := checkRestoreSpace(paths, need, restoreFreeReserve); err != nil {
+		return fmt.Errorf("snapshot %s: %w; free space or skip this drill", short(d.found.ID), err)
+	}
+	return nil
+}
+
+// restoreSizer counts what restoring a snapshot writes. restic.Runner is
+// one.
+type restoreSizer interface {
+	RestoreSize(ctx context.Context, snapshot, host string) (int64, error)
+}
+
+// snapshotSize is how many bytes restoring a snapshot writes: what its
+// backup recorded reading, or restic's count of its tree when the snapshot
+// doesn't say. Without either, nothing is restored.
+func snapshotSize(ctx context.Context, r restoreSizer, s *restic.Snapshot, host string) (int64, error) {
+	if s.Summary != nil && s.Summary.TotalBytes > 0 {
+		return s.Summary.TotalBytes, nil
+	}
+	n, err := r.RestoreSize(ctx, s.ID, host)
+	if err != nil {
+		return 0, fmt.Errorf("counting what snapshot %s restores: %w", short(s.ID), err)
+	}
+	return n, nil
 }
 
 // pick finds the snapshot the drill restores: the latest, or the one
@@ -224,6 +273,125 @@ func (d *drillState) pick(ctx context.Context, r restic.Runner) (*restic.Snapsho
 		return nil, err
 	}
 	return resolveRecoverySnapshot(snaps, d.snapshot)
+}
+
+// sqliteMax is how many SQLite databases one drill checks. The rest are
+// counted in the drill's record, unchecked.
+const sqliteMax = 64
+
+// sqliteNamed is how many checked databases the drill's record names.
+const sqliteNamed = 3
+
+func (d *drillState) sqliteStep() kernel.Step {
+	return kernel.Step{
+		Name: "sqlite", Change: "run an integrity check on every SQLite database in the scratch volumes",
+		Apply: func(ctx context.Context, out io.Writer) error {
+			e, err := docker.Connect(ctx)
+			if err != nil {
+				return d.run.fail(err)
+			}
+			defer e.Close()
+			var checked []string
+			unchecked := 0
+			for _, v := range sortedKeys(d.names.volumes) {
+				dir, err := e.VolumeMountpoint(ctx, d.names.volumes[v])
+				if err != nil {
+					return d.abort(e, fmt.Errorf("finding scratch volume %s: %w", v, err))
+				}
+				found, err := sqliteFiles(dir)
+				if err != nil {
+					return d.abort(e, fmt.Errorf("looking for SQLite databases in volume %s: %w", v, err))
+				}
+				for _, file := range found {
+					if len(checked) == sqliteMax {
+						unchecked++
+						continue
+					}
+					where := fmt.Sprintf("%s in volume %s", file, v)
+					problems, err := state.IntegrityCheck(ctx, filepath.Join(dir, file))
+					if err != nil {
+						return d.abort(e, fmt.Errorf("the restored SQLite database %s won't open: %w", where, err))
+					}
+					if len(problems) > 0 {
+						return d.abort(e, fmt.Errorf("the restored SQLite database %s is corrupt: %s", where, strings.Join(problems, "; ")))
+					}
+					checked = append(checked, where)
+				}
+			}
+			detail := sqliteDetail(checked, unchecked)
+			d.details = append(d.details, detail)
+			fmt.Fprintln(out, detail)
+			return nil
+		},
+	}
+}
+
+// sqliteDetail sums up a drill's SQLite checks for its record.
+func sqliteDetail(checked []string, unchecked int) string {
+	var b strings.Builder
+	switch len(checked) {
+	case 0:
+		b.WriteString("no SQLite databases")
+	case 1:
+		b.WriteString("1 SQLite database intact (" + checked[0])
+	default:
+		fmt.Fprintf(&b, "%d SQLite databases intact (%s", len(checked), strings.Join(checked[:min(len(checked), sqliteNamed)], ", "))
+		if len(checked) > sqliteNamed {
+			fmt.Fprintf(&b, " and %d more", len(checked)-sqliteNamed)
+		}
+	}
+	if len(checked) > 0 {
+		b.WriteString(")")
+	}
+	if unchecked > 0 {
+		fmt.Fprintf(&b, "; %d more past the first %d not checked", unchecked, sqliteMax)
+	}
+	return b.String()
+}
+
+// sqliteHeader starts every SQLite database file.
+const sqliteHeader = "SQLite format 3\x00"
+
+// sqliteFiles finds the SQLite databases under dir, by their header, as
+// paths relative to it, sorted. It follows no links, and leaves out the
+// logs and journals beside a database, which SQLite reads with it.
+func sqliteFiles(dir string) ([]string, error) {
+	root, err := os.OpenRoot(dir)
+	if err != nil {
+		return nil, err
+	}
+	defer root.Close()
+	var found []string
+	err = fs.WalkDir(root.FS(), ".", func(path string, entry fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if !entry.Type().IsRegular() {
+			return nil
+		}
+		for _, suffix := range []string{"-wal", "-shm", "-journal"} {
+			if strings.HasSuffix(path, suffix) {
+				return nil
+			}
+		}
+		f, err := root.Open(filepath.FromSlash(path))
+		if err != nil {
+			return err
+		}
+		defer f.Close()
+		header := make([]byte, len(sqliteHeader))
+		if _, err := io.ReadFull(f, header); err != nil {
+			if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
+				return nil
+			}
+			return err
+		}
+		if string(header) == sqliteHeader {
+			found = append(found, filepath.FromSlash(path))
+		}
+		return nil
+	})
+	return found, err
 }
 
 func (d *drillState) databaseStep() kernel.Step {

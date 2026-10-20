@@ -92,6 +92,15 @@ func TestResticRunsAgainstARealRepository(t *testing.T) {
 	if _, err := r.run(ctx, withRepo(), "prune", "--max-repack-size", PruneMaxRepack); err != nil {
 		t.Fatalf("prune: %v", err)
 	}
+	// RestoreSize runs without mounts too; this is its command, and the
+	// count is the one file's five bytes.
+	stats, err := r.run(ctx, withRepo(), "stats", summary.SnapshotID, "--mode", "restore-size", "--json")
+	if err != nil {
+		t.Fatalf("stats: %v", err)
+	}
+	if size, err := restoreSize(stats); err != nil || size != int64(len("kept\n")) {
+		t.Fatalf("restore size %d, %v from %v", size, err, stats)
+	}
 	if _, err := r.Restore(ctx, summary.SnapshotID, "box", withRepo(DirMount(restored, false))); err != nil {
 		t.Fatalf("restore: %v", err)
 	}

@@ -531,6 +531,40 @@ func (r Runner) Restore(ctx context.Context, snapshot, host string, mounts []str
 	return nil, errors.New("restic restore: no summary in the output")
 }
 
+// StatsTimeout bounds a restore-size count, which walks the snapshot's
+// whole tree but reads none of its file contents.
+const StatsTimeout = 30 * time.Minute
+
+// RestoreSize is how many bytes restoring a snapshot writes, as restic
+// counts them from the snapshot's tree.
+func (r Runner) RestoreSize(ctx context.Context, snapshot, host string) (int64, error) {
+	args := []string{"stats", snapshot, "--mode", "restore-size", "--json"}
+	if snapshot == "latest" {
+		args = append(args, "--host", host, "--tag", Tag)
+	}
+	lines, err := r.bounded(ctx, StatsTimeout, nil, args...)
+	if err != nil {
+		return 0, err
+	}
+	return restoreSize(lines)
+}
+
+// restoreSize reads what restic stats --mode restore-size --json printed.
+func restoreSize(lines []string) (int64, error) {
+	for i := len(lines) - 1; i >= 0; i-- {
+		var s struct {
+			TotalSize *int64 `json:"total_size"`
+		}
+		if json.Unmarshal([]byte(lines[i]), &s) == nil && s.TotalSize != nil {
+			if *s.TotalSize < 0 {
+				return 0, fmt.Errorf("restic stats: a restore size of %d bytes", *s.TotalSize)
+			}
+			return *s.TotalSize, nil
+		}
+	}
+	return 0, errors.New("restic stats: no restore size in the output")
+}
+
 // VolumeMount mounts a volume where a named volume lives in the tree.
 func VolumeMount(volume, name string, readOnly bool) string {
 	m := volume + ":" + DataRoot + "/volumes/" + name

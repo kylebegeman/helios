@@ -39,6 +39,18 @@ func moveRestoreVolumes(x *restoring, h Handoff, revision string) kernel.Step {
 		if err != nil {
 			return err
 		}
+		if len(record.RestoringVolumes) == 0 && len(record.RestoredVolumes) == 0 {
+			// Before any volume has begun, the whole restore must fit; once
+			// one has, part of it is on the disk already.
+			for _, v := range m.DataVolumes() {
+				if err := e.EnsureVolume(ctx, docker.VolumeName(x.app, v)); err != nil {
+					return err
+				}
+			}
+			if err := x.checkVolumesSpace(ctx, e, rs, m.DataVolumes(), out); err != nil {
+				return err
+			}
+		}
 		for _, v := range m.DataVolumes() {
 			if record.RestoredVolumes[v] {
 				continue

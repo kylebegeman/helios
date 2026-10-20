@@ -15,6 +15,8 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
@@ -81,8 +83,11 @@ type Server struct {
 	volumes         map[string]map[string]string
 	networks        map[string]map[string]string
 	networkInternal map[string]bool
-	calls           []string
-	next            int
+	// volumeRoot is where every volume's files live, each in a directory
+	// named for it, as Docker's local driver keeps them under its own.
+	volumeRoot string
+	calls      []string
+	next       int
 	// OnCreate, when set, sees each container as it is created, before the
 	// response, while whatever it was created from still exists.
 	OnCreate func(c Container)
@@ -92,7 +97,7 @@ type Server struct {
 // Docker client's environment at it.
 func New(t *testing.T) *Server {
 	t.Helper()
-	s := &Server{containers: map[string]*Container{}, volumes: map[string]map[string]string{}, networks: map[string]map[string]string{}, networkInternal: map[string]bool{}}
+	s := &Server{containers: map[string]*Container{}, volumes: map[string]map[string]string{}, networks: map[string]map[string]string{}, networkInternal: map[string]bool{}, volumeRoot: t.TempDir()}
 	srv := httptest.NewServer(s)
 	t.Cleanup(srv.Close)
 	t.Setenv("DOCKER_HOST", "tcp"+strings.TrimPrefix(srv.URL, "http"))
@@ -145,6 +150,12 @@ func (s *Server) AddVolume(name string, labels map[string]string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.volumes[name] = labels
+}
+
+// VolumeDir is where a volume's files live: its mountpoint, as inspect
+// reports it.
+func (s *Server) VolumeDir(name string) string {
+	return filepath.Join(s.volumeRoot, name)
 }
 
 // AddNetwork puts a network on the stand-in, with the labels it was made with.
@@ -263,7 +274,21 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.mu.Unlock()
 		writeJSON(w, http.StatusCreated, map[string]any{"Id": "n1"})
 	case path == "/volumes/create":
-		writeJSON(w, http.StatusCreated, map[string]any{"Name": "v1"})
+		var body struct {
+			Name   string
+			Labels map[string]string
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.Name == "" {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"message": "a volume needs a name"})
+			return
+		}
+		// Creating a volume that exists leaves it as it was, as Docker does.
+		s.mu.Lock()
+		if _, ok := s.volumes[body.Name]; !ok {
+			s.volumes[body.Name] = body.Labels
+		}
+		s.mu.Unlock()
+		writeJSON(w, http.StatusCreated, map[string]any{"Name": body.Name, "Driver": "local", "Labels": body.Labels, "Mountpoint": s.VolumeDir(body.Name)})
 	case path == "/volumes" && r.Method == http.MethodGet:
 		s.mu.Lock()
 		items := []map[string]any{}
@@ -272,10 +297,30 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		s.mu.Unlock()
 		writeJSON(w, http.StatusOK, map[string]any{"Volumes": items, "Warnings": []string{}})
-	case strings.HasPrefix(path, "/volumes/") && r.Method == http.MethodDelete:
+	case strings.HasPrefix(path, "/volumes/") && r.Method == http.MethodGet:
+		name := strings.TrimPrefix(path, "/volumes/")
 		s.mu.Lock()
-		delete(s.volumes, strings.TrimPrefix(path, "/volumes/"))
+		labels, ok := s.volumes[name]
 		s.mu.Unlock()
+		if !ok {
+			writeJSON(w, http.StatusNotFound, map[string]string{"message": "get " + name + ": no such volume"})
+			return
+		}
+		dir := s.VolumeDir(name)
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"message": err.Error()})
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"Name": name, "Driver": "local", "Labels": labels, "Mountpoint": dir})
+	case strings.HasPrefix(path, "/volumes/") && r.Method == http.MethodDelete:
+		name := strings.TrimPrefix(path, "/volumes/")
+		s.mu.Lock()
+		delete(s.volumes, name)
+		s.mu.Unlock()
+		if err := os.RemoveAll(s.VolumeDir(name)); err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"message": err.Error()})
+			return
+		}
 		w.WriteHeader(http.StatusNoContent)
 	default:
 		w.WriteHeader(http.StatusNoContent)

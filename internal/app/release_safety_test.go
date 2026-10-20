@@ -273,6 +273,7 @@ func TestCheckpointRestoreRetainsAuthorityHistoryAndReplaysPartialDataUnderFence
 	store.BeginReleaseBoundary(ctx, boundary)
 	store.FinishReleaseBoundary(ctx, m.App, current.ID, state.ReleaseFailed, "partial writes", now.Add(2*time.Minute))
 	fake := dockertest.New(t)
+	roomToRestore(t)
 	fake.Add(dockertest.Container{Name: "old-live", Running: true, Labels: map[string]string{docker.LabelOwner: docker.OwnerValue, docker.LabelApp: m.App, docker.LabelWorkload: "web"}})
 	fake.Add(dockertest.Container{Name: "unrelated-live", Running: true, Labels: map[string]string{docker.LabelOwner: docker.OwnerValue, docker.LabelApp: "other", docker.LabelWorkload: "web"}})
 	fake.AddVolume(docker.VolumeName(m.App, "files"), map[string]string{docker.LabelOwner: docker.OwnerValue})
@@ -291,6 +292,8 @@ func TestCheckpointRestoreRetainsAuthorityHistoryAndReplaysPartialDataUnderFence
 			switch c.Cmd[0] {
 			case "snapshots":
 				c.Logs = `[{"id":"` + snapshot + `","short_id":"aaaaaaaa","time":"2026-10-10T00:00:00Z"}]`
+			case "stats":
+				c.Logs = `{"total_size":12,"total_file_count":1,"snapshots_count":1}`
 			case "restore":
 				staging := ""
 				for _, bind := range c.HostConfig.Binds {

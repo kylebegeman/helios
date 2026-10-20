@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -234,6 +235,9 @@ func (x *restoring) volumesStep() kernel.Step {
 			if err != nil {
 				return x.run.fail(err)
 			}
+			if err := x.checkVolumesSpace(ctx, e, rs, mf.DataVolumes(), out); err != nil {
+				return x.run.fail(err)
+			}
 			sum, err := rs.Restore(ctx, x.id(), x.app, mounts, includes...)
 			if err != nil {
 				return x.run.fail(err)
@@ -242,6 +246,66 @@ func (x *restoring) volumesStep() kernel.Step {
 			return nil
 		},
 	}
+}
+
+// checkVolumesSpace refuses a restore of the snapshot's volumes that won't
+// fit on the disk under them, and otherwise says what that disk keeps
+// free. The volumes must exist.
+func (x *restoring) checkVolumesSpace(ctx context.Context, e *docker.Engine, r restoreSizer, volumes []string, out io.Writer) error {
+	if len(volumes) == 0 {
+		return nil
+	}
+	need, err := x.volumesNeed(ctx, r)
+	if err != nil {
+		return err
+	}
+	var paths []string
+	for _, v := range volumes {
+		dir, err := e.VolumeMountpoint(ctx, docker.VolumeName(x.app, v))
+		if err != nil {
+			return fmt.Errorf("finding volume %s: %w", v, err)
+		}
+		paths = append(paths, dir)
+	}
+	if err := checkRestoreSpace(paths, need, 0); err != nil {
+		return fmt.Errorf("snapshot %s: %w; free space on this machine and try again", short(x.id()), err)
+	}
+	if left := spaceLeft(paths[0], need); left != "" {
+		fmt.Fprintln(out, left)
+	}
+	return nil
+}
+
+// volumesNeed is how many bytes restoring the snapshot's volumes writes:
+// the whole snapshot, less what fetch already staged from it.
+func (x *restoring) volumesNeed(ctx context.Context, r restoreSizer) (int64, error) {
+	s := x.snapshot
+	if s == nil {
+		s = &restic.Snapshot{ID: x.id()}
+	}
+	total, err := snapshotSize(ctx, r, s, x.app)
+	if err != nil {
+		return 0, err
+	}
+	var staged int64
+	err = filepath.WalkDir(x.staging, func(path string, entry fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if !entry.Type().IsRegular() || path == filepath.Join(x.staging, "restore-snapshot.json") {
+			return nil
+		}
+		info, err := entry.Info()
+		if err != nil {
+			return err
+		}
+		staged += info.Size()
+		return nil
+	})
+	if err != nil {
+		return 0, fmt.Errorf("measuring the staged snapshot: %w", err)
+	}
+	return max(total-staged, 0), nil
 }
 
 func (x *restoring) databaseStep() kernel.Step {
