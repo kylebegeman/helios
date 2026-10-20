@@ -287,6 +287,18 @@ func TestAJournalThatCantBeReadSaysWhatToDo(t *testing.T) {
 	}
 }
 
+// Asked why a read found nothing, journalctl must print none of the
+// journal, which for root is all of it.
+func TestAskingWhyAReadFoundNothingReadsNoneOfTheJournal(t *testing.T) {
+	fake := &fakeJournal{}
+	if _, err := fake.journal().Read(context.Background(), JournalQuery{Names: []string{"bedrock-hello-web-r1"}}); err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"--no-pager", "--output=short", "--lines=0"}; !slices.Equal(fake.args, want) {
+		t.Fatalf("asked %q, want %q", fake.args, want)
+	}
+}
+
 func TestJournalctlKeepsNoMoreThan64KiBOfWhatItSaysOnStderr(t *testing.T) {
 	fakeJournalctl(t, "s=x; for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17; do s=$s$s; done\nprintf %s \"$s\" >&2\nexit 1\n")
 	_, err := Journal{}.Read(context.Background(), JournalQuery{Names: []string{"bedrock-hello-web-r1"}})
