@@ -67,7 +67,16 @@ func CertificateReady(ctx context.Context, host, addr string) (bool, string) {
 func Certificate(ctx context.Context, host, addr string) (ready bool, why string, expiry time.Time, found bool) {
 	dialer := &tls.Dialer{
 		NetDialer: &net.Dialer{Timeout: 5 * time.Second},
-		Config:    &tls.Config{ServerName: host, InsecureSkipVerify: true}, //nolint:gosec // we inspect the certificate ourselves
+		Config: &tls.Config{
+			ServerName:         host,
+			InsecureSkipVerify: true, //nolint:gosec // we inspect the certificate ourselves
+			// A host that requires an origin-pull certificate refuses
+			// this probe, which has none. Under TLS 1.3 the refusal comes
+			// after the handshake has given us the server's certificate;
+			// under TLS 1.2 it comes first, and there would be nothing to
+			// read.
+			MinVersion: tls.VersionTLS13,
+		},
 	}
 	conn, err := dialer.DialContext(ctx, "tcp", addr)
 	if err != nil {

@@ -1,0 +1,434 @@
+{
+  "admin": {
+    "config": {
+      "persist": false
+    },
+    "listen": "unix//run/bedrock/caddy.sock"
+  },
+  "apps": {
+    "http": {
+      "metrics": {
+        "per_host": true
+      },
+      "servers": {
+        "bedrock": {
+          "client_ip_headers": [
+            "CF-Connecting-IP",
+            "X-Forwarded-For"
+          ],
+          "listen": [
+            ":80",
+            ":443"
+          ],
+          "logs": {},
+          "routes": [
+            {
+              "handle": [
+                {
+                  "handler": "subroute",
+                  "routes": [
+                    {
+                      "handle": [
+                        {
+                          "handle_response": [
+                            {
+                              "match": {
+                                "headers": {
+                                  "X-Verified": [
+                                    "yes"
+                                  ]
+                                },
+                                "status_code": [
+                                  2
+                                ]
+                              },
+                              "routes": [
+                                {
+                                  "handle": [
+                                    {
+                                      "handler": "reverse_proxy",
+                                      "headers": {
+                                        "request": {
+                                          "set": {
+                                            "X-Forwarded-For": [
+                                              "{http.vars.client_ip}"
+                                            ],
+                                            "X-Real-IP": [
+                                              "{http.vars.client_ip}"
+                                            ]
+                                          }
+                                        }
+                                      },
+                                      "stream_close_delay": "5m",
+                                      "upstreams": [
+                                        {
+                                          "dial": "bedrock-admin-web-abc:8080"
+                                        }
+                                      ]
+                                    }
+                                  ]
+                                }
+                              ]
+                            }
+                          ],
+                          "handler": "reverse_proxy",
+                          "headers": {
+                            "request": {
+                              "set": {
+                                "X-Forwarded-For": [
+                                  "{http.vars.client_ip}"
+                                ],
+                                "X-Forwarded-Host": [
+                                  "{http.request.host}"
+                                ],
+                                "X-Forwarded-Method": [
+                                  "{http.request.method}"
+                                ],
+                                "X-Forwarded-Uri": [
+                                  "{http.request.uri}"
+                                ],
+                                "X-Real-IP": [
+                                  "{http.vars.client_ip}"
+                                ]
+                              }
+                            }
+                          },
+                          "rewrite": {
+                            "method": "GET",
+                            "uri": "/verify"
+                          },
+                          "transport": {
+                            "protocol": "http",
+                            "tls": {
+                              "server_name": "core.example.com"
+                            }
+                          },
+                          "upstreams": [
+                            {
+                              "dial": "core.example.com:443"
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ],
+              "match": [
+                {
+                  "host": [
+                    "admin.example.com"
+                  ]
+                }
+              ],
+              "terminal": true
+            },
+            {
+              "handle": [
+                {
+                  "handler": "subroute",
+                  "routes": [
+                    {
+                      "handle": [
+                        {
+                          "handler": "reverse_proxy",
+                          "headers": {
+                            "request": {
+                              "set": {
+                                "X-Forwarded-For": [
+                                  "{http.vars.client_ip}"
+                                ],
+                                "X-Real-IP": [
+                                  "{http.vars.client_ip}"
+                                ]
+                              }
+                            }
+                          },
+                          "stream_close_delay": "5m",
+                          "upstreams": [
+                            {
+                              "dial": "bedrock-beta-web-abc:8080"
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ],
+              "match": [
+                {
+                  "host": [
+                    "beta.example.com"
+                  ],
+                  "protocol": "https"
+                }
+              ],
+              "terminal": true
+            },
+            {
+              "handle": [
+                {
+                  "handler": "subroute",
+                  "routes": [
+                    {
+                      "handle": [
+                        {
+                          "handler": "reverse_proxy",
+                          "headers": {
+                            "request": {
+                              "set": {
+                                "X-Forwarded-For": [
+                                  "{http.vars.client_ip}"
+                                ],
+                                "X-Real-IP": [
+                                  "{http.vars.client_ip}"
+                                ]
+                              }
+                            }
+                          },
+                          "stream_close_delay": "5m",
+                          "upstreams": [
+                            {
+                              "dial": "bedrock-shop-web-abc:8080"
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ],
+              "match": [
+                {
+                  "host": [
+                    "shop.example.com"
+                  ],
+                  "protocol": "https"
+                }
+              ],
+              "terminal": true
+            },
+            {
+              "handle": [
+                {
+                  "handler": "subroute",
+                  "routes": [
+                    {
+                      "handle": [
+                        {
+                          "handler": "reverse_proxy",
+                          "headers": {
+                            "request": {
+                              "set": {
+                                "X-Forwarded-For": [
+                                  "{http.vars.client_ip}"
+                                ],
+                                "X-Real-IP": [
+                                  "{http.vars.client_ip}"
+                                ]
+                              }
+                            }
+                          },
+                          "stream_close_delay": "5m",
+                          "upstreams": [
+                            {
+                              "dial": "unix//run/bedrock/hooks.sock"
+                            }
+                          ]
+                        }
+                      ],
+                      "match": [
+                        {
+                          "path": [
+                            "/_bedrock/hook",
+                            "/_bedrock/hook/*"
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "handle": [
+                        {
+                          "handler": "reverse_proxy",
+                          "headers": {
+                            "request": {
+                              "set": {
+                                "X-Forwarded-For": [
+                                  "{http.vars.client_ip}"
+                                ],
+                                "X-Real-IP": [
+                                  "{http.vars.client_ip}"
+                                ]
+                              }
+                            }
+                          },
+                          "stream_close_delay": "5m",
+                          "upstreams": [
+                            {
+                              "dial": "bedrock-site-api-abc:9000"
+                            }
+                          ]
+                        }
+                      ],
+                      "match": [
+                        {
+                          "path": [
+                            "/api",
+                            "/api/*"
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "handle": [
+                        {
+                          "handler": "reverse_proxy",
+                          "headers": {
+                            "request": {
+                              "set": {
+                                "X-Forwarded-For": [
+                                  "{http.vars.client_ip}"
+                                ],
+                                "X-Real-IP": [
+                                  "{http.vars.client_ip}"
+                                ]
+                              }
+                            }
+                          },
+                          "stream_close_delay": "5m",
+                          "upstreams": [
+                            {
+                              "dial": "bedrock-site-web-abc:8080"
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ],
+              "match": [
+                {
+                  "host": [
+                    "site.example.com"
+                  ],
+                  "protocol": "https"
+                }
+              ],
+              "terminal": true
+            },
+            {
+              "handle": [
+                {
+                  "handler": "subroute",
+                  "routes": [
+                    {
+                      "handle": [
+                        {
+                          "handler": "reverse_proxy",
+                          "headers": {
+                            "request": {
+                              "set": {
+                                "X-Forwarded-For": [
+                                  "{http.vars.client_ip}"
+                                ],
+                                "X-Real-IP": [
+                                  "{http.vars.client_ip}"
+                                ]
+                              }
+                            }
+                          },
+                          "stream_close_delay": "5m",
+                          "upstreams": [
+                            {
+                              "dial": "bedrock-vault-web-abc:8080"
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ],
+              "match": [
+                {
+                  "host": [
+                    "vault.example.com"
+                  ],
+                  "protocol": "https"
+                }
+              ],
+              "terminal": true
+            }
+          ],
+          "strict_sni_host": true,
+          "tls_connection_policies": [
+            {
+              "client_authentication": {
+                "ca": {
+                  "provider": "inline",
+                  "trusted_ca_certs": [
+                    "MIIBszCCAVmgAwIBAgIQGG/ivpElc70neVAFL3KbFjAKBggqhkjOPQQDAjA4MTYwNAYDVQQDEy1oZWxpb3Mgb3JpZ2luIHB1bGwgdGVzdCBDQSBhIGZvciBleGFtcGxlLnRlc3QwHhcNMjYwMTAxMDAwMDAwWhcNMzYwMTAxMDAwMDAwWjA4MTYwNAYDVQQDEy1oZWxpb3Mgb3JpZ2luIHB1bGwgdGVzdCBDQSBhIGZvciBleGFtcGxlLnRlc3QwWTATBgcqhkjOPQIBBggqhkjOPQMBBwNCAASLa0XEkHRY3JIaUSEBXW0nzkOMYdvuv7eDSKr6/5Q9WVQ8v0gWxyK0NFbxxMYbp6TVrM1uY1spXbIuhQgciW0Co0UwQzAOBgNVHQ8BAf8EBAMCAQYwEgYDVR0TAQH/BAgwBgEB/wIBADAdBgNVHQ4EFgQUhu0ooz2cuRJ8Gx304xMHe9UyUsMwCgYIKoZIzj0EAwIDSAAwRQIhAOTzefnt+hXepLXJVaYeOl2lQ6dYtfAhamJkmH2FPYezAiACcuzAbFV5VXmJSv44ZYdEQZs9E0YspjppnuucA5tv0w=="
+                  ]
+                },
+                "mode": "verify_if_given"
+              },
+              "match": {
+                "sni": [
+                  "shop.example.com"
+                ]
+              }
+            },
+            {
+              "client_authentication": {
+                "ca": {
+                  "provider": "inline",
+                  "trusted_ca_certs": [
+                    "MIIBszCCAVmgAwIBAgIQGG/ivpElc70neVAFL3KbFjAKBggqhkjOPQQDAjA4MTYwNAYDVQQDEy1oZWxpb3Mgb3JpZ2luIHB1bGwgdGVzdCBDQSBhIGZvciBleGFtcGxlLnRlc3QwHhcNMjYwMTAxMDAwMDAwWhcNMzYwMTAxMDAwMDAwWjA4MTYwNAYDVQQDEy1oZWxpb3Mgb3JpZ2luIHB1bGwgdGVzdCBDQSBhIGZvciBleGFtcGxlLnRlc3QwWTATBgcqhkjOPQIBBggqhkjOPQMBBwNCAASLa0XEkHRY3JIaUSEBXW0nzkOMYdvuv7eDSKr6/5Q9WVQ8v0gWxyK0NFbxxMYbp6TVrM1uY1spXbIuhQgciW0Co0UwQzAOBgNVHQ8BAf8EBAMCAQYwEgYDVR0TAQH/BAgwBgEB/wIBADAdBgNVHQ4EFgQUhu0ooz2cuRJ8Gx304xMHe9UyUsMwCgYIKoZIzj0EAwIDSAAwRQIhAOTzefnt+hXepLXJVaYeOl2lQ6dYtfAhamJkmH2FPYezAiACcuzAbFV5VXmJSv44ZYdEQZs9E0YspjppnuucA5tv0w==",
+                    "MIIBszCCAVmgAwIBAgIQX4xklkuKiNIywG6aExnz5DAKBggqhkjOPQQDAjA4MTYwNAYDVQQDEy1oZWxpb3Mgb3JpZ2luIHB1bGwgdGVzdCBDQSBiIGZvciBleGFtcGxlLnRlc3QwHhcNMjYwMTAxMDAwMDAwWhcNMzYwMTAyMDAwMDAwWjA4MTYwNAYDVQQDEy1oZWxpb3Mgb3JpZ2luIHB1bGwgdGVzdCBDQSBiIGZvciBleGFtcGxlLnRlc3QwWTATBgcqhkjOPQIBBggqhkjOPQMBBwNCAAR7h+gTm4oyyvYygvSCaeEu9WEZv/0q28gwkMwB25M7Zls3tbrcx6Y5Snu4/jigzRMKLEPf9MtUEdaA54zwmJdIo0UwQzAOBgNVHQ8BAf8EBAMCAQYwEgYDVR0TAQH/BAgwBgEB/wIBADAdBgNVHQ4EFgQUyZYeKHfQn5+FpTkZWCSd4SQKsZkwCgYIKoZIzj0EAwIDSAAwRQIgC4N2/xrCnFVk+hdv8fI/AFc2/yTF5TNzMZIXIPm9bVkCIQC/68WNU0bUmYIQ4KfQ287UF1z5oW2qBXnAyk0QX+5HKQ=="
+                  ]
+                },
+                "mode": "require_and_verify"
+              },
+              "match": {
+                "sni": [
+                  "site.example.com"
+                ]
+              }
+            },
+            {
+              "drop": true,
+              "match": {
+                "sni": [
+                  "vault.example.com"
+                ]
+              }
+            },
+            {}
+          ],
+          "trusted_proxies": {
+            "ranges": [
+              "192.0.2.0/24",
+              "2001:db8::/32"
+            ],
+            "source": "static"
+          },
+          "trusted_proxies_strict": 1
+        }
+      }
+    }
+  },
+  "logging": {
+    "logs": {
+      "default": {
+        "encoder": {
+          "format": "json"
+        },
+        "writer": {
+          "output": "stdout"
+        }
+      }
+    }
+  }
+}

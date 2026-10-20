@@ -59,3 +59,20 @@ func TestCandidateCompatibilityRejectsUnsupportedDowngradesAndUnsafeMigrations(t
 		t.Fatal("automatic rollback would read a newer schema")
 	}
 }
+
+// A client asks a target for a feature only when the target names it, so a
+// feature this build has but doesn't name is never used remotely.
+func TestCapabilitiesNameEachFeatureOnce(t *testing.T) {
+	seen := map[string]bool{}
+	for _, name := range capabilities {
+		if seen[name] {
+			t.Fatalf("%s is named twice", name)
+		}
+		seen[name] = true
+	}
+	for _, want := range []string{"remote.source.v1", "git.signed.v1", "edge.origin-pull.v1"} {
+		if !seen[want] {
+			t.Fatalf("capabilities lack %s: %v", want, capabilities)
+		}
+	}
+}

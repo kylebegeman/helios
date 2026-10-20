@@ -33,6 +33,10 @@ const (
 	MemoryAvailableMin = 5.0
 	// CertificateWarn is how close to expiry a certificate may get.
 	CertificateWarn = 14 * 24 * time.Hour
+	// OriginPullWarn is how close to expiry an origin-pull CA may get,
+	// longer than CertificateWarn because nothing renews it: a person
+	// mints a new one and uploads it at Cloudflare.
+	OriginPullWarn = 30 * 24 * time.Hour
 	// BackupStale is how old the last good backup may be.
 	BackupStale = 36 * time.Hour
 	// DataCheckEvery is how often a workload's volumes are walked for
@@ -75,6 +79,9 @@ type Prober struct {
 	Root string
 	// CheckSecrets loads only the revision-bound credentials used by checks.
 	CheckSecrets func(app string, version int) (map[string]string, error)
+	// OriginPullTrust reads the CAs the edge's origin-pull hosts trust;
+	// nil leaves origin pull unwatched.
+	OriginPullTrust func() (edge.OriginPullTrust, error)
 	// OperationLockStale overrides how long the operation lock may be
 	// held; zero means OperationLockStale.
 	OperationLockStale time.Duration
@@ -115,6 +122,7 @@ func (p *Prober) Observe(ctx context.Context) []Condition {
 	conditions = append(conditions, p.host()...)
 	conditions = append(conditions, p.operationLock(ctx)...)
 	conditions = append(conditions, p.operatorHolds(ctx)...)
+	conditions = append(conditions, p.originPull(ctx)...)
 	conditions = append(conditions, p.alertTest()...)
 	if why := p.retentionProblem(ctx, manifest.ReservedApp, p.Now()); why != "" {
 		conditions = append(conditions, Condition{Key: "host:backup-retention", Subject: "machine backups", Severity: state.SeverityWarning, Message: why})
@@ -205,22 +213,9 @@ func operatorKey(key string) bool {
 // warns when it is about to end.
 func (p *Prober) operatorHolds(ctx context.Context) []Condition {
 	now := p.Now()
-	unknown := func(prefix string) []Condition {
-		incidents, err := p.Store.OpenIncidents(ctx)
-		if err != nil {
-			return nil
-		}
-		var out []Condition
-		for _, incident := range incidents {
-			if strings.HasPrefix(incident.Key, prefix) {
-				out = append(out, Condition{Key: incident.Key, Unknown: true})
-			}
-		}
-		return out
-	}
 	active, err := p.Store.ActiveRevisions(ctx)
 	if err != nil {
-		return append(unknown("skip:"), unknown("hold:")...)
+		return p.unobserved(ctx, "skip:", "hold:")
 	}
 	var conditions []Condition
 	for _, rev := range active {
@@ -256,6 +251,25 @@ func (p *Prober) operatorHolds(ctx context.Context) []Condition {
 		}
 	}
 	return conditions
+}
+
+// unobserved holds open each incident whose key starts with one of
+// prefixes, for subjects that couldn't be looked at this round.
+func (p *Prober) unobserved(ctx context.Context, prefixes ...string) []Condition {
+	incidents, err := p.Store.OpenIncidents(ctx)
+	if err != nil {
+		return nil
+	}
+	var out []Condition
+	for _, incident := range incidents {
+		for _, prefix := range prefixes {
+			if strings.HasPrefix(incident.Key, prefix) {
+				out = append(out, Condition{Key: incident.Key, Unknown: true})
+				break
+			}
+		}
+	}
+	return out
 }
 
 // drillSkip is the condition of an app whose drill an operator skipped.

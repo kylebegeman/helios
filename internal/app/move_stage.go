@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"time"
 
 	"github.com/kylebegeman/helios/internal/docker"
 	"github.com/kylebegeman/helios/internal/integration"
@@ -112,6 +113,9 @@ func (s MoveStage) Plan(ctx context.Context, raw json.RawMessage) (*kernel.Plan,
 		if guard == nil {
 			return nil, errors.New("guarded staging requires the loom integration before cutover")
 		}
+	}
+	if err := checkMovedOriginPullTrust(m, s.Deploy.Secrets, time.Now(), "stage again"); err != nil {
+		return nil, err
 	}
 	if m.HasData() {
 		st, err := integration.LoadStorage(s.Deploy.Secrets)

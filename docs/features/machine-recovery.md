@@ -60,8 +60,9 @@ long-running workloads on internal networks. It publishes no ports, installs
 no live app routes, changes no DNS records and runs no release or cron jobs.
 Restored file contents are verified against their snapshot before private
 health probes verify the restored runtime. The source host profile is
-applied; missing non-storage integrations and operational keys are recovered
-while target storage and already configured target values remain authoritative.
+applied; missing non-storage integrations and operational keys, among them
+the CAs the edge trusts for origin pull, are recovered while target storage
+and already configured target values remain authoritative.
 
 The source state is imported additively. The target operation journal, identity
 and configured integrations stay in place. Original source revisions remain

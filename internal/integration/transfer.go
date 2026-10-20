@@ -193,9 +193,11 @@ func applyValues(store *secrets.Store, values map[string]map[string]string, repl
 	return changed, nil
 }
 
-// RecoverMissing restores missing non-storage integrations and operational keys.
-// The source store has already been resealed to the target identity by recovery.
-// Target storage, configured integrations and existing hook/deploy keys prevail.
+// RecoverMissing restores missing non-storage integrations and operational keys,
+// among them the CAs the edge's origin-pull hosts trust. The source store has
+// already been resealed to the target identity by recovery. Target storage,
+// configured integrations, existing hook/deploy keys and origin-pull trust
+// prevail.
 func RecoverMissing(target, source *secrets.Store) ([]string, error) {
 	raw, _, err := source.LoadCurrent(App)
 	if err != nil {
@@ -233,7 +235,7 @@ func RecoverMissing(target, source *secrets.Store) ([]string, error) {
 		if !secrets.ValidName(name) {
 			return nil, errors.New("invalid operational secret name in recovery")
 		}
-		if strings.HasPrefix(name, "WEBHOOK_SECRET_") || strings.HasPrefix(name, "DEPLOY_KEY_") {
+		if strings.HasPrefix(name, "WEBHOOK_SECRET_") || strings.HasPrefix(name, "DEPLOY_KEY_") || name == OriginPullName {
 			if current[name] == "" {
 				v := value
 				keys[name] = &v

@@ -392,6 +392,41 @@ type Route struct {
 	// sees a request from someone who is not signed in and needs no auth
 	// code of its own. Empty leaves the route open.
 	Auth AuthMode `yaml:"auth,omitempty" json:"auth,omitempty"`
+	// OriginPull makes a proxied host take only the TLS connections that
+	// present the client certificate Cloudflare holds for it, minted with
+	// helios edge origin-pull mint: "optional" checks a certificate that
+	// is presented and lets one without through, "required" refuses every
+	// connection without one. Only with dns: proxied, and the same on
+	// every route to the host.
+	OriginPull OriginPullMode `yaml:"origin_pull,omitempty" json:"origin_pull,omitempty"`
+}
+
+// OriginPullMode is whether a host takes only Cloudflare's connections.
+type OriginPullMode string
+
+const (
+	// OriginPullOff takes any connection, which is the default.
+	OriginPullOff OriginPullMode = ""
+	// OriginPullOptional checks a client certificate that is presented.
+	OriginPullOptional OriginPullMode = "optional"
+	// OriginPullRequired takes only connections presenting one.
+	OriginPullRequired OriginPullMode = "required"
+)
+
+// Stricter reports whether o asks more of a connection than than. A mode
+// this helios doesn't know asks as much as required, so a revision written
+// by a newer helios fails closed rather than open.
+func (o OriginPullMode) Stricter(than OriginPullMode) bool { return o.rank() > than.rank() }
+
+func (o OriginPullMode) rank() int {
+	switch o {
+	case OriginPullOff:
+		return 0
+	case OriginPullOptional:
+		return 1
+	default:
+		return 2
+	}
 }
 
 // AuthMode is who may reach a route.
@@ -609,6 +644,7 @@ func (m *Manifest) Validate() error {
 		m.validateWorkload(name, claimed, names, published, fail)
 	}
 	m.validateDNSModes(fail)
+	m.validateOriginPullModes(fail)
 	m.validateData(fail)
 	m.validateSecrets(fail)
 	m.validateBackup(fail)
@@ -836,6 +872,17 @@ func validateRoutes(at, name string, w Workload, claimed map[string]string, fail
 		default:
 			fail("%s.auth: %q isn't loom", ra, r.Auth)
 		}
+		switch r.OriginPull {
+		case OriginPullOff:
+		case OriginPullOptional, OriginPullRequired:
+			// Only Cloudflare's proxy presents the client certificate; a
+			// direct or hand-kept record lets visitors connect straight here.
+			if r.DNS != DNSProxied {
+				fail("%s.origin_pull: needs dns: proxied, since only Cloudflare's proxy presents the client certificate; set dns: proxied or leave origin_pull out", ra)
+			}
+		default:
+			fail("%s.origin_pull: %q isn't optional or required", ra, r.OriginPull)
+		}
 		if r.Port != 0 && (r.Port < 1 || r.Port > 65535) {
 			fail("%s.port: must be a port number", ra)
 		}
@@ -908,6 +955,28 @@ func (m *Manifest) validateDNSModes(fail func(format string, args ...any)) {
 				fail("routes: %s has dns %q on one route and %q on another; use one", r.Host, prev, r.DNS)
 			}
 			modes[r.Host] = r.DNS
+		}
+	}
+}
+
+// validateOriginPullModes checks that every route to a host asks the same
+// of a connection. The edge checks the client certificate during the
+// handshake, before it sees a path, so one route's origin_pull covers
+// every route to its host. A route that leaves it out would read as open
+// while the edge refuses it, so leaving it out on one route and not
+// another is an error rather than inherited, the same rule as dns.
+func (m *Manifest) validateOriginPullModes(fail func(format string, args ...any)) {
+	modes := map[string]OriginPullMode{}
+	told := map[string]bool{}
+	for _, name := range m.WorkloadNames() {
+		for _, r := range m.Workloads[name].Routes {
+			first, seen := modes[r.Host]
+			if !seen {
+				modes[r.Host] = r.OriginPull
+			} else if first != r.OriginPull && !told[r.Host] {
+				told[r.Host] = true
+				fail("routes: %s has origin_pull %q on one route and %q on another; give every route to %s the same origin_pull", r.Host, first, r.OriginPull, r.Host)
+			}
 		}
 	}
 }
@@ -1359,6 +1428,26 @@ func (m *Manifest) ManagedHosts() map[string]DNSMode {
 				if _, seen := out[r.Host]; !seen {
 					out[r.Host] = r.DNS
 				}
+			}
+		}
+	}
+	return out
+}
+
+// OriginPullHosts is each host's origin-pull mode, for the hosts that set
+// one. Validation holds every route to a host to one mode; a manifest that
+// skipped it, such as a stored revision, gets the strictest any route asks
+// for, and a mode this helios doesn't know comes back as required.
+func (m *Manifest) OriginPullHosts() map[string]OriginPullMode {
+	out := map[string]OriginPullMode{}
+	for _, name := range m.WorkloadNames() {
+		for _, r := range m.Workloads[name].Routes {
+			mode := r.OriginPull
+			if mode.Stricter(OriginPullOptional) {
+				mode = OriginPullRequired
+			}
+			if mode.Stricter(out[r.Host]) {
+				out[r.Host] = mode
 			}
 		}
 	}

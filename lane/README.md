@@ -84,10 +84,11 @@ answering SSH as soon as `m2`'s host setup installs Docker. A VM created
 before this keeps the default bridge; `lane/vm.sh up` says so, and
 `make lane-reset` replaces it.
 
-The local loopback VM proves `m1`, `m2`, and `product`. Public certificate, external DNS
-and public webhook proofs require the dedicated externally reachable SSH
-machine described below. The runner refuses those scopes on the loopback
-VM and names the missing prerequisite.
+The local loopback VM proves `m1`, `m2`, `product`, `signed`, and
+`originpull`. Public certificate, external DNS and public webhook proofs
+require the dedicated externally reachable SSH machine described below.
+The runner refuses those scopes on the loopback VM and names the missing
+prerequisite.
 
 ## Existing dedicated SSH machine
 
@@ -151,6 +152,7 @@ locally created QEMU machine.
 | `m5` | Backups, drills, restoration, email outage signals | `m4`'s apps and expected chapter count |
 | `m6` | Git push, app isolation, DNS stand-in, webhook, remote deploy | `m5`'s apps; explicit `LANE_BEGAMIN_REPO`, `LANE_SITE_URL` |
 | `signed` | A signed pushed tip deploys and names its signer; unsigned, unknown-key, GPG and other-namespace tips and uploaded trees are refused with nothing built; an app without the policy deploys as before; the gitdeploy signing and webhook tests on the guest's git and OpenSSH | `m2`; no public DNS |
+| `originpull` | Required origin pull refused until a CA is trusted; the minted leaf is a year's client certificate in a new file; optional checks a presented certificate and logs its name; required takes only the minted leaf, redirects port 80 and answers a mismatched name with 421; a `dns: direct` host beside it unchanged; `forget` keeps a required host's last CA; rotation without a gap; the edge restored without `origin_pull` | `m2`; no public DNS |
 | `m7` | Generated/derived secrets, release order, singleton recovery, pgvector, object store, backup/restore | Prepared host; storage integration; public wildcard DNS |
 | `cloudflare` | Records made, retained, pruned and removed against Cloudflare itself | `m6`; real integration token already on target; explicit `--real-cloudflare` |
 
@@ -280,3 +282,30 @@ before source writers are deliberately resumed.
 Worker fixtures and real volume markers prove data and write-authority
 behavior. Public DNS, traffic routing and certificate issuance remain
 outside this proof. Both guests remain available for inspection afterward.
+
+## Origin pull proof
+
+```sh
+lane/prove.sh --config /absolute/path/to/lane.env originpull
+```
+
+The guest has no public address, record or certificate, so the proof brings
+its own for the run: the documentation address 192.0.2.10 on a dummy
+interface, the Cloudflare stand-in serving `lane.test` on guest loopback, an
+`/etc/hosts` line so the `dns: direct` host resolves, and a throwaway CA
+trusted only inside the guest, whose server certificates are seeded into
+the edge's storage. Every request is made on the guest against 127.0.0.1,
+playing Cloudflare with the leaf `helios edge origin-pull mint` wrote. It
+records the edge's Caddy version and image, refusing one older than 2.8 or
+without the inline CA pool, and the CA names the edge asks for, and checks
+HTTP/3 too when the guest's curl speaks it.
+
+It needs the lane after `m2` (the runner refuses an unprepared host),
+without a `site` app, a `cloudflare` integration or a `lane-cloudflare`
+container; it names the command that removes each. It removes everything it
+added when it exits, and a run that was killed is cleaned up by the next one.
+
+Cloudflare itself presenting the leaf, the dashboard upload, the zone's
+SSL/TLS mode and public certificate issuance stay outside this proof.
+[Authenticated origin pulls](../README.md#authenticated-origin-pulls) covers
+those steps.

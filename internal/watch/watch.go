@@ -17,7 +17,8 @@ import (
 
 // Condition is one thing found wrong in a round.
 type Condition struct {
-	// Key names the subject: app:dragon-writer, host:disk, watch:<url>.
+	// Key names the subject: app:dragon-writer, host:disk, watch:<url>,
+	// edge:origin-pull:<host>.
 	Key      string
 	Subject  string
 	Severity string

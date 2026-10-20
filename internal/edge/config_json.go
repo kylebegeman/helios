@@ -35,12 +35,16 @@ type caddyConfig struct {
 }
 
 type caddyServer struct {
-	ClientIPHeaders      []string             `json:"client_ip_headers,omitempty"`
-	Listen               [2]string            `json:"listen"`
-	Logs                 struct{}             `json:"logs"`
-	Routes               []caddyRoute         `json:"routes"`
-	TrustedProxies       *caddyTrustedProxies `json:"trusted_proxies,omitempty"`
-	TrustedProxiesStrict int                  `json:"trusted_proxies_strict,omitempty"`
+	ClientIPHeaders []string     `json:"client_ip_headers,omitempty"`
+	Listen          [2]string    `json:"listen"`
+	Logs            struct{}     `json:"logs"`
+	Routes          []caddyRoute `json:"routes"`
+	// StrictSNIHost and TLSConnectionPolicies are set only when a host
+	// takes origin pulls, so a configuration without one keeps its bytes.
+	StrictSNIHost         *bool                `json:"strict_sni_host,omitempty"`
+	TLSConnectionPolicies []caddyTLSConnPolicy `json:"tls_connection_policies,omitempty"`
+	TrustedProxies        *caddyTrustedProxies `json:"trusted_proxies,omitempty"`
+	TrustedProxiesStrict  int                  `json:"trusted_proxies_strict,omitempty"`
 }
 
 type caddyRoute struct {
@@ -50,8 +54,9 @@ type caddyRoute struct {
 }
 
 type caddyMatcher struct {
-	Host []string `json:"host,omitempty"`
-	Path []string `json:"path,omitempty"`
+	Host     []string `json:"host,omitempty"`
+	Path     []string `json:"path,omitempty"`
+	Protocol string   `json:"protocol,omitempty"`
 }
 
 type caddyHandler struct {
@@ -63,6 +68,32 @@ type caddyHandler struct {
 	StreamCloseDelay string          `json:"stream_close_delay,omitempty"`
 	Transport        *caddyTransport `json:"transport,omitempty"`
 	Upstreams        []caddyUpstream `json:"upstreams,omitempty"`
+}
+
+// caddyTLSConnPolicy is one of the server's TLS connection policies: the
+// first whose match takes a handshake decides it. The zero value is the
+// catch-all, Caddy's defaults for every other name.
+type caddyTLSConnPolicy struct {
+	ClientAuthentication *caddyClientAuth `json:"client_authentication,omitempty"`
+	Drop                 bool             `json:"drop,omitempty"`
+	Match                *caddyTLSMatch   `json:"match,omitempty"`
+}
+
+type caddyTLSMatch struct {
+	SNI []string `json:"sni"`
+}
+
+type caddyClientAuth struct {
+	CA   caddyCAPool `json:"ca"`
+	Mode string      `json:"mode"`
+}
+
+// caddyCAPool is the inline CA pool: base64 DER, never PEM, and never
+// empty, since a policy with no CA would check clients against the
+// system's roots instead.
+type caddyCAPool struct {
+	Provider       string   `json:"provider"`
+	TrustedCACerts []string `json:"trusted_ca_certs"`
 }
 
 type caddyTrustedProxies struct {

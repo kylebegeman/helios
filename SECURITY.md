@@ -40,6 +40,14 @@ another machine's traffic are treated as high priority.
   must then be `dns: proxied`. Docker forwards published ports past ufw,
   so the rule that holds is a guard in Docker's `DOCKER-USER` chain, which
   `helios doctor` checks. SSH stays reachable, keys only, behind fail2ban.
+- Letting only Cloudflare reach the machine still lets in any Cloudflare
+  zone pointed at its address. A proxied host with `origin_pull: required`
+  takes only connections presenting the client certificate `helios edge
+  origin-pull mint` made for it, checked against a CA trusted for that host
+  alone. The CA's key is thrown away once it has signed, and the
+  certificate's key exists only in the file uploaded to Cloudflare. The CA
+  of Cloudflare's global origin-pull certificate, which every Cloudflare
+  account presents, must never be given to `helios edge origin-pull trust`.
 - A backup runs restic in a container. The repository password and the
   storage credentials reach it in a file only root reads, mounted read-only
   for the length of the run and removed with it, never in the container's

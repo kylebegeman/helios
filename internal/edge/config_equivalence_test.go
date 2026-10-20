@@ -2,14 +2,20 @@ package edge
 
 import (
 	"bytes"
+	"crypto/x509"
+	"encoding/base64"
 	"encoding/json"
+	"encoding/pem"
 	"fmt"
+	"maps"
+	"math/big"
 	"math/rand/v2"
 	"reflect"
 	"slices"
 	"sort"
 	"strings"
 	"testing"
+	"time"
 )
 
 // Keep the pre-optimization encoder as a test oracle. The boot file and Caddy
@@ -18,7 +24,38 @@ import (
 func TestConfigBehindMatchesMapEncoding(t *testing.T) {
 	guarded := &Guard{Dial: "auth.example.com:443", Path: "/verify", TLS: true, HeaderName: "X-Verified", HeaderValue: "yes"}
 	special := "quote\"\\\n\t<>&\u2028\u2029雪" + string([]byte{0xff})
-	routes, proxies := configBenchmarkFixture(10)
+	routes, proxies := configBenchmarkFixture(t, 10)
+	// Origin pull CAs as the edge is handed them: two good ones, one of
+	// them with the line breaks base64 allows, a client certificate that
+	// isn't a CA, a CA that may not sign certificates, and text that isn't
+	// a certificate at all.
+	a, b := fixedCA(t, "a"), fixedCA(t, "b")
+	minted, err := MintOriginPull("pull.example.com", time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	unsigning, _ := selfSigned(t, &x509.Certificate{
+		SerialNumber: big.NewInt(1), NotBefore: time.Now(), NotAfter: time.Now().Add(time.Hour),
+		KeyUsage: x509.KeyUsageDigitalSignature, BasicConstraintsValid: true, IsCA: true,
+	})
+	var der []string
+	for _, text := range []string{string(minted.LeafPEM), unsigning} {
+		block, _ := pem.Decode([]byte(text))
+		der = append(der, base64.StdEncoding.EncodeToString(block.Bytes))
+	}
+	cas := []string{a, b, a[:40] + "\r\n" + a[40:], der[0], der[1], "not base64", ""}
+	leaf := der[0]
+	pulled := []Route{
+		{Host: "required.example.com", Path: "/", Dial: "r", OriginPull: OriginPullRequired, ClientCAs: []string{b, a}},
+		{Host: "required.example.com", Path: HookPath + "/", Dial: HooksDial},
+		{Host: "optional.example.com", Path: "/", Dial: "o", OriginPull: OriginPullOptional, ClientCAs: []string{cas[2]}},
+		{Host: "refused.example.com", Path: "/", Dial: "x", OriginPull: OriginPullRequired, ClientCAs: []string{leaf, der[1], "not base64"}},
+		{Host: "open.example.com", Path: "/", Dial: "p", OriginPull: OriginPullOptional},
+		{Host: "unknown.example.com", Path: "/", Dial: "u", OriginPull: "always", ClientCAs: []string{a}},
+		{Host: "mixed.example.com", Path: "/", Dial: "m", OriginPull: OriginPullOptional, ClientCAs: []string{a}},
+		{Host: "mixed.example.com", Path: "/api/", Dial: "m", OriginPull: OriginPullRequired, ClientCAs: []string{b, a}, Guard: guarded},
+		{Host: "direct.example.com", Path: "/", Dial: "d"},
+	}
 	cases := []struct {
 		name    string
 		routes  []Route
@@ -33,12 +70,21 @@ func TestConfigBehindMatchesMapEncoding(t *testing.T) {
 		{name: "escaping", routes: []Route{{Host: special, Path: "/" + special + "/", Dial: special, Guard: &Guard{Dial: special, Path: special, TLS: true, ServerName: special, HeaderName: special, HeaderValue: special}}}, proxies: []string{special}},
 		{name: "TLS without server name", routes: []Route{{Host: "h", Path: "/", Dial: "d", Guard: guarded}}},
 		{name: "invalid guard", routes: []Route{{Host: "h", Path: "/", Guard: &Guard{Dial: "auth"}}}},
+		{name: "origin pull", routes: pulled, proxies: proxies},
+		{name: "origin pull without proxies", routes: pulled},
+		{name: "origin pull escaping", routes: []Route{
+			{Host: special, Path: "/", Dial: "d", OriginPull: OriginPullRequired, ClientCAs: []string{a}},
+			{Host: special + "-", Path: "/", Dial: "d", OriginPull: OriginPullRequired},
+		}},
+		{name: "empty CA list", routes: []Route{{Host: "h", Path: "/", Dial: "d", OriginPull: OriginPullRequired, ClientCAs: []string{}}}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) { checkConfigEncodingEquivalent(t, tc.routes, tc.proxies) })
 	}
 	// Exercise repeated hosts, equal prefix lengths, guards shared by routes,
 	// both transports and optional TLS names across deterministic input orders.
+	// Every other order also gives the routes origin pull modes and CAs, so a
+	// host's routes disagree about them.
 	rng := rand.New(rand.NewPCG(7, 11))
 	for n := range 32 {
 		t.Run(fmt.Sprintf("mixed order %d", n), func(t *testing.T) {
@@ -56,6 +102,14 @@ func TestConfigBehindMatchesMapEncoding(t *testing.T) {
 					}
 					shuffled[i].Guard = &guard
 				}
+				if n%2 == 1 {
+					shuffled[i].OriginPull = []string{"", "", OriginPullOptional, OriginPullRequired, "always"}[rng.IntN(5)]
+					var named []string
+					for range rng.IntN(3) {
+						named = append(named, cas[rng.IntN(len(cas))])
+					}
+					shuffled[i].ClientCAs = named
+				}
 			}
 			checkConfigEncodingEquivalent(t, shuffled, proxies)
 		})
@@ -70,6 +124,7 @@ func checkConfigEncodingEquivalent(t *testing.T, routes []Route, proxies []strin
 			guard := *originalRoutes[i].Guard
 			originalRoutes[i].Guard = &guard
 		}
+		originalRoutes[i].ClientCAs = slices.Clone(originalRoutes[i].ClientCAs)
 	}
 	originalProxies := slices.Clone(proxies)
 	want, wantErr := legacyConfigBehind(routes, proxies)
@@ -120,6 +175,7 @@ func legacyConfigBehind(routes []Route, proxies []string) ([]byte, error) {
 	sort.Strings(hosts)
 
 	var serverRoutes []map[string]any
+	var policies []map[string]any
 	for _, host := range hosts {
 		rs := byHost[host]
 		// Longest prefix first; the catch-all last, without a path matcher.
@@ -148,8 +204,15 @@ func legacyConfigBehind(routes []Route, proxies []string) ([]byte, error) {
 				"handle": handle,
 			})
 		}
+		match := map[string]any{"host": []string{host}}
+		if mode := legacyOriginPullMode(rs); mode != "" {
+			match["protocol"] = "https"
+			if policy := legacyOriginPullPolicy(host, mode, rs); policy != nil {
+				policies = append(policies, policy)
+			}
+		}
 		serverRoutes = append(serverRoutes, map[string]any{
-			"match":    []map[string]any{{"host": []string{host}}},
+			"match":    []map[string]any{match},
 			"handle":   []map[string]any{{"handler": "subroute", "routes": sub}},
 			"terminal": true,
 		})
@@ -170,6 +233,10 @@ func legacyConfigBehind(routes []Route, proxies []string) ([]byte, error) {
 		server["client_ip_headers"] = []string{"CF-Connecting-IP", "X-Forwarded-For"}
 		server["trusted_proxies_strict"] = 1
 	}
+	if len(policies) > 0 {
+		server["tls_connection_policies"] = append(policies, map[string]any{})
+		server["strict_sni_host"] = true
+	}
 	cfg := map[string]any{
 		// The admin API is a socket in a directory only this machine and
 		// the edge share. helios keeps the configuration itself (BootFile),
@@ -188,6 +255,57 @@ func legacyConfigBehind(routes []Route, proxies []string) ([]byte, error) {
 		},
 	}
 	return json.MarshalIndent(cfg, "", "  ")
+}
+
+// legacyOriginPullMode is the strictest origin pull any of a host's routes
+// asks for. A mode the edge doesn't know is taken as required.
+func legacyOriginPullMode(rs []Route) string {
+	strictest := 0
+	for _, r := range rs {
+		rank, known := map[string]int{"": 0, OriginPullOptional: 1}[r.OriginPull]
+		if !known {
+			rank = 2
+		}
+		strictest = max(strictest, rank)
+	}
+	return []string{"", OriginPullOptional, OriginPullRequired}[strictest]
+}
+
+// legacyOriginPullPolicy is the TLS connection policy for a host that takes
+// origin pulls, or nil when it needs none: every CA certificate its routes
+// name, once each and sorted, or a refusal when a required host has none.
+func legacyOriginPullPolicy(host, mode string, rs []Route) map[string]any {
+	found := map[string]bool{}
+	for _, r := range rs {
+		for _, text := range r.ClientCAs {
+			der, err := base64.StdEncoding.DecodeString(text)
+			if err != nil {
+				continue
+			}
+			cert, err := x509.ParseCertificate(der)
+			if err == nil && cert.BasicConstraintsValid && cert.IsCA && cert.KeyUsage&x509.KeyUsageCertSign != 0 {
+				found[base64.StdEncoding.EncodeToString(der)] = true
+			}
+		}
+	}
+	match := map[string]any{"sni": []string{host}}
+	if len(found) == 0 {
+		if mode == OriginPullRequired {
+			return map[string]any{"drop": true, "match": match}
+		}
+		return nil
+	}
+	check := "verify_if_given"
+	if mode == OriginPullRequired {
+		check = "require_and_verify"
+	}
+	return map[string]any{
+		"client_authentication": map[string]any{
+			"ca":   map[string]any{"provider": "inline", "trusted_ca_certs": slices.Sorted(maps.Keys(found))},
+			"mode": check,
+		},
+		"match": match,
+	}
 }
 
 // legacyGuardHandler asks the guard about the request and, only on a 2xx, runs

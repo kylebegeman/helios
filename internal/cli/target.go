@@ -314,6 +314,26 @@ func (a *app) dispatchTarget(cmd *cobra.Command, args []string) error {
 	if (command == "git require-signed" || strings.HasPrefix(command, "git signers")) && !caps.has("git.signed.v1") {
 		return errors.New("target does not gate deploys on signed commits; upgrade it first")
 	}
+	if strings.HasPrefix(command, "edge origin-pull") && !caps.has("edge.origin-pull.v1") {
+		return errors.New("target does not support authenticated origin pulls; upgrade helios on the target first")
+	}
+	if command == "edge origin-pull mint" {
+		return a.mintOriginPullOnTarget(cmd, t, args)
+	}
+	if command == "edge origin-pull trust" {
+		// The certificate is read here, from its file or this stdin, and
+		// goes to the target on its stdin.
+		path := ""
+		if len(args) == 2 {
+			path = args[1]
+		}
+		caPEM, err := readOriginPullCA(path)
+		if err != nil {
+			return err
+		}
+		input = strings.NewReader(caPEM)
+		args = args[:1]
+	}
 	if command == "deploy" || command == "check" || command == "move stage" || command == "move test" || command == "rehearse" {
 		if !caps.has("remote.source.v1") {
 			return errors.New("target does not support source upload; upgrade it first")
@@ -337,6 +357,9 @@ func (a *app) dispatchTarget(cmd *cobra.Command, args []string) error {
 			if err := cmd.Flags().Set("manifest", selected); err != nil {
 				return err
 			}
+		}
+		if !caps.has("edge.origin-pull.v1") && setsOriginPull(cmd, source) {
+			return errors.New("the manifest sets origin_pull, which the target's helios doesn't know; upgrade helios on the target first")
 		}
 		archive, hash, err := snapshotSource(cmd.Context(), source)
 		if err != nil {
@@ -565,6 +588,19 @@ func (a *app) dispatchTarget(cmd *cobra.Command, args []string) error {
 	}
 	return quietError{0}
 }
+
+// setsOriginPull reports whether the manifest a command sends from source
+// sets origin_pull on a route. A manifest that doesn't load is left for the
+// target to report.
+func setsOriginPull(cmd *cobra.Command, source string) bool {
+	name := ""
+	if f := cmd.Flags().Lookup("manifest"); f != nil {
+		name = f.Value.String()
+	}
+	m, err := manifest.LoadFile(source, name)
+	return err == nil && len(m.OriginPullHosts()) > 0
+}
+
 func remoteExit(err error) error {
 	var ex *exec.ExitError
 	if errors.As(err, &ex) {

@@ -1,12 +1,15 @@
 package edge
 
 import (
+	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"math/big"
+	"slices"
 	"testing"
 	"time"
 )
@@ -66,5 +69,71 @@ func TestCertificateReadinessRequiresAValidTrustedChain(t *testing.T) {
 				t.Fatalf("ready=%t, why=%q, expiry=%s, found=%t", got, why, expiry, found)
 			}
 		})
+	}
+}
+
+// A host that requires an origin-pull certificate refuses the probe, which
+// presents none, yet a deploy still waits on, and the watch still reads,
+// the certificate it serves. The server here settles for TLS 1.2 whenever
+// a client offers it, where the refusal would come before the probe saw
+// anything.
+func TestTheProbeReadsTheCertificateOfAHostThatRequiresOne(t *testing.T) {
+	now := time.Now()
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	template := &x509.Certificate{SerialNumber: big.NewInt(1), Subject: pkix.Name{CommonName: "pull.example.com"},
+		DNSNames: []string{"pull.example.com"}, NotBefore: now.Add(-time.Hour), NotAfter: now.Add(time.Hour).Truncate(time.Second)}
+	der, err := x509.CreateCertificate(rand.Reader, template, template, &key.PublicKey, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	minted, err := MintOriginPull("pull.example.com", now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ca, err := ParseOriginPullCA(minted.CA.PEM)
+	if err != nil {
+		t.Fatal(err)
+	}
+	clientCAs := x509.NewCertPool()
+	clientCAs.AddCert(ca)
+	server := &tls.Config{
+		Certificates: []tls.Certificate{{Certificate: [][]byte{der}, PrivateKey: key}},
+		ClientAuth:   tls.RequireAndVerifyClientCert,
+		ClientCAs:    clientCAs,
+	}
+	listener, err := tls.Listen("tcp", "127.0.0.1:0", &tls.Config{
+		GetConfigForClient: func(hello *tls.ClientHelloInfo) (*tls.Config, error) {
+			config := server.Clone()
+			if slices.Contains(hello.SupportedVersions, tls.VersionTLS12) {
+				config.MaxVersion = tls.VersionTLS12
+			}
+			return config, nil
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+	refused := make(chan error, 1)
+	go func() {
+		conn, err := listener.Accept()
+		if err != nil {
+			refused <- err
+			return
+		}
+		defer conn.Close()
+		refused <- conn.(*tls.Conn).Handshake()
+	}()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	ready, why, expiry, found := Certificate(ctx, "pull.example.com", listener.Addr().String())
+	if !found || !expiry.Equal(template.NotAfter) {
+		t.Fatalf("the probe read nothing: ready=%t, why=%q, expiry=%s, found=%t", ready, why, expiry, found)
+	}
+	if err := <-refused; err == nil {
+		t.Fatal("the server took a connection without a client certificate")
 	}
 }

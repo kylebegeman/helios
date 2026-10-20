@@ -135,3 +135,31 @@ func TestIntegrationConflictAndRecoveryPreserveTargetConfiguration(t *testing.T)
 		t.Fatal("recovery operational keys wrong")
 	}
 }
+
+// A recovered machine keeps the CAs its origin-pull hosts trust: without
+// them the edge would refuse every connection to a host that requires
+// Cloudflare's certificate, and the CA's key is long gone, so they can't be
+// minted again to match the certificate Cloudflare holds.
+func TestRecoveryCarriesOriginPullTrustTheTargetLacks(t *testing.T) {
+	source, target, _ := transferStores(t)
+	trust := `{"shop.example.com":[{"ca_pem":"source CA","not_after":"2027-10-20T00:00:00Z"}]}`
+	source.Set(App, OriginPullName, trust)
+	changed, err := RecoverMissing(target, source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, _, _ := target.LoadCurrent(App)
+	if raw[OriginPullName] != trust || len(changed) != 1 || changed[0] != "operational-keys" {
+		t.Fatalf("trust not recovered: %q %v", raw[OriginPullName], changed)
+	}
+	// A machine that already trusts CAs of its own keeps them.
+	own := `{"www.example.com":[{"ca_pem":"target CA","not_after":"2027-10-20T00:00:00Z"}]}`
+	target.Set(App, OriginPullName, own)
+	if _, err := RecoverMissing(target, source); err != nil {
+		t.Fatal(err)
+	}
+	raw, _, _ = target.LoadCurrent(App)
+	if raw[OriginPullName] != own {
+		t.Fatalf("recovery replaced the target's trust: %q", raw[OriginPullName])
+	}
+}

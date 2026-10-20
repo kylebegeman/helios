@@ -16,6 +16,7 @@ Available Commands:
   dns              The records behind every host this machine routes, as Cloudflare and the world see them.
   doctor           Check this machine and say what to fix. Changes nothing.
   drill            Prove a backup: restore it beside the app, start the app on it, check, clean up. Or skip the next scheduled one.
+  edge             The edge in front of every app: which connections it takes.
   exec             Run a command inside a workload's container.
   exposure         What each container may do and what reaches it: user, capabilities, root filesystem, networks, ports, mounts.
   gc               Remove containers, images and build cache that no kept revision uses.
@@ -406,6 +407,122 @@ Flags:
       --skip-next         skip the next scheduled drill instead of running one; again before it, the one after
       --snapshot string   a snapshot id instead of the latest
       --yes               apply without asking
+
+Global Flags:
+      --json                  print JSON, one object per line
+      --socket string         the daemon's socket; the local kernel is used when nothing answers (default "/run/bedrock/bedrock.sock")
+      --state-dir string      where helios keeps its state (default "~/.bedrock")
+      --target string         operate on this explicitly named SSH target
+      --targets-file string   the local named-target configuration (default "~/.bedrock/targets.json")
+== helios edge (hidden false)
+The edge in front of every app: which connections it takes.
+
+Usage:
+  helios edge [command]
+
+Available Commands:
+  origin-pull Have a host behind Cloudflare's proxy take only the connections Cloudflare makes.
+
+Global Flags:
+      --json                  print JSON, one object per line
+      --socket string         the daemon's socket; the local kernel is used when nothing answers (default "/run/bedrock/bedrock.sock")
+      --state-dir string      where helios keeps its state (default "~/.bedrock")
+      --target string         operate on this explicitly named SSH target
+      --targets-file string   the local named-target configuration (default "~/.bedrock/targets.json")
+
+Use "helios edge [command] --help" for more information about a command.
+== helios edge origin-pull (hidden false)
+Have a host behind Cloudflare's proxy take only the connections Cloudflare makes.
+Have a host behind Cloudflare's proxy take only the connections Cloudflare makes.
+
+Cloudflare presents a client certificate on every connection it makes to
+the host, and the edge takes only those a CA it trusts for the host signed,
+so knowing the machine's address gets nobody past Cloudflare.
+
+  helios edge origin-pull mint shop.example.com --out shop.pem
+
+Upload the file at Cloudflare as a per-hostname authenticated origin pull
+certificate for the host, with the zone's SSL/TLS mode at Full (strict).
+Deploy with origin_pull: optional on the host's routes, check that requests
+through Cloudflare still succeed, then deploy with origin_pull: required.
+Usage:
+  helios edge origin-pull [command]
+
+Available Commands:
+  forget      Stop trusting one of a host's CAs, or all of them; refused if a host that requires origin pull would be left with none.
+  list        List the hosts that use origin pull, their mode, and the CAs they trust until when.
+  mint        Make the certificate Cloudflare presents for a host, trust its CA, and write the certificate and its key to a new file.
+  trust       Trust a CA's certificate for a host, from a file or stdin, as on a machine taking a host over.
+
+Global Flags:
+      --json                  print JSON, one object per line
+      --socket string         the daemon's socket; the local kernel is used when nothing answers (default "/run/bedrock/bedrock.sock")
+      --state-dir string      where helios keeps its state (default "~/.bedrock")
+      --target string         operate on this explicitly named SSH target
+      --targets-file string   the local named-target configuration (default "~/.bedrock/targets.json")
+
+Use "helios edge origin-pull [command] --help" for more information about a command.
+== helios edge origin-pull forget (hidden false)
+Stop trusting one of a host's CAs, or all of them; refused if a host that requires origin pull would be left with none.
+
+Usage:
+  helios edge origin-pull forget <host> [fingerprint] [flags]
+
+Global Flags:
+      --json                  print JSON, one object per line
+      --socket string         the daemon's socket; the local kernel is used when nothing answers (default "/run/bedrock/bedrock.sock")
+      --state-dir string      where helios keeps its state (default "~/.bedrock")
+      --target string         operate on this explicitly named SSH target
+      --targets-file string   the local named-target configuration (default "~/.bedrock/targets.json")
+== helios edge origin-pull list (hidden false)
+List the hosts that use origin pull, their mode, and the CAs they trust until when.
+
+Usage:
+  helios edge origin-pull list [flags]
+
+Global Flags:
+      --json                  print JSON, one object per line
+      --socket string         the daemon's socket; the local kernel is used when nothing answers (default "/run/bedrock/bedrock.sock")
+      --state-dir string      where helios keeps its state (default "~/.bedrock")
+      --target string         operate on this explicitly named SSH target
+      --targets-file string   the local named-target configuration (default "~/.bedrock/targets.json")
+== helios edge origin-pull mint (hidden false)
+Make the certificate Cloudflare presents for a host, trust its CA, and write the certificate and its key to a new file.
+Make the certificate Cloudflare presents for a host, trust its CA, and
+write the certificate and its key to a new file.
+
+The CA and the certificate it signs last a year. The edge trusts the CA,
+the file gets the certificate and then its key, readable by you alone, and
+the CA's key is thrown away: nothing can sign another certificate the edge
+takes, and the file holds the only copy of the key. Upload it to
+Cloudflare, then delete it. With --target, the certificate is made here and
+only the CA goes to the target.
+
+Mint again to replace a certificate. The old CA stays trusted until it runs
+out or helios edge origin-pull forget drops it, so the host keeps working
+while Cloudflare takes the new one.
+Usage:
+  helios edge origin-pull mint <host> [flags]
+
+Flags:
+      --out string   the new file for the certificate and its key
+
+Global Flags:
+      --json                  print JSON, one object per line
+      --socket string         the daemon's socket; the local kernel is used when nothing answers (default "/run/bedrock/bedrock.sock")
+      --state-dir string      where helios keeps its state (default "~/.bedrock")
+      --target string         operate on this explicitly named SSH target
+      --targets-file string   the local named-target configuration (default "~/.bedrock/targets.json")
+== helios edge origin-pull trust (hidden false)
+Trust a CA's certificate for a host, from a file or stdin, as on a machine taking a host over.
+Trust a CA's certificate for a host, from a file or stdin, as on a machine
+taking a host over. The certificate is the CA's that helios edge origin-pull
+mint made, as helios edge origin-pull list --json shows it, never the one
+uploaded to Cloudflare.
+
+  helios edge origin-pull trust shop.example.com ca.pem
+Usage:
+  helios edge origin-pull trust <host> [file] [flags]
 
 Global Flags:
       --json                  print JSON, one object per line

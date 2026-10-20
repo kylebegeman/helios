@@ -330,6 +330,7 @@ func (d *daemon) startLoops(ctx context.Context) {
 	watcher := &watch.Watcher{Store: d.store, Notifier: d.alerts, Hostname: d.machine, Log: logf}
 	prober := watch.NewProber(d.store)
 	prober.CheckSecrets = d.sec.Load
+	prober.OriginPullTrust = func() (edge.OriginPullTrust, error) { return app.LoadOriginPullTrust(d.sec) }
 	d.every(ctx, time.Minute, true, func(time.Time) {
 		guarded(logf, "watch", func() {
 			if err := watcher.Round(ctx, prober.Observe(ctx)); err != nil && ctx.Err() == nil {

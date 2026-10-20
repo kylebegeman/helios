@@ -55,3 +55,28 @@ func TestTheEdgeBehindCloudflareStaysWhatItWas(t *testing.T) {
 	}
 	golden(t, "config-behind", cfg)
 }
+
+// The golden routes again, with every kind of origin pull: a host that
+// requires it with two CAs, one where it is optional, one that requires it
+// before any CA exists, and one where it is optional with no CA yet. A
+// guarded host without origin pull sits among them unchanged.
+func TestTheEdgeWithOriginPullStaysWhatItWas(t *testing.T) {
+	a, b := fixedCA(t, "a"), fixedCA(t, "b")
+	routes := []Route{
+		{Host: "site.example.com", Path: "/", Dial: "bedrock-site-web-abc:8080", OriginPull: OriginPullRequired, ClientCAs: []string{b, a}},
+		{Host: "site.example.com", Path: "/api/", Dial: "bedrock-site-api-abc:9000", OriginPull: OriginPullRequired, ClientCAs: []string{b, a}},
+		{Host: "site.example.com", Path: HookPath + "/", Dial: HooksDial},
+		{Host: "shop.example.com", Path: "/", Dial: "bedrock-shop-web-abc:8080", OriginPull: OriginPullOptional, ClientCAs: []string{a}},
+		{Host: "vault.example.com", Path: "/", Dial: "bedrock-vault-web-abc:8080", OriginPull: OriginPullRequired},
+		{Host: "beta.example.com", Path: "/", Dial: "bedrock-beta-web-abc:8080", OriginPull: OriginPullOptional},
+		{Host: "admin.example.com", Path: "/", Dial: "bedrock-admin-web-abc:8080", Guard: &Guard{
+			Dial: "core.example.com:443", Path: "/verify", TLS: true, ServerName: "core.example.com",
+			HeaderName: "X-Verified", HeaderValue: "yes",
+		}},
+	}
+	cfg, err := ConfigBehind(routes, []string{"192.0.2.0/24", "2001:db8::/32"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	golden(t, "config-originpull", cfg)
+}

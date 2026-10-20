@@ -678,6 +678,20 @@ func showLastLines(ctx context.Context, e *docker.Engine, container, name string
 
 // edgeConfig builds the edge's whole configuration from every active revision.
 func edgeConfig(ctx context.Context, store *state.Store, sec *secrets.Store) ([]byte, error) {
+	routes, err := edgeRoutes(ctx, store, sec, time.Now())
+	if err != nil {
+		return nil, err
+	}
+	return edge.ConfigBehind(routes, cloudflareProxies())
+}
+
+// edgeNotes hears what edgeConfig leaves out of the configuration rather
+// than refuse all of it: the daemon's log, or the terminal of whoever ran
+// the command. Tests replace it.
+var edgeNotes io.Writer = os.Stderr
+
+// edgeRoutes are the routes every active revision asks the edge for.
+func edgeRoutes(ctx context.Context, store *state.Store, sec *secrets.Store, now time.Time) ([]edge.Route, error) {
 	active, err := store.ActiveRevisions(ctx)
 	if err != nil {
 		return nil, err
@@ -708,7 +722,7 @@ func edgeConfig(ctx context.Context, store *state.Store, sec *secrets.Store) ([]
 		for _, name := range m.WorkloadNames() {
 			w := m.Workloads[name]
 			for _, r := range w.Routes {
-				route := edge.Route{Host: r.Host, Path: r.NormalizedPath(), Dial: fmt.Sprintf("%s:%d", rev.Containers[name], servePort(w, &r))}
+				route := edge.Route{Host: r.Host, Path: r.NormalizedPath(), Dial: fmt.Sprintf("%s:%d", rev.Containers[name], servePort(w, &r)), OriginPull: string(r.OriginPull)}
 				if r.Auth.Guarded() {
 					// Serving a route that asked for a sign-in without one
 					// would put the app on the open internet, so the whole
@@ -722,7 +736,19 @@ func edgeConfig(ctx context.Context, store *state.Store, sec *secrets.Store) ([]
 			}
 		}
 	}
-	return edge.ConfigBehind(routes, cloudflareProxies())
+	if asksOriginPull(routes) {
+		trust, err := LoadOriginPullTrust(sec)
+		if err != nil {
+			// One unreadable value must not take every app's edge down
+			// with it, so no host gets a CA: one that requires origin pull
+			// refuses every connection and every other host keeps
+			// working. helios watch reports the same trouble.
+			fmt.Fprintf(edgeNotes, "edge: %v; until it loads, a host that requires origin pull refuses every connection and one where it is optional checks no certificate\n", err)
+			trust = edge.OriginPullTrust{}
+		}
+		settleOriginPull(routes, trust, now)
+	}
+	return routes, nil
 }
 
 // cloudflareProxies are the ranges the edge trusts to say who a visitor
