@@ -493,6 +493,53 @@ func TestAPathThatPanicsOnceItTimedOutIsLogged(t *testing.T) {
 	}
 }
 
+// A path that panics just as its time runs out is raised or logged, and
+// never lost between the two: a panic that reaches within after the
+// deadline woke it, but before it stopped waiting, is raised. Many paths
+// race deadlines a few microseconds long, half panicking at once and
+// half the moment their time is up, so some panics land on the deadline.
+func TestAPathThatPanicsAsItsTimeRunsOutIsRaisedOrLogged(t *testing.T) {
+	const paths = 10000
+	const defect = "a defect in a path racing its deadline"
+	logged := make(chan string, paths)
+	log := func(format string, args ...any) { logged <- fmt.Sprintf(format, args...) }
+	var raised atomic.Int64
+	var wg sync.WaitGroup
+	for n := range paths {
+		wg.Go(func() {
+			ctx, cancel := context.WithTimeout(context.Background(), time.Duration(n/2%30)*time.Microsecond)
+			defer cancel()
+			defer func() {
+				if p := recover(); p != nil {
+					if !strings.Contains(fmt.Sprint(p), defect) {
+						t.Errorf("raised %v", p)
+					}
+					raised.Add(1)
+				}
+			}()
+			_ = attempt(ctx, log, func(ctx context.Context) error {
+				if n%2 == 1 {
+					<-ctx.Done()
+				}
+				panic(defect)
+			})
+		})
+	}
+	wg.Wait()
+	late := paths - int(raised.Load())
+	timeout := time.After(5 * time.Second)
+	for got := range late {
+		select {
+		case line := <-logged:
+			if !strings.HasPrefix(line, "peer watch: panic once its path had timed out: "+defect) {
+				t.Fatalf("logged %q", line)
+			}
+		case <-timeout:
+			t.Fatalf("of %d panics, %d were raised, %d logged, and %d lost", paths, paths-late, got, late-got)
+		}
+	}
+}
+
 // failureWord is any word a path can end in: one of a fixed few, or a
 // status code, never anything an error held.
 var failureWord = regexp.MustCompile(`^(ok|stale|untrusted|mismatch|timeout|refused|reset|dns|tls|unreachable|failed|status [1-5][0-9]{2})$`)
