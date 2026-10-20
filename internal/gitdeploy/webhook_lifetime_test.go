@@ -32,7 +32,7 @@ func TestWebhookWorkersStopAndDiscardPendingOnDaemonCancellation(t *testing.T) {
 	defer cancel()
 	entered := make(chan context.Context, 1)
 	var deployments atomic.Int32
-	receiver := &Receiver{Context: lifetime, Store: store, Secrets: sec, SourcesDir: filepath.Join(dir, "sources"), BuildsDir: filepath.Join(dir, "builds"), Deploy: func(ctx context.Context, _ app.DeployInput, _ func(kernel.Event)) (*kernel.Receipt, error) {
+	receiver := &Receiver{Context: lifetime, Store: store, Secrets: sec, SigningDir: filepath.Join(dir, "git"), SourcesDir: filepath.Join(dir, "sources"), BuildsDir: filepath.Join(dir, "builds"), Deploy: func(ctx context.Context, _ app.DeployInput, _ func(kernel.Event)) (*kernel.Receipt, error) {
 		deployments.Add(1)
 		entered <- ctx
 		<-ctx.Done()

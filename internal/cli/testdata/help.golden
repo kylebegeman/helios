@@ -463,13 +463,15 @@ Usage:
   helios git [command]
 
 Available Commands:
-  allow       Let an SSH key deploy an app with git push or helios deploy --to. The key comes from the argument or stdin.
-  branch      Choose the branch whose pushes deploy an app (main by default).
-  deny        Stop a key from deploying an app; a key left with no apps is removed.
-  keys        List the keys that may push, and the apps each deploys.
-  remote      Print the git remote that deploys an app.
-  webhook     Deploy an app when GitHub says its branch moved; prints what to paste into GitHub, once.
-  webhooks    List the webhooks and what their last delivery did.
+  allow          Let an SSH key deploy an app with git push or helios deploy --to. The key comes from the argument or stdin.
+  branch         Choose the branch whose pushes deploy an app (main by default).
+  deny           Stop a key from deploying an app; a key left with no apps is removed.
+  keys           List the keys that may push, and the apps each deploys.
+  remote         Print the git remote that deploys an app.
+  require-signed Deploy an app only from commits an allowed signer signed, over push and webhook; --off deploys any commit again.
+  signers        The SSH keys whose signed commits may deploy an app that requires signed commits.
+  webhook        Deploy an app when GitHub says its branch moved; prints what to paste into GitHub, once.
+  webhooks       List the webhooks and what their last delivery did.
 
 Global Flags:
       --json                  print JSON, one object per line
@@ -551,11 +553,121 @@ Global Flags:
       --state-dir string      where helios keeps its state (default "~/.bedrock")
       --target string         operate on this explicitly named SSH target
       --targets-file string   the local named-target configuration (default "~/.bedrock/targets.json")
+== helios git require-signed (hidden false)
+Deploy an app only from commits an allowed signer signed, over push and webhook; --off deploys any commit again.
+Deploy an app only from commits an allowed signer signed, over push and webhook.
+
+The commit that deploys, the tip of the push or of the branch a webhook
+names, must carry an SSH signature by a key helios git signers allows.
+An unsigned tip, a key nobody allowed, a GPG signature (GitHub's on the
+merges it makes among them) or a key not allowed to sign git commits is
+refused, and nothing of it is built. A tree uploaded with helios deploy
+--to bedrock@ is refused too, since it has no commit to check; root can
+still deploy one, with helios deploy on the machine or --to root@.
+
+To sign, on the machine you commit from:
+
+  git config gpg.format ssh
+  git config user.signingkey ~/.ssh/id_ed25519.pub
+  git config commit.gpgsign true
+
+Allow the signer first, then require signatures:
+
+  helios git signers add kyle@example.com "$(cat ~/.ssh/id_ed25519.pub)"
+  helios git require-signed hello
+Usage:
+  helios git require-signed <app> [flags]
+
+Flags:
+      --digest string   apply only if the plan is still the one with this digest; implies --yes
+      --off             deploy the app from any commit again, signed or not
+      --plan            show the plan and change nothing
+      --yes             apply without asking
+
+Global Flags:
+      --json                  print JSON, one object per line
+      --socket string         the daemon's socket; the local kernel is used when nothing answers (default "/run/bedrock/bedrock.sock")
+      --state-dir string      where helios keeps its state (default "~/.bedrock")
+      --target string         operate on this explicitly named SSH target
+      --targets-file string   the local named-target configuration (default "~/.bedrock/targets.json")
 == helios git serve (hidden true)
 What a push key runs: git receive-pack, upload-pack or a tarball deploy, for its apps only.
 
 Usage:
   helios git serve <apps...> [flags]
+
+Global Flags:
+      --json                  print JSON, one object per line
+      --socket string         the daemon's socket; the local kernel is used when nothing answers (default "/run/bedrock/bedrock.sock")
+      --state-dir string      where helios keeps its state (default "~/.bedrock")
+      --target string         operate on this explicitly named SSH target
+      --targets-file string   the local named-target configuration (default "~/.bedrock/targets.json")
+== helios git signers (hidden false)
+The SSH keys whose signed commits may deploy an app that requires signed commits.
+
+Usage:
+  helios git signers [command]
+
+Available Commands:
+  add         Allow an SSH key to sign the commits an app that requires signed commits deploys. The key comes from the argument or stdin.
+  list        List the allowed signers, and the apps that deploy only signed commits.
+  remove      Stop a signer's commits from deploying; a name removes every key it signs with.
+
+Global Flags:
+      --json                  print JSON, one object per line
+      --socket string         the daemon's socket; the local kernel is used when nothing answers (default "/run/bedrock/bedrock.sock")
+      --state-dir string      where helios keeps its state (default "~/.bedrock")
+      --target string         operate on this explicitly named SSH target
+      --targets-file string   the local named-target configuration (default "~/.bedrock/targets.json")
+
+Use "helios git signers [command] --help" for more information about a command.
+== helios git signers add (hidden false)
+Allow an SSH key to sign the commits an app that requires signed commits deploys. The key comes from the argument or stdin.
+Allow an SSH key to sign the commits an app that requires signed commits deploys.
+The key comes from the argument or stdin. The name is one word, such as an
+email address, and is what a refusal and a receipt show.
+
+This is a signing key, not a push key: helios git allow says who may push,
+and this says whose signature a pushed commit must carry. Give it the
+public half of a key a person holds, never one an agent or CI can use.
+
+  helios git signers add kyle@example.com "$(cat ~/.ssh/id_ed25519.pub)"
+Usage:
+  helios git signers add <name> [public key] [flags]
+
+Flags:
+      --digest string   apply only if the plan is still the one with this digest; implies --yes
+      --plan            show the plan and change nothing
+      --yes             apply without asking
+
+Global Flags:
+      --json                  print JSON, one object per line
+      --socket string         the daemon's socket; the local kernel is used when nothing answers (default "/run/bedrock/bedrock.sock")
+      --state-dir string      where helios keeps its state (default "~/.bedrock")
+      --target string         operate on this explicitly named SSH target
+      --targets-file string   the local named-target configuration (default "~/.bedrock/targets.json")
+== helios git signers list (hidden false)
+List the allowed signers, and the apps that deploy only signed commits.
+
+Usage:
+  helios git signers list [flags]
+
+Global Flags:
+      --json                  print JSON, one object per line
+      --socket string         the daemon's socket; the local kernel is used when nothing answers (default "/run/bedrock/bedrock.sock")
+      --state-dir string      where helios keeps its state (default "~/.bedrock")
+      --target string         operate on this explicitly named SSH target
+      --targets-file string   the local named-target configuration (default "~/.bedrock/targets.json")
+== helios git signers remove (hidden false)
+Stop a signer's commits from deploying; a name removes every key it signs with.
+
+Usage:
+  helios git signers remove <name, fingerprint or public key> [flags]
+
+Flags:
+      --digest string   apply only if the plan is still the one with this digest; implies --yes
+      --plan            show the plan and change nothing
+      --yes             apply without asking
 
 Global Flags:
       --json                  print JSON, one object per line

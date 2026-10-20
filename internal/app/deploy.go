@@ -21,6 +21,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/kylebegeman/helios/internal/cloudflare"
 	"github.com/kylebegeman/helios/internal/docker"
@@ -62,6 +63,10 @@ type DeployInput struct {
 	// Commit is the source's commit when the caller knows it, as a push
 	// does; otherwise it is read from the source when it is a checkout.
 	Commit string `json:"commit,omitempty"`
+	// Signer is who signed Commit, as a push or webhook checked it for an
+	// app that deploys only signed commits: the principal and key
+	// fingerprint. Empty means the commit wasn't checked.
+	Signer string `json:"signer,omitempty"`
 	// Manifest names the manifest at the source's root; empty is helios.yaml.
 	Manifest string `json:"manifest,omitempty"`
 	// SecretsFrom names an app whose current secrets are copied to this one
@@ -92,6 +97,9 @@ func (d Deploy) Plan(ctx context.Context, raw json.RawMessage) (*kernel.Plan, er
 	}
 	if !revisionPattern.MatchString(in.Revision) {
 		return nil, fmt.Errorf("revision %q must be lowercase letters, digits and hyphens", in.Revision)
+	}
+	if len(in.Signer) > 200 || strings.ContainsFunc(in.Signer, unicode.IsControl) {
+		return nil, errors.New("the commit's signer must be one line of at most 200 characters")
 	}
 	// The manifest is read as root: LoadFile takes only a plain file of
 	// the source's own, never a link out of it.
@@ -183,6 +191,7 @@ func (d Deploy) Plan(ctx context.Context, raw json.RawMessage) (*kernel.Plan, er
 type buildFrom struct {
 	source      string
 	commit      string
+	signer      string
 	restore     Restore
 	secretsFrom string
 }
@@ -279,6 +288,13 @@ func noteCommit(commit string) string {
 		return ""
 	}
 	return "commit " + commit
+}
+
+func noteSigner(signer string) string {
+	if signer == "" {
+		return ""
+	}
+	return "signed by " + signer
 }
 
 // notes joins the parts of a step's note that are there.

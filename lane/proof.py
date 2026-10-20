@@ -27,6 +27,7 @@ PROOFS = {
     "m4": {"title": "Secrets, cron, one-offs, and private restore fixtures", "needs": "m3; --staging with sanitized sources and matching archives", "dns": True, "private": True, "timeout": 1800},
     "m5": {"title": "Backups, restore drills, email, and monitoring", "needs": "m4 apps; LANE_DW_CHAPTERS", "dns": True, "timeout": 1800},
     "m6": {"title": "Git push, isolation, DNS, and webhooks", "needs": "m5 apps; LANE_BEGAMIN_REPO; public wildcard DNS", "dns": True, "timeout": 1800},
+    "signed": {"title": "Signed-commit deploys over push, and the box's own git verifying them", "needs": "m2; no public DNS", "timeout": 1500},
     "m7": {"title": "Multi-workload releases and data recovery", "needs": "m2; --setup storage (or existing storage); public wildcard DNS", "dns": True, "timeout": 1800},
     "cloudflare": {"title": "Real Cloudflare record lifecycle", "needs": "m6; explicit --real-cloudflare; token already installed on disposable target", "dns": True, "timeout": 1800},
 }
@@ -254,7 +255,7 @@ def main() -> int:
         # Fail early on implicit historical fixture dependencies.
         preceding = set()
         for proof in args.proofs:
-            if proof in ("m3", "m7") and "m2" not in preceding:
+            if proof in ("m3", "m7", "signed") and "m2" not in preceding:
                 ready = remote(args.config, "command -v docker >/dev/null && systemctl is-active bedrock >/dev/null && docker info >/dev/null")
                 if ready.returncode:
                     report["problems"].append(f"{proof}: host is not prepared; select m2 first")

@@ -37,7 +37,161 @@ func newGit(a *app) *cobra.Command {
 		Use:   "git",
 		Short: "Deploy by pushing: which keys may push which apps, remotes, and GitHub webhooks.",
 	}
-	cmd.AddCommand(newGitAllow(a), newGitDeny(a), newGitKeys(a), newGitRemote(a), newGitBranch(a), newGitWebhook(a), newGitWebhooks(a), newGitServe(a), newGitHook(a))
+	cmd.AddCommand(newGitAllow(a), newGitDeny(a), newGitKeys(a), newGitSigners(a), newGitRequireSigned(a), newGitRemote(a), newGitBranch(a), newGitWebhook(a), newGitWebhooks(a), newGitServe(a), newGitHook(a))
+	return cmd
+}
+
+// newGitSigners is helios git signers.
+func newGitSigners(a *app) *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "signers",
+		Short: "The SSH keys whose signed commits may deploy an app that requires signed commits.",
+	}
+	cmd.AddCommand(newGitSignersAdd(a), newGitSignersRemove(a), newGitSignersList(a))
+	return cmd
+}
+
+// newGitSignersAdd is helios git signers add.
+func newGitSignersAdd(a *app) *cobra.Command {
+	var planOnly bool
+	cmd := &cobra.Command{
+		Use:   "add <name> [public key]",
+		Short: "Allow an SSH key to sign the commits an app that requires signed commits deploys. The key comes from the argument or stdin.",
+		Long: `Allow an SSH key to sign the commits an app that requires signed commits deploys.
+The key comes from the argument or stdin. The name is one word, such as an
+email address, and is what a refusal and a receipt show.
+
+This is a signing key, not a push key: helios git allow says who may push,
+and this says whose signature a pushed commit must carry. Give it the
+public half of a key a person holds, never one an agent or CI can use.
+
+  helios git signers add kyle@example.com "$(cat ~/.ssh/id_ed25519.pub)"`,
+		Args: cobra.MinimumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			text := strings.Join(args[1:], " ")
+			if text == "" {
+				// stdin holds the key, so it can't also answer the prompt.
+				if !planOnly && !a.yes && a.digest == "" {
+					return errors.New("a key on stdin needs --yes or an approved --digest, because stdin can't also answer the prompt; or give the key as an argument")
+				}
+				b, err := io.ReadAll(io.LimitReader(os.Stdin, 16<<10))
+				if err != nil {
+					return err
+				}
+				text = string(b)
+			}
+			return a.operate(cmd.Context(), gitdeploy.SignersAddKind, gitdeploy.SignersAddInput{Principal: args[0], Key: strings.TrimSpace(text), By: requester()}, planOnly)
+		},
+	}
+	a.mutatingFlags(cmd, &planOnly)
+	return cmd
+}
+
+// newGitSignersRemove is helios git signers remove.
+func newGitSignersRemove(a *app) *cobra.Command {
+	var planOnly bool
+	cmd := &cobra.Command{
+		Use:   "remove <name, fingerprint or public key>",
+		Short: "Stop a signer's commits from deploying; a name removes every key it signs with.",
+		Args:  cobra.MinimumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return a.operate(cmd.Context(), gitdeploy.SignersRemoveKind, gitdeploy.SignersRemoveInput{Signer: strings.Join(args, " "), By: requester()}, planOnly)
+		},
+	}
+	a.mutatingFlags(cmd, &planOnly)
+	return cmd
+}
+
+// newGitSignersList is helios git signers list.
+func newGitSignersList(a *app) *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "list",
+		Short: "List the allowed signers, and the apps that deploy only signed commits.",
+		Args:  cobra.NoArgs,
+		RunE: func(_ *cobra.Command, _ []string) error {
+			p, err := gitdeploy.ReadPolicy(gitdeploy.SigningDir)
+			if err != nil {
+				return err
+			}
+			if a.json {
+				type row struct {
+					Principal   string `json:"principal"`
+					Type        string `json:"type"`
+					Fingerprint string `json:"fingerprint"`
+					Options     string `json:"options,omitempty"`
+				}
+				out := struct {
+					Signers       []row    `json:"signers"`
+					HandWritten   int      `json:"hand_written,omitempty"`
+					RequireSigned []string `json:"require_signed"`
+				}{Signers: []row{}, HandWritten: len(p.Others), RequireSigned: append([]string{}, p.RequireSigned...)}
+				for _, s := range p.Signers {
+					out.Signers = append(out.Signers, row{s.Principal, s.Type, s.Fingerprint(), s.Options})
+				}
+				return json.NewEncoder(a.stdout).Encode(out)
+			}
+			if len(p.Signers) == 0 && len(p.Others) == 0 {
+				fmt.Fprintln(a.stdout, "no signer is allowed yet; helios git signers add <name> <public key> allows one")
+			} else if len(p.Signers) > 0 {
+				w := tabwriter.NewWriter(a.stdout, 0, 4, 2, ' ', 0)
+				fmt.Fprintln(w, "SIGNER\tKEY\tTYPE")
+				for _, s := range p.Signers {
+					fmt.Fprintf(w, "%s\t%s\t%s\n", s.Principal, s.Fingerprint(), s.Type)
+				}
+				if err := w.Flush(); err != nil {
+					return err
+				}
+			}
+			if len(p.Others) > 0 {
+				fmt.Fprintf(a.stdout, "%d hand-written line(s) in %s that helios can't read may allow signers too, and are kept as they are\n", len(p.Others), filepath.Join(gitdeploy.SigningDir, "allowed_signers"))
+			}
+			if len(p.RequireSigned) == 0 {
+				fmt.Fprintln(a.stdout, "no app deploys only signed commits; helios git require-signed <app> makes one")
+			} else {
+				fmt.Fprintf(a.stdout, "deploys only signed commits: %s\n", strings.Join(p.RequireSigned, ", "))
+			}
+			return nil
+		},
+	}
+	return cmd
+}
+
+// newGitRequireSigned is helios git require-signed.
+func newGitRequireSigned(a *app) *cobra.Command {
+	var (
+		planOnly bool
+		off      bool
+	)
+	cmd := &cobra.Command{
+		Use:   "require-signed <app>",
+		Short: "Deploy an app only from commits an allowed signer signed, over push and webhook; --off deploys any commit again.",
+		Long: `Deploy an app only from commits an allowed signer signed, over push and webhook.
+
+The commit that deploys, the tip of the push or of the branch a webhook
+names, must carry an SSH signature by a key helios git signers allows.
+An unsigned tip, a key nobody allowed, a GPG signature (GitHub's on the
+merges it makes among them) or a key not allowed to sign git commits is
+refused, and nothing of it is built. A tree uploaded with helios deploy
+--to bedrock@ is refused too, since it has no commit to check; root can
+still deploy one, with helios deploy on the machine or --to root@.
+
+To sign, on the machine you commit from:
+
+  git config gpg.format ssh
+  git config user.signingkey ~/.ssh/id_ed25519.pub
+  git config commit.gpgsign true
+
+Allow the signer first, then require signatures:
+
+  helios git signers add kyle@example.com "$(cat ~/.ssh/id_ed25519.pub)"
+  helios git require-signed hello`,
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return a.operate(cmd.Context(), gitdeploy.RequireSignedKind, gitdeploy.RequireSignedInput{App: args[0], Off: off, By: requester()}, planOnly)
+		},
+	}
+	cmd.Flags().BoolVar(&off, "off", false, "deploy the app from any commit again, signed or not")
+	a.mutatingFlags(cmd, &planOnly)
 	return cmd
 }
 
@@ -112,15 +266,28 @@ func newGitKeys(a *app) *cobra.Command {
 			if err != nil {
 				return err
 			}
+			policy, err := gitdeploy.ReadPolicy(gitdeploy.SigningDir)
+			if err != nil {
+				return err
+			}
 			if a.json {
 				type row struct {
 					Fingerprint string   `json:"fingerprint"`
 					Comment     string   `json:"comment,omitempty"`
 					Apps        []string `json:"apps"`
+					// SignedOnly are the apps among Apps that deploy only
+					// signed commits.
+					SignedOnly []string `json:"signed_only,omitempty"`
 				}
 				var rows []row
 				for _, k := range kf.Keys {
-					rows = append(rows, row{k.Fingerprint(), k.Comment, k.Apps})
+					var signed []string
+					for _, app := range k.Apps {
+						if policy.Requires(app) {
+							signed = append(signed, app)
+						}
+					}
+					rows = append(rows, row{k.Fingerprint(), k.Comment, k.Apps, signed})
 				}
 				return json.NewEncoder(a.stdout).Encode(rows)
 			}
@@ -131,7 +298,14 @@ func newGitKeys(a *app) *cobra.Command {
 			w := tabwriter.NewWriter(a.stdout, 0, 4, 2, ' ', 0)
 			fmt.Fprintln(w, "KEY\tCOMMENT\tDEPLOYS")
 			for _, k := range kf.Keys {
-				fmt.Fprintf(w, "%s\t%s\t%s\n", k.Fingerprint(), orDash(k.Comment), strings.Join(k.Apps, ", "))
+				deploys := make([]string, len(k.Apps))
+				for i, app := range k.Apps {
+					deploys[i] = app
+					if policy.Requires(app) {
+						deploys[i] += " (signed commits only)"
+					}
+				}
+				fmt.Fprintf(w, "%s\t%s\t%s\n", k.Fingerprint(), orDash(k.Comment), strings.Join(deploys, ", "))
 			}
 			return w.Flush()
 		},
@@ -318,6 +492,11 @@ func newGitServe(a *app) *cobra.Command {
 				}
 				return execGit("upload-pack", dir)
 			default:
+				// A push key can't deploy around the signing policy; root
+				// can, through helios receive.
+				if err := gitdeploy.CheckTree(gitdeploy.SigningDir, req.App); err != nil {
+					return err
+				}
 				if code := gitdeploy.ReceiveTree(cmd.Context(), req.App, os.Stdin, a.stdout, gitdeploy.ThroughDaemon(a.socket), gitdeploy.BuildsDir); code != 0 {
 					return quietError{code}
 				}
@@ -361,6 +540,8 @@ func newReceive(a *app) *cobra.Command {
 			root := gitdeploy.BuildsDir
 			if os.Geteuid() == 0 {
 				root = filepath.Join(a.stateDir, "builds")
+			} else if err := gitdeploy.CheckTree(gitdeploy.SigningDir, args[0]); err != nil {
+				return err
 			}
 			if code := gitdeploy.ReceiveTree(cmd.Context(), args[0], os.Stdin, a.stdout, gitdeploy.ThroughDaemon(a.socket), root); code != 0 {
 				return quietError{code}

@@ -150,6 +150,7 @@ locally created QEMU machine.
 | `m4` | Revision-pinned secrets, cron, one-offs, restore private-shaped apps | `m3`; `--staging`, `LANE_SITE_URL`, expected `LANE_DW_CHAPTERS` |
 | `m5` | Backups, drills, restoration, email outage signals | `m4`'s apps and expected chapter count |
 | `m6` | Git push, app isolation, DNS stand-in, webhook, remote deploy | `m5`'s apps; explicit `LANE_BEGAMIN_REPO`, `LANE_SITE_URL` |
+| `signed` | A signed pushed tip deploys and names its signer; unsigned, unknown-key, GPG and other-namespace tips and uploaded trees are refused with nothing built; an app without the policy deploys as before; the gitdeploy signing and webhook tests on the guest's git and OpenSSH | `m2`; no public DNS |
 | `m7` | Generated/derived secrets, release order, singleton recovery, pgvector, object store, backup/restore | Prepared host; storage integration; public wildcard DNS |
 | `cloudflare` | Records made, retained, pruned and removed against Cloudflare itself | `m6`; real integration token already on target; explicit `--real-cloudflare` |
 

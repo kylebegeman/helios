@@ -371,6 +371,24 @@ way, commit or not. `helios git webhook <app> --repo git@github.com:you/app.git`
 deploys when GitHub says the branch moved, with a deploy key and secret
 helios makes and shows once.
 
+A push key says who may push; it doesn't say a person wrote what was
+pushed. `helios git signers add <name> <public key>` allows a person's SSH
+signing key, and `helios git require-signed <app>` then deploys that app
+only from a tip commit one of them signed, over push and webhook alike. An
+unsigned commit, a key nobody allowed, a GPG signature (GitHub signs the
+merges it makes that way) or a key not allowed to sign git commits is
+refused before anything is built, and the refusal names who may sign. A
+tree sent with `--to bedrock@` has no commit to check, so it is refused
+too, and so is a push that adds a `refs/replace/` ref, which could change
+what a signed commit deploys. To sign, set `git config gpg.format ssh`, `git config user.signingkey
+~/.ssh/id_ed25519.pub` and `git config commit.gpgsign true` where you
+commit, and allow the signer before requiring signatures. Root is the
+break glass: `helios deploy` on the machine or `--to root@`, `rollback`,
+`launch`, `preview up` and `recover` aren't held to signatures. The policy
+lives in `/etc/bedrock/git`, and `helios recover` and `helios move` don't
+carry it yet, so run `signers add` and `require-signed` again on a
+recovered machine.
+
 `helios launch <repository> --host <hostname>` takes a repository from
 nothing to running: it fetches the branch, works out what the source is (a
 Dockerfile, or a built site), writes the manifest it is missing and deploys

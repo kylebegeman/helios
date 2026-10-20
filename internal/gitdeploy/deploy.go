@@ -42,9 +42,11 @@ func ThroughDaemon(socket string) Deployer {
 }
 
 // Deploy deploys a source tree, writing its steps to out the way the CLI
-// shows them without a terminal. It reports whether the deploy succeeded.
-func Deploy(ctx context.Context, d Deployer, source, commit string, out io.Writer) (bool, error) {
-	in := app.DeployInput{Source: source, Revision: app.NewRevision(time.Now()), Commit: commit}
+// shows them without a terminal. signer is who signed commit, for an app
+// that deploys only signed commits. It reports whether the deploy
+// succeeded.
+func Deploy(ctx context.Context, d Deployer, source, commit, signer string, out io.Writer) (bool, error) {
+	in := app.DeployInput{Source: source, Revision: app.NewRevision(time.Now()), Commit: commit, Signer: signer}
 	r := ui.New(out, false, false)
 	receipt, err := d(ctx, in, r.Event)
 	if err != nil {
@@ -57,8 +59,12 @@ const zeroCommit = "0000000000000000000000000000000000000000"
 
 var commitPattern = regexp.MustCompile(`^(?:[a-fA-F0-9]{40}|[a-fA-F0-9]{64})$`)
 
-// hookBuildsDir is where the hook writes source trees; tests move it.
-var hookBuildsDir = BuildsDir
+// hookBuildsDir is where the hook writes source trees, and signingDir is
+// the signing policy it holds pushes to; tests move them.
+var (
+	hookBuildsDir = BuildsDir
+	signingDir    = SigningDir
+)
 
 // Hook is the pre-receive hook: a push to the deploy branch deploys that
 // commit, and a failed deploy refuses the push, so the branch on the
@@ -82,6 +88,16 @@ func Hook(ctx context.Context, appName string, stdin io.Reader, out io.Writer, d
 			fmt.Fprintln(out, "helios: invalid git ref update")
 			return 1
 		}
+		if strings.HasPrefix(f[2], "refs/replace/") {
+			// A replace ref makes git read one object as another, so it
+			// could change what a signed commit deploys. Deleting one is
+			// always fine.
+			if strings.Trim(f[1], "0") == "" {
+				continue
+			}
+			fmt.Fprintf(out, "helios: %s would make git read one object as another; replace refs aren't kept here, and the push is refused\n", f[2])
+			return 1
+		}
 		if f[2] != "refs/heads/"+branch {
 			fmt.Fprintf(out, "helios: %s kept; pushes to %s deploy\n", strings.TrimPrefix(f[2], "refs/heads/"), branch)
 			continue
@@ -100,6 +116,16 @@ func Hook(ctx context.Context, appName string, stdin io.Reader, out io.Writer, d
 		return 0
 	}
 	short := target[:12]
+	// The tip is checked before anything leaves the repository, so a
+	// commit the policy refuses is never exported, let alone built.
+	signer, err := CheckTip(ctx, signingDir, appName, repo, target)
+	if err != nil {
+		fmt.Fprintf(out, "helios: %v; the push is refused\n", err)
+		return 1
+	}
+	if signer != "" {
+		fmt.Fprintf(out, "helios: %s is signed by %s\n", short, signer)
+	}
 	fmt.Fprintf(out, "helios: deploying %s of %s\n", short, appName)
 	dir, err := NewBuildDir(hookBuildsDir, appName, short)
 	if err != nil {
@@ -111,7 +137,7 @@ func Hook(ctx context.Context, appName string, stdin io.Reader, out io.Writer, d
 		fmt.Fprintf(out, "helios: %v\n", err)
 		return 1
 	}
-	return deployTree(ctx, appName, dir, short, out, d, "the push is refused and the running revision stays")
+	return deployTree(ctx, appName, dir, short, signer, out, d, "the push is refused and the running revision stays")
 }
 
 // ReceiveTree takes a source tree as a tar stream, as helios deploy --to
@@ -128,16 +154,16 @@ func ReceiveTree(ctx context.Context, appName string, stdin io.Reader, out io.Wr
 		return 1
 	}
 	fmt.Fprintf(out, "helios: deploying %s from the uploaded tree\n", appName)
-	return deployTree(ctx, appName, dir, "", out, d, "the running revision stays")
+	return deployTree(ctx, appName, dir, "", "", out, d, "the running revision stays")
 }
 
-func deployTree(ctx context.Context, appName, dir, commit string, out io.Writer, d Deployer, onFailure string) int {
+func deployTree(ctx context.Context, appName, dir, commit, signer string, out io.Writer, d Deployer, onFailure string) int {
 	m, err := CheckSource(dir, appName)
 	if err != nil {
 		fmt.Fprintf(out, "helios: %v\n", err)
 		return 1
 	}
-	ok, err := Deploy(ctx, d, dir, commit, out)
+	ok, err := Deploy(ctx, d, dir, commit, signer, out)
 	if errors.Is(err, api.ErrDisconnected) {
 		fmt.Fprintf(out, "helios: %v; the daemon finishes the deploy on its own\n", err)
 		return 1

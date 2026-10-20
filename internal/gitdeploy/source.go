@@ -68,8 +68,10 @@ func PruneBuilds(root, app string, keep int) {
 // ExportCommit writes a commit's tree into dest, as git archive gives it.
 // In a pre-receive hook the pushed objects are still in quarantine, and
 // git finds them through the hook's environment, which this inherits.
+// Replace refs are ignored, so the tree written is the one the commit
+// names, and the one its signature covers.
 func ExportCommit(ctx context.Context, repoDir, commit, dest string) error {
-	cmd := exec.CommandContext(ctx, "git", "-C", repoDir, "archive", "--format=tar", commit)
+	cmd := exec.CommandContext(ctx, "git", "--no-replace-objects", "-C", repoDir, "archive", "--format=tar", commit)
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		return err
