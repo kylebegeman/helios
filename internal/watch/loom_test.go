@@ -462,6 +462,33 @@ func TestAWarningThatBecomesAnOutageReachesLoomOnce(t *testing.T) {
 	}
 }
 
+// The body's key and message are the evidence's: redacted as it is, and
+// cut to the same length.
+func TestTheBodysKeyAndMessageAreRedactedAndCutAsTheEvidenceIs(t *testing.T) {
+	r := newLoomRig(t)
+	const token = "fake_watch_token_0000"
+	tail := strings.Repeat("x", 5000)
+	r.rounds(3, Condition{Key: "watch:https://status.example.test/health?token=" + token, Subject: "status.example.test", Severity: state.SeverityCritical,
+		Message: "the probe signed with " + loomSecret + " from 10.0.0.1 got 502 " + tail})
+	q, body := r.loom.last(t)
+	var evidence incident.Evidence
+	if err := json.Unmarshal(body.Evidence, &evidence); err != nil {
+		t.Fatal(err)
+	}
+	redacted := "the probe signed with [redacted LOOM_WEBHOOK_SECRET] from [private] got 502 " + tail
+	message := redacted[:4<<10] + "[+" + strconv.Itoa(len(redacted)-4<<10) + " bytes]"
+	key := "watch:https://status.example.test/health?token=[redacted]"
+	if body.Key != key || evidence.Incident.Key != key || body.Message != message || evidence.Incident.Message != message {
+		t.Fatalf("key %q, message %.120q of %d bytes; the evidence's %q, %.120q", body.Key, body.Message, len(body.Message), evidence.Incident.Key, evidence.Incident.Message)
+	}
+	for _, s := range []string{token, "10.0.0.1"} {
+		if bytes.Contains(q.body, []byte(s)) {
+			t.Fatalf("the body holds %q", s)
+		}
+	}
+	r.hidesTheToken()
+}
+
 // A body Loom may have, because no clear answer came after it was
 // written, is never sent again: not when the fan-out retries the leg, and
 // not when the daemon starts again and sends the notice to every leg.
