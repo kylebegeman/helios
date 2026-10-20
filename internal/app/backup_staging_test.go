@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -193,6 +194,87 @@ func TestABackupInterruptedMidSnapshotKeepsItsStagingUntilItResumes(t *testing.T
 				t.Fatalf("the resumed snapshot must refuse an uncertain capture: %+v %v", receipt, err)
 			}
 			stagingKept(t, b.StateDir, staging, false)
+		})
+	}
+}
+
+// A daemon killed while a failed snapshot removes its staging leaves part
+// of the tree, and the step's failure unjournaled, so its operation
+// resumes the snapshot. The owner file goes first, so the resumed snapshot
+// refuses what is left rather than recording it as a backup.
+func TestASnapshotWhoseStagingRemovalStopsPartwayLeavesNothingToResume(t *testing.T) {
+	for _, machine := range []bool{false, true} {
+		t.Run(map[bool]string{false: "app", true: "machine"}[machine], func(t *testing.T) {
+			b, raw := backupIdentityFixture(t, machine)
+			ctx := context.Background()
+			plan, err := b.Plan(ctx, raw)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := plan.Steps[0].Apply(ctx, io.Discard); err != nil {
+				t.Fatal(err)
+			}
+			staging := backupStaging(b, machine)
+			copied := filepath.Join(staging, "copied")
+			if err := os.WriteFile(copied, []byte("what prepare copied"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			var bucketDown atomic.Bool
+			var backups atomic.Int32
+			bucketDown.Store(true)
+			at := time.Now().UTC().Truncate(time.Second)
+			summary, _ := json.Marshal(struct {
+				Type string `json:"message_type"`
+				restic.Summary
+			}{"summary", restic.Summary{SnapshotID: strings.Repeat("c", 64), BackupStart: at, BackupEnd: at.Add(time.Second), TotalFiles: 1, TotalBytes: 19}})
+			fake := dockertest.New(t)
+			fake.OnCreate = func(c dockertest.Container) {
+				fake.Update(c.Name, func(c *dockertest.Container) {
+					c.ExitAfter = 1
+					switch c.Cmd[0] {
+					case "init":
+						c.ExitCode, c.Logs = 1, `{"message_type":"exit_error","code":1,"message":"Fatal: config file already exists"}`
+						if bucketDown.Load() {
+							c.Logs = `{"message_type":"exit_error","code":1,"message":"Fatal: create repository at s3:https://storage.example.test failed: dial tcp 192.0.2.10:443: i/o timeout"}`
+						}
+					case "backup":
+						backups.Add(1)
+						c.Logs = string(summary)
+					}
+				})
+			}
+			// The removal stops partway, as it would with the daemon killed
+			// in it.
+			removeStaging = func(string) error {
+				if err := os.Remove(copied); err != nil {
+					t.Error(err)
+				}
+				return errors.New("killed")
+			}
+			t.Cleanup(func() { removeStaging = os.RemoveAll })
+			if err := plan.Steps[1].Apply(ctx, io.Discard); err == nil || !strings.Contains(err.Error(), "i/o timeout") {
+				t.Fatalf("got %v, want the bucket's failure", err)
+			}
+			if onDisk(t, staging+".operation.json") {
+				t.Error("the owner file outlived a removal that stopped partway")
+			}
+
+			removeStaging = os.RemoveAll
+			bucketDown.Store(false)
+			resumed, err := b.Plan(ctx, raw)
+			if err != nil {
+				t.Fatal(err)
+			}
+			const want = "backup staging belongs to another operation; start a fresh backup"
+			if err := resumed.Steps[1].Apply(ctx, io.Discard); err == nil || err.Error() != want {
+				t.Fatalf("the resumed snapshot got %v, want %q", err, want)
+			}
+			if n := backups.Load(); n != 0 {
+				t.Errorf("the resumed snapshot took %d snapshot(s) of a partial staging", n)
+			}
+			if good, err := b.Store.LastGoodBackupRun(ctx, map[bool]string{false: "hello", true: manifest.ReservedApp}[machine], state.BackupRunBackup); err != nil || good != nil {
+				t.Errorf("a partial staging was recorded as a backup: %+v %v", good, err)
+			}
 		})
 	}
 }

@@ -407,6 +407,13 @@ func (x *backingUp) ownsStaging(ctx context.Context) (bool, error) {
 	return owner.Operation == kernel.OperationID(ctx) && owner.RunID == x.run.id && owner.Owner == x.owner && owner.Target == x.target && owner.Bucket == x.bucket && owner.Kind == x.run.kind, nil
 }
 
+// removeStaging removes a backup's staging tree. Tests replace it.
+var removeStaging = os.RemoveAll
+
+// discardStaging removes the staging once its snapshot is taken. The tree
+// goes before the owner file: nothing snapshots it again, and a retention
+// stopped partway removes the rest when it resumes, while the owner file
+// still names it.
 func (x *backingUp) discardStaging(ctx context.Context) error {
 	if x.receiptDir != "" {
 		owned, err := x.ownsStaging(ctx)
@@ -414,13 +421,28 @@ func (x *backingUp) discardStaging(ctx context.Context) error {
 			return err
 		}
 	}
-	if err := os.RemoveAll(x.staging); err != nil {
+	if err := removeStaging(x.staging); err != nil {
 		return err
 	}
 	if x.receiptDir != "" {
 		return os.Remove(x.staging + ".operation.json")
 	}
 	return nil
+}
+
+// dropStaging removes a failed backup's staging. The owner file goes
+// first: the failure is journaled only after the step returns, so a daemon
+// killed partway through the removal resumes the snapshot, which must find
+// a staging it doesn't own and refuse rather than snapshot what is left.
+func (x *backingUp) dropStaging(ctx context.Context) error {
+	owned, err := x.ownsStaging(ctx)
+	if err != nil || !owned {
+		return err
+	}
+	if err := os.Remove(x.staging + ".operation.json"); err != nil {
+		return err
+	}
+	return removeStaging(x.staging)
 }
 
 // failStaged records a failed run and removes the staging this operation
@@ -434,7 +456,7 @@ func (x *backingUp) failStaged(ctx context.Context, err error, resumable bool) e
 	if x.receiptDir != "" && (!resumable || ctx.Err() == nil) {
 		// Without its cancellation, ctx still names the operation that
 		// owns the staging.
-		if derr := x.discardStaging(context.WithoutCancel(ctx)); derr != nil {
+		if derr := x.dropStaging(context.WithoutCancel(ctx)); derr != nil {
 			err = fmt.Errorf("%w; its staging at %s could not be removed: %v", err, x.staging, derr)
 		}
 	}
