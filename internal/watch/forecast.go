@@ -18,7 +18,7 @@ type Point struct {
 // burst can't swing the fit. A step that moves every later sample can,
 // when it sits near the middle of the points, and so can a burst that has
 // since stopped: WithoutShifts sets a lone step aside first, and
-// RecentClimb says whether a burst goes on. The slope is in bytes a
+// Climbing says whether usage still climbs. The slope is in bytes a
 // second and the intercept is the fitted value at the first point's time.
 // It is not ok without two points at different times.
 func TheilSen(points []Point) (slope, intercept float64, ok bool) {
@@ -58,6 +58,32 @@ func median(values []float64) float64 {
 	return values[mid]
 }
 
+// steady is the median rate between the points, in bytes a second, and
+// how far the change into each point strays from it: strays[i] is the
+// change in level from point i-1 to point i, a point's level being its
+// usage less the steady growth since the first point. The steady rate
+// keeps a gap between samples from reading as a jump. It is not ok
+// without two changes at different times.
+func steady(points []Point) (rate float64, strays []float64, ok bool) {
+	n := len(points)
+	rates := make([]float64, 0, n)
+	for i := 1; i < n; i++ {
+		if dt := points[i].At.Sub(points[i-1].At).Seconds(); dt > 0 {
+			rates = append(rates, (points[i].Used-points[i-1].Used)/dt)
+		}
+	}
+	if len(rates) < 2 {
+		return 0, nil, false
+	}
+	rate = median(rates)
+	level := func(i int) float64 { return points[i].Used - rate*points[i].At.Sub(points[0].At).Seconds() }
+	strays = make([]float64, n)
+	for i := 1; i < n; i++ {
+		strays[i] = level(i) - level(i-1)
+	}
+	return rate, strays, true
+}
+
 // What WithoutShifts takes for a one-off change in usage.
 const (
 	// ShiftSpread is how many times the usual stray from the steady rate
@@ -94,7 +120,10 @@ const (
 // estimates, or, on a series quieter than that, than floor over
 // ShiftMaxSamples. Sudden changes either way, with at most ShiftGap quiet
 // ones between them, make one event, and the samples between its first
-// change and its last are inside it. Its size is the median level of the
+// change and its last are inside it. When they go one way and then the
+// other, and each way and the two together move the level more than a
+// step must (below), they are two events instead, such as a burst and a
+// temp file deleted minutes after it. Its size is the median level of the
 // ShiftLevelSamples samples from the one its last change lands on, less
 // the median level of the ShiftLevelSamples samples before its first
 // change. Neither run of samples reaches into a neighbouring event.
@@ -125,24 +154,15 @@ const (
 func WithoutShifts(points []Point, floor float64) []Point {
 	out := append([]Point(nil), points...)
 	n := len(points)
-	rates := make([]float64, 0, n)
-	for i := 1; i < n; i++ {
-		if dt := points[i].At.Sub(points[i-1].At).Seconds(); dt > 0 {
-			rates = append(rates, (points[i].Used-points[i-1].Used)/dt)
-		}
-	}
-	if len(rates) < 2 {
+	rate, strays, ok := steady(points)
+	if !ok {
 		return out
 	}
-	// The steady rate keeps a gap between samples from reading as a jump.
-	rate := median(rates)
 	// level is a sample less the steady growth since the first one.
 	level := func(i int) float64 { return points[i].Used - rate*points[i].At.Sub(points[0].At).Seconds() }
-	strays := make([]float64, n)
 	sizes := make([]float64, 0, n)
-	for i := 1; i < n; i++ {
-		strays[i] = level(i) - level(i-1)
-		sizes = append(sizes, math.Abs(strays[i]))
+	for _, s := range strays[1:] {
+		sizes = append(sizes, math.Abs(s))
 	}
 	// 1.4826 times the median absolute stray estimates the noise's
 	// standard deviation. On a quieter series, such as one whose strays
@@ -156,6 +176,40 @@ func WithoutShifts(points []Point, floor float64) []Point {
 
 	// An event covers the changes into samples from through to.
 	type event struct{ from, to int }
+	// split makes an event whose sudden changes go one way and then the
+	// other two events, when each way and the two together move the level
+	// more than big. Read as one, a burst and a temp file deleted minutes
+	// after it would net to a fall that pairs with the burst before them,
+	// and both bursts would be smoothed away.
+	split := func(e event) []event {
+		way := func(i int) bool { return strays[i] > 0 }
+		// The sudden changes go one way through q and the other from p.
+		p := e.from + 1
+		for p <= e.to && !(sudden(p) && way(p) != way(e.from)) {
+			p++
+		}
+		if p > e.to {
+			return []event{e}
+		}
+		q := p - 1
+		for !sudden(q) {
+			q--
+		}
+		var first, second float64
+		for k := e.from; k <= q; k++ {
+			first += strays[k]
+		}
+		for k := p; k <= e.to; k++ {
+			if sudden(k) && way(k) != way(p) {
+				return []event{e}
+			}
+			second += strays[k]
+		}
+		if math.Abs(first) > big && math.Abs(second) > big && math.Abs(first+second) > big {
+			return []event{{e.from, q}, {p, e.to}}
+		}
+		return []event{e}
+	}
 	var events []event
 	for i := 1; i < n; i++ {
 		if !sudden(i) {
@@ -167,7 +221,7 @@ func WithoutShifts(points []Point, floor float64) []Point {
 				e.to = k
 			}
 		}
-		events = append(events, e)
+		events = append(events, split(e)...)
 		i = e.to
 	}
 	// levelOf is the median level of the samples from lo through hi.
@@ -257,54 +311,211 @@ func WithoutShifts(points []Point, floor float64) []Point {
 	return out
 }
 
-// RecentClimb is how fast usage climbed across the newest window of the
-// points, in bytes a second. It takes the samples within end of the
-// window's oldest one and those within end of its newest, and divides the
-// change in their median usage by the time between their median times.
-// When the points span less than window, as after a restart, the window
-// is all of them. Medians keep a sample or two of noise at either end
-// from setting the climb, and a burst anywhere between the ends counts in
-// full, however quiet the rest of the window. It is not ok unless each
-// end holds at least minPoints samples and the two ends share none.
-func RecentClimb(points []Point, window, end time.Duration, minPoints int) (perSecond float64, ok bool) {
-	n := len(points)
-	if n == 0 {
-		return 0, false
-	}
-	newest := points[n-1].At
-	first := n - 1
-	for first > 0 && !points[first-1].At.Before(newest.Add(-window)) {
-		first--
-	}
-	oldest := points[first].At
-	// The oldest end is first through head-1, the newest tail through n-1.
-	head, tail := first, n
-	for head < n && points[head].At.Before(oldest.Add(end)) {
-		head++
-	}
-	for tail > first && points[tail-1].At.After(newest.Add(-end)) {
-		tail--
-	}
-	minPoints = max(minPoints, 1)
-	if head-first < minPoints || n-tail < minPoints || head > tail {
-		return 0, false
-	}
-	fromAt, fromUsed := middle(points[first:head], oldest)
-	toAt, toUsed := middle(points[tail:], oldest)
-	if toAt <= fromAt {
-		return 0, false
-	}
-	return (toUsed - fromUsed) / (toAt - fromAt), true
+// What Climbing takes for usage that still climbs.
+const (
+	// ClimbSpread is how many times the usual stray from the steady rate
+	// usage must rise past its high-water mark to make progress. Two
+	// samples of uniform noise differ by at most 2.3 times its usual
+	// stray, so noise around a level makes none. On a quieter series it
+	// is floor over ShiftMaxSamples, as for a sudden change, so rounding
+	// and small writes make none either.
+	ClimbSpread = 3.0
+	// ClimbFall is how many times that rise usage must fall below the
+	// highest point of its climb for the fall to be real, such as a
+	// cleanup. The climb then starts again from the bottom of the fall,
+	// so a runaway that goes on under a cleanup makes progress again as
+	// soon as it rises past the noise, not once it has made the cleanup
+	// up.
+	ClimbFall = 2.0
+	// ClimbQuiet is how long usage may stall and still climb, without a
+	// rhythm. A download that finished more than ClimbQuiet ago no longer
+	// climbs, even seen by a round every 5 minutes.
+	ClimbQuiet = 40 * time.Minute
+	// ClimbEpisodeGap is the longest pause in progress within one episode
+	// of it, such as one burst of a bursty runaway. A steady runaway seen
+	// by a round every 5 minutes, or one that slips a round, is one long
+	// episode.
+	ClimbEpisodeGap = 15 * time.Minute
+	// ClimbEpisodeRises is how many rises' worth of the climb's rate a
+	// pause may also last within one episode. A steady climb makes
+	// progress each time it rises past the noise, and noise can hold that
+	// back by most of another rise, so on a noisy disk a slow steady
+	// runaway is one episode too, not a rhythm of its own.
+	ClimbEpisodeRises = 2.0
+	// ClimbRhythm is how many episodes, each larger than the floor, make
+	// a rhythm, such as a bursty runaway's: two gaps between them. While
+	// usage holds one, it still climbs until ClimbRhythmSlack times the
+	// longest of those gaps has passed since the newest episode, so a
+	// burst may come late by half the longest wait so far, but no later.
+	ClimbRhythm      = 3
+	ClimbRhythmSlack = 1.5
+)
+
+// Climb is how usage climbs at the newest of the points.
+type Climb struct {
+	// Going says usage still climbs.
+	Going bool
+	// Since is how long usage has stayed about the top of its climb,
+	// within the rise that makes progress, less the time a real fall took.
+	Since time.Duration
+	// PerSecond is how fast usage climbed, in bytes a second, measured
+	// over the newest Span of the points.
+	PerSecond float64
+	Span      time.Duration
 }
 
-// middle is the median time of the points, in seconds after base, and
-// their median usage.
-func middle(points []Point, base time.Time) (at, used float64) {
-	ats, useds := make([]float64, len(points)), make([]float64, len(points))
-	for i, p := range points {
-		ats[i], useds[i] = p.At.Sub(base).Seconds(), p.Used
+// Climbing says whether usage still climbs at the newest of the points,
+// and how fast. The points may come as sampled, or with their one-off
+// steps set aside as for the trend.
+//
+// Usage makes progress when it rises more than ClimbSpread times the
+// noise, which 1.4826 times the median stray from the steady rate
+// estimates, past its high-water mark, and the mark moves up to it. A dip
+// doesn't lower the mark, so the climb back from it makes no progress,
+// but a real fall, ClimbFall times that rise below the climb's highest
+// point, starts the climb again from the fall's lowest point. Progress
+// no more than ClimbEpisodeGap apart, or ClimbEpisodeRises rises at the
+// climb's rate if longer, is one episode. The climb has stalled since
+// usage first came within that rise of its highest point: noise about a
+// level it has stopped at stays within the rise, so it never moves that
+// time on. A real fall stops the clock, for ClimbQuiet at most, and after
+// it the climb starts again from the bottom.
+//
+// Usage still climbs while it has stalled for at most ClimbQuiet. It also
+// climbs while the points hold a rhythm, ClimbRhythm or more episodes
+// each larger than floor, and the newest of them ended at most
+// ClimbRhythmSlack times the longest gap between their ends ago. A bursty
+// runaway's flat stretch is within its own period, while one download is
+// one episode and no rhythm, and the flat stretch after it goes quiet.
+//
+// The rate is the progress over whole episodes, so that where the newest
+// point falls in a burst's cycle can't undercount it, and a fall doesn't
+// count against it, so a cleanup can't hide a runaway. With a rhythm it
+// runs between episodes' ends, from the earliest within recent of the
+// newest point, or else the one before the newest, to the newest.
+// Otherwise it runs across the progress within recent of the newest
+// point, or else the last two, or the first point and the only one. It
+// is not ok without two changes at different times.
+func Climbing(points []Point, floor float64, recent time.Duration) (Climb, bool) {
+	n := len(points)
+	_, strays, ok := steady(points)
+	if !ok {
+		return Climb{}, false
 	}
-	return median(ats), median(useds)
+	sizes := make([]float64, 0, n-1)
+	for _, s := range strays[1:] {
+		sizes = append(sizes, math.Abs(s))
+	}
+	rise := math.Max(ClimbSpread*1.4826*median(sizes), floor/ShiftMaxSamples)
+
+	// progress is usage rising past its high-water mark at point i, and
+	// total all the progress up to it.
+	type progress struct {
+		i     int
+		total float64
+	}
+	var made []progress
+	mark, total := points[0].Used, 0.0
+	// The climb runs from start, the first point or the bottom of the
+	// last real fall, and top is its highest point. While usage falls,
+	// fell is where the fall began and bottom its lowest point so far,
+	// and start and top still hold the climb before it.
+	start, top, fell, bottom := 0, 0, -1, -1
+	for i := 1; i < n; i++ {
+		used := points[i].Used
+		if bottom >= 0 {
+			if used < points[bottom].Used {
+				bottom = i
+			}
+			if used <= points[bottom].Used+rise {
+				continue
+			}
+			start, top, mark, bottom = bottom, bottom, points[bottom].Used, -1
+		}
+		if used > mark+rise {
+			total += used - mark
+			mark = used
+			made = append(made, progress{i, total})
+		}
+		if used > points[top].Used {
+			top = i
+		}
+		if used < points[top].Used-ClimbFall*rise {
+			fell, bottom = i, i
+		}
+	}
+	last := top
+	for last > start && points[last-1].Used >= points[top].Used-rise {
+		last--
+	}
+	newest := points[n-1].At
+	c := Climb{Since: newest.Sub(points[last].At)}
+	if bottom >= 0 {
+		// The clock stops while usage falls, from when it left the top
+		// of its climb until it reached the bottom of the fall, so a
+		// cleanup that takes a while doesn't run out a runaway's time.
+		// It stops for ClimbQuiet at most: a disk that keeps shrinking
+		// for longer has stopped climbing.
+		left, reached := fell, bottom
+		for points[left].Used < points[top].Used-rise {
+			left--
+		}
+		for reached-1 > left && points[reached-1].Used <= points[bottom].Used+rise {
+			reached--
+		}
+		c.Since -= min(points[reached].At.Sub(points[left].At), ClimbQuiet)
+	}
+	if len(made) == 0 {
+		return c, true
+	}
+
+	// Each episode ends at progress more than pause before the next, and
+	// ends holds those larger than floor.
+	pause := ClimbEpisodeGap
+	first, latest := made[0], made[len(made)-1]
+	if climbed := latest.total - first.total; climbed > 0 {
+		span := points[latest.i].At.Sub(points[first.i].At)
+		pause = max(pause, time.Duration(ClimbEpisodeRises*rise/climbed*float64(span)))
+	}
+	var ends []progress
+	before := 0.0
+	for k, p := range made {
+		if k+1 < len(made) && points[made[k+1].i].At.Sub(points[p.i].At) <= pause {
+			continue
+		}
+		if p.total-before > floor {
+			ends = append(ends, p)
+		}
+		before = p.total
+	}
+	rhythm := false
+	if len(ends) >= ClimbRhythm {
+		var longest time.Duration
+		for k := 1; k < len(ends); k++ {
+			longest = max(longest, points[ends[k].i].At.Sub(points[ends[k-1].i].At))
+		}
+		rhythm = newest.Sub(points[ends[len(ends)-1].i].At) <= time.Duration(ClimbRhythmSlack*float64(longest))
+	}
+	c.Going = c.Since <= ClimbQuiet || rhythm
+
+	// The rate runs from progress from to progress to; the first point
+	// has none before it.
+	marks := made
+	if rhythm {
+		marks = ends
+	}
+	from, to := progress{0, 0}, marks[len(marks)-1]
+	if k := len(marks) - 2; k >= 0 {
+		from = marks[k]
+		for k--; k >= 0 && !points[marks[k].i].At.Before(newest.Add(-recent)); k-- {
+			from = marks[k]
+		}
+	}
+	if span := points[to.i].At.Sub(points[from.i].At); span > 0 {
+		c.PerSecond = (to.total - from.total) / span.Seconds()
+		c.Span = newest.Sub(points[from.i].At)
+	}
+	return c, true
 }
 
 // Trend is how fast a filesystem fills, and how long its free space lasts.

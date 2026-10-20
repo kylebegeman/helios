@@ -39,17 +39,13 @@ const (
 	ForecastShortWindow = 6 * time.Hour
 	ForecastShortPoints = 60
 	// The 6 hour trend keeps reading a download that finished hours ago
-	// as growth, so it pages only while usage still climbs across
-	// ForecastShortRecent, the newest stretch of the minute samples. The
-	// climb runs from the median of the samples in the stretch's oldest
-	// ForecastShortEnd to the median of those in its newest, each end
-	// with at least ForecastShortEndPoints samples. Two hours hold a burst
-	// between the ends from a runaway that writes every 90 minutes or
-	// less, however its bursts fall, and a quarter hour of rounds at each
-	// end outvotes a noisy sample even at one round every 5 minutes.
-	ForecastShortRecent    = 2 * time.Hour
-	ForecastShortEnd       = 15 * time.Minute
-	ForecastShortEndPoints = 2
+	// as growth, so it pages only while Climbing says usage still climbs
+	// across the minute samples. ForecastShortRecent is the newest
+	// stretch of them that the climb's rate is measured across, whole
+	// bursts or whole episodes of progress at a time. Two hours hold a
+	// burst of a runaway that writes every 90 minutes or less, and the
+	// slowed rate of a runaway that has slowed.
+	ForecastShortRecent = 2 * time.Hour
 	// DiskFullWarn and DiskFullCritical are how soon the long trend may
 	// fill the disk before it is a warning and a critical problem.
 	// DiskFullFast is how soon the short trend may fill it, such as a
@@ -772,29 +768,39 @@ func (p *Prober) host(ctx context.Context) []Condition {
 // enough points and says the disk lasts beyond DiskFullWarn, or isn't
 // filling: then it is a warning. The forecast is a problem of its own,
 // for how soon either trend fills the disk. The short one counts only
-// while usage still climbs across the last ForecastShortRecent at half
-// its rate or more. A climb slower than that still pages when it fills
-// the disk within DiskFullFast, and then the forecast goes by it: the
-// runaway has slowed, and the climb is how fast it fills the disk now.
+// while Climbing says usage still climbs, both with the steps set aside
+// and as sampled, at half its rate or more over the climb's newest
+// episodes, up to ForecastShortRecent of them. A climb
+// slower than that still pages when it fills the disk within
+// DiskFullFast, and then the forecast goes by it: the runaway has slowed,
+// and the climb is how fast it fills the disk now.
 func diskConditions(root string, free, total uint64, hourly, minutes []Point) (disk, forecast *Condition) {
 	// A lone cleanup or download moves every sample after it; set aside,
 	// only the steady growth around it counts.
 	floor := math.Min(float64(total)*DiskShiftPercentMin/100, DiskShiftMax)
 	long, longOK := Forecast(WithoutShifts(hourly, floor), ForecastLongPoints, free)
+	sampled := minutes
 	minutes = WithoutShifts(minutes, floor)
 	short, shortOK := Forecast(minutes, ForecastShortPoints, free)
 	longDays := fmt.Sprintf("%d day", int(ForecastLongWindow/(24*time.Hour)))
 	shortLabel := fmt.Sprintf("%d hour trend", int(ForecastShortWindow/time.Hour))
 	// The short trend counts only while usage still climbs: at half its
 	// rate or more, or, slower, fast enough to fill the disk within
-	// DiskFullFast, which the forecast then goes by.
-	climb, climbOK := RecentClimb(minutes, ForecastShortRecent, ForecastShortEnd, ForecastShortEndPoints)
+	// DiskFullFast, which the forecast then goes by. Setting a step aside
+	// detrends at the steady rate, so on a plateau after a runaway it can
+	// move samples up and make a climb of its own; usage climbs only if it
+	// climbs as sampled too.
+	climb, climbOK := Climbing(minutes, floor, ForecastShortRecent)
+	still, stillOK := Climbing(sampled, floor, ForecastShortRecent)
 	switch {
-	case !shortOK || !climbOK:
+	case !shortOK || !climbOK || !climb.Going || !stillOK || !still.Going:
 		shortOK = false
-	case climb >= short.PerSecond/2:
-	case climb > 0 && filling(climb, free).Full <= DiskFullFast:
-		short, shortLabel = filling(climb, free), fmt.Sprintf("last %d hours", int(ForecastShortRecent/time.Hour))
+	case climb.PerSecond >= short.PerSecond/2:
+	case climb.PerSecond > 0 && filling(climb.PerSecond, free).Full <= DiskFullFast:
+		short, shortLabel = filling(climb.PerSecond, free), "last hour"
+		if hours := int(math.Ceil(climb.Span.Hours())); hours > 1 {
+			shortLabel = fmt.Sprintf("last %d hours", hours)
+		}
 	default:
 		shortOK = false
 	}

@@ -285,6 +285,21 @@ func TestTheForecastTakesOutOnlyALoneStepInUsage(t *testing.T) {
 			t.Fatalf("a five-minute temp file and a download: %d minutes back reads %.3f GB, want %.3f", 359-i, p.Used/gib, want[i].Used/gib)
 		}
 	}
+	// A bursty runaway's burst and a temp file deleted 5 minutes after it,
+	// one round apart at a round every 2.5 minutes, are a rise and a fall
+	// too. As one event, the deletion's size would pair it with the burst
+	// before and take out both; as two, the deletion is the only fall and
+	// goes, and every burst stays. The file sat for 5 hours, too long to
+	// be a bump.
+	step := 150 * time.Second
+	bursts := noisy(step, 0.005*gib, bursty(144, step, 37*m, 18*m, 1.4*gib, 30*gib))
+	ring = series(144, step, bump(144, step, 313*m, 300*m, 2.8*gib, bursts))
+	want = series(144, step, stepped(144, step, 313*m, 2.8*gib, bursts))
+	for i, p := range WithoutShifts(ring, 0.4*gib) {
+		if !near(p.Used, want[i].Used, 0.1*gib) {
+			t.Fatalf("a burst and a deletion just after it: %.1f minutes back reads %.3f GB, want %.3f", float64(143-i)*2.5, p.Used/gib, want[i].Used/gib)
+		}
+	}
 }
 
 // A temp file that sits for a few hours, or spans the end of one, is in
@@ -319,38 +334,77 @@ func TestATempFileInAFewHourlySamplesMovesNoOtherSample(t *testing.T) {
 	}
 }
 
-func TestRecentClimbReadsTheRiseAcrossTheNewestWindow(t *testing.T) {
+func TestClimbingSaysWhetherUsageStillClimbsAndHowFast(t *testing.T) {
 	m := time.Minute
 	threePerHour := 3 * gib / 3600
-	strays := series(360, m, growing(60*gib, 72*gib))
-	// A temp file in the newest round, and a sample read low at the oldest
-	// end.
-	strays[359].Used += 5 * gib
-	strays[359-120].Used -= 5 * gib
+	// A download of 6 GB at 2 MB a second finished ended ago, and usage has
+	// been flat since.
+	downloaded := func(ended time.Duration, amp float64) []Point {
+		return series(360, m, noisy(m, amp, download(360, m, ended, 6*gib, 2<<20, 0.2, flat(80*gib))))
+	}
+	// A runaway of 2 GB an hour, and a cleanup of 3 GB spread over the
+	// 10 minutes until 20 minutes ago.
+	cleaned := series(360, m, func(since time.Duration) float64 {
+		done := min(10*m, max(0, since-330*m))
+		return 60*gib + 2*gib*since.Hours() - 3*gib*done.Minutes()/10
+	})
+	// A runaway of 6 GB an hour that slowed to 2.5 GB an hour 2 hours ago.
+	slowed := series(360, m, func(since time.Duration) float64 {
+		return 60*gib + 6*gib*min(since, 239*m).Hours() + 2.5*gib*max(0, since-239*m).Hours()
+	})
+	// The same runaway under a cleanup of 3 GB spread over the 45 minutes
+	// until now.
+	cleaning := series(360, m, func(since time.Duration) float64 {
+		done := max(0, since-314*m)
+		return 60*gib + 2*gib*since.Hours() - 3*gib*done.Minutes()/45
+	})
+	// A runaway of 6 GB an hour that stopped 90 minutes ago, and has
+	// shrunk half a GB an hour since.
+	shrinking := series(360, m, func(since time.Duration) float64 {
+		return 60*gib + 6*gib*min(since, 269*m).Hours() - 0.5*gib*max(0, since-269*m).Hours()
+	})
+	// A steady climb that missed the rounds from 60 to 40 minutes ago.
+	gap := series(360, m, growing(60*gib, 72*gib))
+	gap = append(gap[:300:300], gap[320:]...)
 	cases := []struct {
 		name   string
 		points []Point
 		ok     bool
-		// want is in bytes a second.
-		want float64
+		going  bool
+		// want is in bytes a second, give or take within.
+		want, within float64
 	}{
-		{"a steady climb reads at its rate", series(360, m, growing(60*gib, 72*gib)), true, threePerHour},
-		// The ends are 120 to 106 and 14 to 0 minutes back, and their
-		// middles 106 minutes apart.
-		{"a burst between the ends counts in full", series(360, m, stepped(360, m, 90*m, 6*gib, flat(80*gib))), true, 6 * gib / (106 * 60)},
-		{"a burst before the window doesn't count", series(360, m, stepped(360, m, 150*m, 6*gib, flat(80*gib))), true, 0},
-		{"a stray sample at either end is outvoted", strays, true, threePerHour},
-		{"a ring shorter than the window is all of it", series(ForecastShortPoints, m, growing(60*gib, 72*gib)), true, threePerHour},
-		{"ends that would share samples", series(29, m, growing(60*gib, 72*gib)), false, 0},
-		{"a round every 7.5 minutes leaves two at each end", series(48, 450*time.Second, growing(60*gib, 72*gib)), true, threePerHour},
-		{"a round every 15 minutes leaves one at each end", series(24, 15*m, growing(60*gib, 72*gib)), false, 0},
-		{"an empty ring", nil, false, 0},
+		{"a steady climb climbs at its rate", series(360, m, growing(60*gib, 72*gib)), true, true, threePerHour, 1e-9 * gib},
+		{"a noisy steady climb climbs at about its rate", series(360, m, noisy(m, 0.2*gib, growing(60*gib, 72*gib))), true, true, threePerHour, 0.1 * threePerHour},
+		{"a download that finished 30 minutes ago still climbs", downloaded(30*m, 0), true, true, 2 << 20, 0.25 * (2 << 20)},
+		{"a download that finished 45 minutes ago doesn't", downloaded(45*m, 0), true, false, 2 << 20, 0.25 * (2 << 20)},
+		{"nor does a noisy one", downloaded(45*m, 0.05*gib), true, false, 2 << 20, 0.5 * (2 << 20)},
+		// The newest of four 6 GB bursts 90 minutes apart is 80 minutes
+		// ago, and the rate runs across the whole period before it.
+		{"a bursty runaway climbs between its bursts", series(360, m, bursty(360, m, 90*m, 80*m, 6*gib, 84*gib)), true, true, 6 * gib / (90 * 60), 1e-9 * gib},
+		{"a bursty runaway whose burst is late by half its period doesn't", series(360, m, bursty(360, m, time.Hour, 100*m, 4*gib, 84*gib)), true, false, 4 * gib / 3600, 1e-9 * gib},
+		// The cleanup costs the climb only about the 10 minutes it took.
+		{"a runaway under a cleanup still climbs", cleaned, true, true, 2 * gib * 110 / 120 / 3600, 0.1 * gib / 3600},
+		// The clock stops while usage falls, so a long cleanup doesn't
+		// run the runaway's time out, but only for ClimbQuiet.
+		{"a runaway under a long cleanup still climbs", cleaning, true, true, 2 * gib / 3600, 0.01 * gib / 3600},
+		{"a disk that still shrinks 90 minutes after a runaway stopped doesn't", shrinking, true, false, 6 * gib / 3600, 0.01 * gib / 3600},
+		{"a slowed runaway climbs at its slower rate", slowed, true, true, 2.5 * gib / 3600, 1e-9 * gib},
+		{"a climb that missed rounds still climbs", gap, true, true, threePerHour, 1e-9 * gib},
+		{"a flat disk doesn't climb", series(360, m, noisy(m, 0.1*gib, flat(80*gib))), true, false, 0, 0},
+		// Noise holds back the progress of a slow steady runaway by up to
+		// 20 minutes at a time, which is one episode, not a rhythm.
+		{"a noisy runaway that stopped an hour ago doesn't", series(360, m, noisy(m, 0.2*gib, func(since time.Duration) float64 {
+			return 40*gib + 3*gib*min(since, 299*m).Hours()
+		})), true, false, threePerHour, 0.1 * threePerHour},
+		{"a single round", series(1, m, flat(80*gib)), false, false, 0, 0},
+		{"an empty ring", nil, false, false, 0, 0},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			got, ok := RecentClimb(c.points, ForecastShortRecent, ForecastShortEnd, ForecastShortEndPoints)
-			if ok != c.ok || ok && !near(got, c.want, 1e-9*gib) {
-				t.Fatalf("%.4f GB an hour, %v; want %.4f, %v", got*3600/gib, ok, c.want*3600/gib, c.ok)
+			got, ok := Climbing(c.points, gib, ForecastShortRecent)
+			if ok != c.ok || got.Going != c.going || !near(got.PerSecond, c.want, c.within) {
+				t.Fatalf("%.4f GB an hour, going %v (%d minutes since progress), %v; want %.4f, %v, %v", got.PerSecond*3600/gib, got.Going, int(got.Since.Minutes()), ok, c.want*3600/gib, c.going, c.ok)
 			}
 		})
 	}
@@ -684,12 +738,12 @@ func TestTheShortForecastPagesOnlyWhileUsageStillClimbs(t *testing.T) {
 			series(ring, m, noisy(m, 0.02*gib, func(since time.Duration) float64 {
 				return 86*gib + 3*gib*min(2, max(0, since.Hours()-2))
 			}))},
-		// The climb's ends are a quarter hour each: a pull that ended inside
-		// the newest, or before the oldest, is no climb.
+		// A pull over 10 minutes is a step, set aside however long ago it
+		// ended.
 		{"a 9 GB pull over 10 minutes that ended 30 minutes ago", landed(time.Hour), series(ring, m, download(ring, m, 30*m, 9*gib, 0.9*gib/60, 0, flat92))},
 		{"a 9 GB pull over 10 minutes that ended 150 minutes ago", landed(3 * time.Hour), series(ring, m, download(ring, m, 150*m, 9*gib, 0.9*gib/60, 0, flat92))},
 		// A log grew 6 GB an hour from about 4.5 hours ago until about 2.5
-		// hours ago, before the 2 hours the climb reads.
+		// hours ago, and has stalled since.
 		{"a runaway that stopped 150 minutes ago",
 			series(168, time.Hour, stepped(168, time.Hour, 3*time.Hour, 3*gib, stepped(168, time.Hour, 4*time.Hour, 6*gib, stepped(168, time.Hour, 5*time.Hour, 3*gib, flat(80*gib))))),
 			series(ring, m, noisy(m, 0.02*gib, func(since time.Duration) float64 {
@@ -708,6 +762,24 @@ func TestTheShortForecastPagesOnlyWhileUsageStillClimbs(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			disk, forecast := judge(t, 8*gib, 100*gib, c.hourly, c.minutes)
 			checkDisk(t, disk, forecast, wantCondition{state.SeverityWarning, "only 8.0 GB free of 100.0 GB (8%) on /, but the 7 day trend isn't growing"}, wantCondition{})
+		})
+	}
+}
+
+// A runaway that stopped writes nothing more, but setting a step aside
+// detrends the ring at the runaway's rate, which can move the samples
+// since it stopped up and read as a climb of their own. As sampled,
+// usage has stalled, so the forecast is quiet once ClimbQuiet has passed.
+func TestARunawayThatStoppedIsQuietOnceItStallsAsSampled(t *testing.T) {
+	m := time.Minute
+	for _, stopped := range []time.Duration{63 * m, 67 * m} {
+		t.Run(fmt.Sprintf("stopped %d minutes ago", int(stopped.Minutes())), func(t *testing.T) {
+			// 6 GB an hour from before the 6 hours, with 16 GB free now.
+			minutes := series(360, m, noisy(m, 0.02*gib, func(since time.Duration) float64 {
+				return 40*gib + 6*gib*min(since, 359*m-stopped).Hours()
+			}))
+			disk, forecast := judge(t, 16*gib, 100*gib, nil, minutes)
+			checkDisk(t, disk, forecast, wantCondition{}, wantCondition{})
 		})
 	}
 }

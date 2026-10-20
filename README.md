@@ -657,14 +657,22 @@ as a temp file or a nightly dump, is smoothed over, and so is a step undone
 within 24 samples. Repeated steps, such as a nightly import, are read as the
 rhythm they are. A disk the 7 day trend fills within 14 days is a warning, and
 within 48 hours it is critical. A disk the 6 hour trend fills within 6 hours, as
-a runaway log does, is critical too, but only while usage still climbs, from
-the first quarter hour of the last 2 hours to the last quarter hour, at half
-that rate or more. A runaway that has slowed stays critical while its rate over
-the last 2 hours still fills the disk within 6 hours, and the alert then goes by
-that rate. The alert, about free disk space, says how fast the disk is filling
-and which app's data grew most. A disk with under 10% free is critical
-until there are 2 days of hourly samples. After that it is a warning while the
-7 day trend lasts beyond 14 days or isn't growing.
+a runaway log does, is critical too, but only while usage still climbs at half
+that rate or more. Usage still climbs while it has reached its high, give or
+take the noise, within the last 40 minutes, or while it comes in bursts, three
+or more in a row, and the next is no later than one and a half times the longest
+wait between them so far. It has to climb both as sampled and with the steps
+set aside. A cleanup doesn't stop the climb: up to 40 minutes of a real fall
+don't count, and after it the climb counts again from the bottom. The rate
+counts only the rises, across whole bursts in the last 2 hours, or else the
+newest two, so a runaway that writes every hour reads the same between its
+bursts as at them. One download is one burst, so the disk goes quiet 40 minutes
+after it ends. A runaway that has slowed stays critical while its slower rate
+still fills the disk within 6 hours, and the alert then goes by that rate. The
+alert, about free disk space, says how fast the disk is filling and which app's
+data grew most. A disk with under 10% free is critical until there are 2 days of
+hourly samples. After that it is a warning while the 7 day trend lasts beyond 14
+days or isn't growing.
 
 | Command | Shows |
 |---|---|
