@@ -25,6 +25,12 @@ app deploy only commits signed by a key the machine allows.
 - **`helios ls --json`** lists a machine with no apps as `"apps": []` instead of
   `null` (also PR #17).
 
+Correction (20 October 2026): in 0.7.15 only `helios host reconcile` gives
+`/etc/bedrock` the group bedrock with group bits `--x`. The daemon makes
+`/etc/bedrock/git` 750 root:bedrock but leaves an `/etc/bedrock` others may
+already pass through as it is, so a stock 755 root:root one stays listable by
+the push user. The daemon does as reconcile does from 0.7.16.
+
 [PR #18](https://github.com/kylebegeman/helios/pull/18) changed only the lane
 tooling: each lane VM gets its own Docker network, so SSH survives host setup.
 
@@ -78,6 +84,14 @@ and `/etc/bedrock/git` 750 root:bedrock. Then, per host:
   installed, because the daemon now runs the weekly test
 - turn signed deploys on per app with `helios git signers add <name> <key>` and
   `helios git require-signed <app>`, packrat first
+
+Correction (20 October 2026): the restarted 0.7.15 daemon makes only
+`/etc/bedrock/git` 750 root:bedrock, and leaves a stock 755 root:root
+`/etc/bedrock` as it is, as it left both hosts until they were fixed by hand.
+On a host upgraded to 0.7.15, run
+`sudo chgrp bedrock /etc/bedrock && sudo chmod g=x /etc/bedrock`, or
+`helios host reconcile`, and check that `stat` shows root:bedrock with a group
+digit of 1. From 0.7.16 the daemon does this as it starts.
 
 No state/schema or upgrade-plan migration is included. Per-leg alert state is
 kept in memory, so a daemon restart resends to every leg. `helios recover` and

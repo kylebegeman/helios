@@ -6,7 +6,9 @@
 # doesn't require signatures deploys as before. A webhook delivery needs a
 # routed app and public DNS (m6 covers it on a dedicated machine), so the
 # webhook's check runs here through the gitdeploy tests, on the box's own
-# git and OpenSSH, as root the way the daemon runs it.
+# git and OpenSSH, as root the way the daemon runs it. First the daemon on
+# its own, then reconcile, let the push user through /etc/bedrock to the
+# policy without listing it.
 set -euo pipefail
 umask 077
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -67,12 +69,21 @@ sig = open(sys.argv[1]).read().rstrip("\n").replace("\n", "\n ")
 sys.stdout.write(header + "\ngpgsig " + sig + "\n\n" + body)' "$2" | g hash-object -t commit -w --stdin
 }
 
-echo "== build and install; the daemon and reconcile let the push user read the policy"
+echo "== build and install; the daemon alone gives a stock /etc/bedrock to the bedrock group"
 (cd "$here/.." && CGO_ENABLED=0 GOOS=linux GOARCH="$LANE_ARCH" go build -trimpath -o "bin/bedrock-linux-$LANE_ARCH" ./cmd/helios \
   && CGO_ENABLED=0 GOOS=linux GOARCH="$LANE_ARCH" go test -c -trimpath -o "bin/gitdeploy-linux-$LANE_ARCH.test" ./internal/gitdeploy \
   && go build -trimpath -o bin/bedrock ./cmd/helios)
 put "$here/../bin/bedrock-linux-$LANE_ARCH" /usr/local/bin/bedrock.new
+# /etc/bedrock goes back to a stock 755 root:root, as 0.7.15 left both hosts,
+# and only the daemon restarts: as it starts it makes it 715 root:bedrock,
+# as reconcile does, so the push user passes through and lists nothing.
+run 'mkdir -p /etc/bedrock && chown root:root /etc/bedrock && chmod 755 /etc/bedrock'
 run 'chmod 755 /usr/local/bin/bedrock.new && mv -f /usr/local/bin/bedrock.new /usr/local/bin/bedrock && bedrock daemon install >/dev/null && bedrock version'
+run 'stat -c "%a %U:%G %n" /etc/bedrock /etc/bedrock/git'
+run '[ "$(stat -c "%a %U:%G" /etc/bedrock)" = "715 root:bedrock" ] && sudo -u bedrock test -x /etc/bedrock/git && ! sudo -u bedrock ls /etc/bedrock >/dev/null 2>&1' \
+  || fail "the daemon left a stock /etc/bedrock other than 715 root:bedrock, or the push user can list it"
+
+echo "== reconcile lets the push user read the policy"
 run 'bedrock host reconcile --yes' | quiet | grep -E "pushes|succeeded|failed"
 run 'git --version; ssh -V 2>&1; stat -c "%a %U:%G %n" /etc/bedrock /etc/bedrock/git; ls -l /etc/bedrock'
 # /etc/bedrock keeps whatever others had (755 on a stock box); only its

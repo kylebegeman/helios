@@ -346,8 +346,9 @@ func policyGroup() (int, error) {
 }
 
 // EnsureSigningDir makes dir, root:bedrock 0750, and lets the bedrock group
-// pass through its parent to reach it, as helios host reconcile does. A
-// gid below zero makes it as it is.
+// pass through its parent to reach it and list nothing there, as helios
+// host reconcile does (see sharedParent). A gid below zero makes it as it
+// is.
 func EnsureSigningDir(dir string, gid int) error {
 	if err := os.MkdirAll(dir, 0o750); err != nil {
 		return err
@@ -366,30 +367,48 @@ func EnsureSigningDir(dir string, gid int) error {
 	if err != nil {
 		return err
 	}
-	mode := info.Mode().Perm()
 	st, ok := info.Sys().(*syscall.Stat_t)
-	switch {
-	case !ok:
+	if !ok {
 		return errors.New("can't tell who owns " + parent)
-	case int(st.Gid) == gid && mode&0o010 != 0, mode&0o001 != 0:
-		return nil
-	case st.Gid == 0:
-		// Passing through, not listing: what is inside keeps its own
-		// owner and mode, so the group reads only the policy.
-		if err := os.Chown(parent, -1, gid); err != nil {
+	}
+	mode := info.Mode().Perm()
+	group, shared := sharedParent(mode, int(st.Gid), gid)
+	if group >= 0 {
+		if err := os.Chown(parent, -1, group); err != nil {
 			return err
 		}
-		return os.Chmod(parent, mode&^0o070|0o010)
+	}
+	if shared == mode {
+		return nil
+	}
+	return os.Chmod(parent, shared)
+}
+
+// sharedParent says what the signing dir's parent becomes, from its mode
+// and group pgid: the group to give it, or -1 to keep its own, and its
+// mode. A parent of root's or the bedrock group's goes to bedrock with
+// group bits --x, whatever others have, as reconcile's chmod g=x leaves
+// it. Passing through, not listing: what is inside keeps its own owner
+// and mode, so the group reads only the policy. A parent of another group
+// is someone's choice, and gains only others' x if it lacks it.
+func sharedParent(mode os.FileMode, pgid, bedrock int) (int, os.FileMode) {
+	switch pgid {
+	case bedrock:
+		return -1, mode&^0o070 | 0o010
+	case 0:
+		return bedrock, mode&^0o070 | 0o010
 	default:
-		return os.Chmod(parent, mode|0o001)
+		return -1, mode | 0o001
 	}
 }
 
 // ShareSigningDir gives the push user its way to the signing policy, for
 // the daemon to do as it starts: a machine set up before the policy
 // existed may keep /etc/bedrock closed to everyone but root, and then
-// every push would be refused for want of reading it. It does nothing
-// unless this process is root and the bedrock group exists.
+// every push would be refused for want of reading it. A stock /etc/bedrock,
+// 755 root:root, becomes 715 root:bedrock, as reconcile leaves it, so the
+// push user passes through and no longer lists it. It does nothing unless
+// this process is root and the bedrock group exists.
 func ShareSigningDir() error {
 	if os.Geteuid() != 0 {
 		return nil
