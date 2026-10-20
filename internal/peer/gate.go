@@ -30,6 +30,10 @@ type Deferred struct {
 
 func (d *Deferred) Error() string { return d.To + " is to send this" }
 
+// Held implements watch.Held: a notice held for another observer is a
+// wait, never a delivery that failed.
+func (d *Deferred) Held() bool { return true }
+
 // deferredTo reads an incident's notify error as a deferral, and the
 // observer the notice is held for. Whichever observer it is, a notice
 // held is waiting, not owed.
@@ -129,9 +133,11 @@ func (g *Gate) page(ctx context.Context, self string, n watch.Notice) error {
 
 // recovered decides a recovery. It goes from the teller, and to nobody
 // when nobody told the incident. Another observer's recovery is its own
-// once its summary no longer lists the incident; this machine holds it
-// while that observer still does, and sends it once the observer has been
-// out of sight for HandoffWait.
+// once its summary no longer lists the incident, and this machine holds
+// it while that observer still does, for HandoffWait at most: by then the
+// observer, in sight with its incident still open, sends the recovery
+// when it closes it. An observer out of sight for HandoffWait has its
+// recovery sent from here.
 func (g *Gate) recovered(ctx context.Context, self string, n watch.Notice) error {
 	s := g.Source
 	now := s.now()
@@ -149,13 +155,13 @@ func (g *Gate) recovered(ctx context.Context, self string, n watch.Notice) error
 		return nil
 	}
 	theirs, seen := s.seen[teller.By]
-	if seen && !theirs.lists(n.Key) {
+	since := later(s.hold(n, teller.By, now).Since, s.started)
+	if seen && (!theirs.lists(n.Key) || now.Sub(since) >= HandoffWait) {
 		s.forget(n.IncidentID)
 		s.mu.Unlock()
 		return nil
 	}
-	held := s.hold(n, teller.By, now)
-	due := !seen && now.Sub(later(s.lastGood[teller.By], later(held.Since, s.started))) >= HandoffWait
+	due := !seen && now.Sub(later(s.lastGood[teller.By], since)) >= HandoffWait
 	s.mu.Unlock()
 	if due {
 		return g.send(ctx, n, false)

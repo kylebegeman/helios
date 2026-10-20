@@ -50,6 +50,15 @@ type Notifier interface {
 	Notify(ctx context.Context, n Notice) error
 }
 
+// Held is the error of a notice a notifier holds back on purpose, for
+// someone else to send: a wait, not a failure. The incident keeps it as
+// its notify error and the notice is asked for again each round, as a
+// failed one is, but the watcher logs only when the hold begins or moves.
+type Held interface {
+	error
+	Held() bool
+}
+
 // NoAlertsSetUp is the notify error of an incident nobody can be told
 // about.
 const NoAlertsSetUp = "no way to send alerts is set up; run helios integration set email"
@@ -277,8 +286,16 @@ func (w *Watcher) notify(ctx context.Context, inc *state.Incident, n Notice, now
 		delete(w.owed, inc.ID)
 		return
 	}
+	was := inc.NotifyError
 	inc.NotifyError = err.Error()
 	w.owed[inc.ID] = owedNotice{transition: n.Transition, told: told || retried && before.told}
+	var held Held
+	if errors.As(err, &held) && held.Held() {
+		if inc.NotifyError != was {
+			w.Log("alert held: %s: %v", inc.Subject, err)
+		}
+		return
+	}
 	w.Log("alert not delivered: %v", err)
 }
 

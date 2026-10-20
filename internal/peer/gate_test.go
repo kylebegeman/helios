@@ -3,7 +3,9 @@ package peer
 import (
 	"context"
 	"errors"
+	"fmt"
 	"slices"
+	"strings"
 	"syscall"
 	"testing"
 	"time"
@@ -119,6 +121,13 @@ func (p *pager) restart(t *testing.T) {
 	p.src = &Source{Secrets: p.secrets, Store: p.store, Now: p.src.Now, fetch: p.fetch, handshake: p.handshake, check: p.check}
 	p.gate = &Gate{Next: p.gate.Next, Source: p.src}
 	p.wt = p.incidents(p.gate)
+}
+
+// logging keeps every line web2's watch logs, and returns them.
+func (p *pager) logging() *[]string {
+	lines := &[]string{}
+	p.wt.Log = func(format string, args ...any) { *lines = append(*lines, fmt.Sprintf(format, args...)) }
+	return lines
 }
 
 // fakeLeg is one leg of an observer's own fan-out, failing while failing
@@ -357,7 +366,7 @@ func TestRecoveryIsSentByWhoeverToldTheOpen(t *testing.T) {
 	p.down("web3")
 	p.rounds(t, watch.DefaultOpenAfter)
 	p.up("web3")
-	p.rounds(t, watch.DefaultResolveAfter+handoff)
+	p.rounds(t, watch.DefaultResolveAfter+handoff-1)
 	if got := p.pending(t); !slices.Equal(got, []string{"peer:web3"}) {
 		t.Fatalf("the recovery isn't held while web1 lists web3: %v", got)
 	}
@@ -403,6 +412,44 @@ func TestARepeatSentHereLeavesTheRecoveryWithTheSender(t *testing.T) {
 	p.rounds(t, 1)
 	if got, pending := p.told("peer:web3"), p.pending(t); !slices.Equal(got, []string{watch.TransitionRepeat}) || pending != nil {
 		t.Fatalf("web1 paged the outage: sent %v, pending %v", got, pending)
+	}
+}
+
+// A recovery held for the observer that told the incident is left to it
+// once this machine has held it for HandoffWait with that observer in
+// sight and still listing the incident: the observer has its own incident
+// open, and sends the recovery when it closes it. A hold, of a page or a
+// recovery, is a wait: it is logged once, and never as an alert that
+// wasn't delivered.
+func TestAHeldRecoveryIsLeftToTheSenderAfterHandoffWait(t *testing.T) {
+	p := paging(t)
+	logged := p.logging()
+	p.web1(web3Open(nil, false))
+	p.down("web3")
+	p.rounds(t, watch.DefaultOpenAfter+1)
+	p.web1(web3Open(seconds(20), false))
+	p.rounds(t, 1)
+	p.up("web3")
+	p.rounds(t, watch.DefaultResolveAfter+handoff-1)
+	if got, pending := p.told("peer:web3"), p.pending(t); got != nil || !slices.Equal(pending, []string{"peer:web3"}) {
+		t.Fatalf("held for less than HandoffWait: sent %v, pending %v", got, pending)
+	}
+	p.rounds(t, 1)
+	if got, pending := p.told("peer:web3"), p.pending(t); got != nil || pending != nil {
+		t.Fatalf("held for HandoffWait: sent %v, pending %v", got, pending)
+	}
+
+	var held []string
+	for _, line := range *logged {
+		if strings.HasPrefix(line, "alert not delivered") {
+			t.Fatalf("a hold was logged as an alert not delivered:\n%s", strings.Join(*logged, "\n"))
+		}
+		if strings.HasPrefix(line, "alert held") {
+			held = append(held, line)
+		}
+	}
+	if want := []string{"alert held: web3: web1 is to send this", "alert held: web3: web1 is to send this"}; !slices.Equal(held, want) {
+		t.Fatalf("logged %q, want the page's hold and the recovery's", held)
 	}
 }
 

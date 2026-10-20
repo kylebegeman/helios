@@ -183,7 +183,11 @@ still sending it, they wait up to 5 minutes more. A server that can't be
 reached is never elected, so then the page goes out at once. Every machine's
 alert about one peer carries the same Pushover tag, so a recovery from any of
 them stops the ringing any of them started. The recovery goes once, from the
-machine that first sent the alert at its worst severity.
+machine that first sent the alert at its worst severity. Another server waits
+up to 5 minutes for that machine to send it; if it has not seen that machine
+in that time it sends the recovery itself, and otherwise leaves it to that
+machine, which sends it when its own alert closes. A server's log notes each
+wait once, as `alert held: web2: web1 is to send this`.
 
 On the server that sent it, `helios alerts` says when it told you, as for any
 alert. Another server says who it waits for, then who sent it. With three
