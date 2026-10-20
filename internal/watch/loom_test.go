@@ -1108,6 +1108,23 @@ func TestAnOutageThatEndsBeforeLoomIsReachedStillReachesItOnce(t *testing.T) {
 		}
 	})
 
+	// A hook that can't be read is a leg that fails with the reason, and it
+	// owes the outage as the leg it stands for would.
+	t.Run("recovered while the hook can't be read", func(t *testing.T) {
+		r := newLoomRig(t)
+		if _, err := r.sec.Set(integration.App, "LOOM_WEBHOOK_URL", "http://relay.example.test"+loomPath); err != nil {
+			t.Fatal(err)
+		}
+		r.rounds(4, down("hello"))
+		r.rounds(2)
+		all, err := r.w.Store.Incidents(ctx, 10)
+		if err != nil || len(all) != 1 || all[0].Open() || !strings.Contains(all[0].NotifyError, "loom_webhook: loom_webhook.url: URL must start with https://") {
+			t.Fatalf("a recovery should keep Loom owed: %+v, %v", all, err)
+		}
+		r.setLoomURL(r.loom.url())
+		reachedOnce(t, r, all[0].ID)
+	})
+
 	t.Run("eased while Loom is still away", func(t *testing.T) {
 		r, id := unreached(t)
 		r.rounds(1, down("hello"))
