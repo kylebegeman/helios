@@ -65,8 +65,18 @@ func CertificateReady(ctx context.Context, host, addr string) (bool, string) {
 // runs out. found is false when nothing could be read at all, which the
 // edge's own condition covers.
 func Certificate(ctx context.Context, host, addr string) (ready bool, why string, expiry time.Time, found bool) {
-	dialer := &tls.Dialer{
-		NetDialer: &net.Dialer{Timeout: 5 * time.Second},
+	certs, err := Serves(ctx, &net.Dialer{Timeout: 5 * time.Second}, host, addr)
+	if err != nil {
+		return false, err.Error(), time.Time{}, false
+	}
+	return certificateReadiness(host, certs, time.Now(), nil)
+}
+
+// Serves shakes hands once with the edge at addr as host, connecting
+// through dialer, and returns the certificates it served, unchecked.
+func Serves(ctx context.Context, dialer *net.Dialer, host, addr string) ([]*x509.Certificate, error) {
+	tlsDialer := &tls.Dialer{
+		NetDialer: dialer,
 		Config: &tls.Config{
 			ServerName:         host,
 			InsecureSkipVerify: true, //nolint:gosec // we inspect the certificate ourselves
@@ -78,13 +88,12 @@ func Certificate(ctx context.Context, host, addr string) (ready bool, why string
 			MinVersion: tls.VersionTLS13,
 		},
 	}
-	conn, err := dialer.DialContext(ctx, "tcp", addr)
+	conn, err := tlsDialer.DialContext(ctx, "tcp", addr)
 	if err != nil {
-		return false, err.Error(), time.Time{}, false
+		return nil, err
 	}
 	defer conn.Close()
-	certs := conn.(*tls.Conn).ConnectionState().PeerCertificates
-	return certificateReadiness(host, certs, time.Now(), nil)
+	return conn.(*tls.Conn).ConnectionState().PeerCertificates, nil
 }
 
 // The TLS probe reads an unverified chain so a failed certificate still has
