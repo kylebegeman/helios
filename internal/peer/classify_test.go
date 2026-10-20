@@ -43,31 +43,45 @@ func judged(t *testing.T, r Round) map[string]watch.Condition {
 }
 
 // Each row of the classification table, in its order: what the three
-// paths show decides the class, and the class its severity, here for a
-// pair of servers whose observer passed its self-check.
+// paths show decides the class, the class its severity, and the message
+// names each path's word in its place and the remedy, here for a pair of
+// servers whose observer passed its self-check.
 func TestClassify(t *testing.T) {
 	for _, row := range []struct {
 		paths    Paths
 		seen     bool
 		class    Class
 		severity string
+		message  string
 	}{
-		{Paths{WordUntrusted, WordOK, WordOK}, true, NotTrusted, state.SeverityWarning},
-		{Paths{WordMismatch, "timeout", "timeout"}, true, NotTrusted, state.SeverityWarning},
-		{Paths{"refused", WordOK, WordOK}, false, NeverSeen, state.SeverityWarning},
-		{allDown, false, NeverSeen, state.SeverityWarning},
-		{allOK, true, Healthy, ""},
-		{Paths{WordOK, "timeout", WordOK}, true, EdgeDegraded, state.SeverityWarning},
-		{Paths{WordOK, WordOK, "status 502"}, true, EdgeDegraded, state.SeverityWarning},
-		{Paths{WordStale, WordOK, WordOK}, true, WatcherDown, state.SeverityWarning},
+		{Paths{WordUntrusted, WordOK, WordOK}, true, NotTrusted, state.SeverityWarning,
+			"it does not accept this machine's key; run helios peer key here and helios peer add on web2"},
+		{Paths{WordMismatch, "timeout", "timeout"}, true, NotTrusted, state.SeverityWarning,
+			"another machine answers at its mesh address (summary: mismatch); set the right one with helios peer add web2 --mesh"},
+		{Paths{"refused", WordOK, WordOK}, false, NeverSeen, state.SeverityWarning,
+			"it has never answered over the mesh (summary: refused); check the mesh address it was added with, and that it listens there"},
+		{allDown, false, NeverSeen, state.SeverityWarning, "it has never answered over the mesh (summary: timeout)"},
+		{allOK, true, Healthy, "", ""},
+		{Paths{WordOK, "timeout", WordOK}, true, EdgeDegraded, state.SeverityWarning,
+			"Helios answers over the mesh but its edge does not (edge: timeout)"},
+		{Paths{WordOK, WordOK, "status 502"}, true, EdgeDegraded, state.SeverityWarning,
+			"Helios answers over the mesh but its public URLs do not (public: status 502)"},
+		{Paths{WordOK, "timeout", "refused"}, true, EdgeDegraded, state.SeverityWarning,
+			"Helios answers over the mesh but its edge and public URLs do not (edge: timeout, public: refused)"},
+		{Paths{WordStale, WordOK, WordOK}, true, WatcherDown, state.SeverityWarning,
+			"Helios answers on the mesh but its watch has stopped (summary: stale) for 1 min; it cannot send its own alerts"},
 		// A stale summary is an answer from the peer, so one never ok is
 		// stuck rather than never seen, here for the hour web1 has run.
-		{Paths{WordStale, "timeout", "timeout"}, false, WatcherDown, state.SeverityCritical},
-		{Paths{"refused", WordOK, WordOK}, true, WatcherDown, state.SeverityWarning},
-		{Paths{"refused", WordOK, "timeout"}, true, WatcherDown, state.SeverityWarning},
-		{Paths{"timeout", "timeout", WordOK}, true, MeshDegraded, state.SeverityWarning},
-		{allDown, true, HostDown, state.SeverityCritical},
-		{Paths{"", "", ""}, true, HostDown, state.SeverityCritical},
+		{Paths{WordStale, "timeout", "timeout"}, false, WatcherDown, state.SeverityCritical, "(summary: stale) for 1.0 h"},
+		{Paths{"refused", WordOK, WordOK}, true, WatcherDown, state.SeverityWarning,
+			"its edge answers on the mesh but Helios does not (summary: refused) for 1 min; it cannot send its own alerts"},
+		{Paths{"refused", WordOK, "timeout"}, true, WatcherDown, state.SeverityWarning, "Helios does not (summary: refused)"},
+		{Paths{"timeout", "reset", WordOK}, true, MeshDegraded, state.SeverityWarning,
+			"the mesh cannot reach it (summary: timeout, edge: reset), but its public URLs answer"},
+		{allDown, true, HostDown, state.SeverityCritical,
+			"no answer over the mesh, from its edge on the mesh, or at its public URLs (summary: timeout, edge: timeout, public: timeout)"},
+		{Paths{"refused", "reset", "timeout"}, true, HostDown, state.SeverityCritical, "(summary: refused, edge: reset, public: timeout)"},
+		{Paths{"", "", ""}, true, HostDown, state.SeverityCritical, "no answer over the mesh"},
 	} {
 		if got := Classify(row.paths, row.seen); got != row.class {
 			t.Fatalf("%+v, seen %v: classed %q, want %q", row.paths, row.seen, got, row.class)
@@ -80,8 +94,8 @@ func TestClassify(t *testing.T) {
 		if c.Severity != row.severity || found != (row.severity != "") {
 			t.Fatalf("%+v: judged %+v, want severity %q", row.paths, c, row.severity)
 		}
-		if found && (c.Subject != "web2" || c.Message == "") {
-			t.Fatalf("%+v: judged %+v", row.paths, c)
+		if found && (c.Subject != "web2" || !strings.Contains(c.Message, row.message)) {
+			t.Fatalf("%+v: judged %+v, want a message with %q", row.paths, c, row.message)
 		}
 	}
 }
@@ -178,6 +192,13 @@ func TestEdgeProviderDegradedRaisesOneWarning(t *testing.T) {
 	if c := conditions["peer:web4"]; !strings.Contains(c.Message, "Helios does not") {
 		t.Fatalf("a peer whose Helios is down is hidden behind the edge provider: %+v", c)
 	}
+	// A summary that comes back is the mesh working, whatever the edge's
+	// handshake does.
+	edgeDown := Paths{Summary: WordOK, TLS: "timeout", Public: "timeout"}
+	conditions = judged(t, round(seen("web2", edgeDown), seen("web3", edgeDown)))
+	if _, ok := conditions["peer:edge-provider"]; !ok || len(conditions) != 1 {
+		t.Fatalf("every peer's edge failing with its Helios answering: %+v", conditions)
+	}
 
 	conditions = judged(t, round(seen("web2", publicDown)))
 	if _, ok := conditions["peer:edge-provider"]; ok || !strings.Contains(conditions["peer:web2"].Message, "its public URLs do not (public: timeout)") {
@@ -238,6 +259,20 @@ func TestAnIsolatedObserverJudgesNoPeer(t *testing.T) {
 	}
 	if conditions := judged(t, Round{Self: "web1", Now: now, Started: now.Add(-time.Hour)}); len(conditions) != 0 {
 		t.Fatalf("no peers: %+v", conditions)
+	}
+}
+
+// A peer's Helios answering at all, stale, refusing this machine's key or
+// as another machine, proves the mesh reaches out from here, so an
+// observer whose own public URL fails still judges its peers.
+func TestAnyAnswerFromAPeerMeansNotIsolated(t *testing.T) {
+	for _, word := range []string{WordStale, WordUntrusted, WordMismatch} {
+		r := round(seen("web2", allDown), seen("web3", Paths{Summary: word, TLS: "timeout", Public: "timeout"}))
+		r.SelfCheck = false
+		conditions := judged(t, r)
+		if _, isolated := conditions["peer:self"]; isolated || conditions["peer:web2"].Severity == "" {
+			t.Fatalf("web3's summary %s: %+v", word, conditions)
+		}
 	}
 }
 
@@ -337,6 +372,10 @@ func TestDeadManWarnsOnSilentLegs(t *testing.T) {
 	})
 	if c.Severity != state.SeverityWarning || c.Message != "its pushover alerts have not worked in 9 days; its ntfy alerts have never worked; open there: disk forecast (critical), shop (warning)" {
 		t.Fatalf("%+v", c)
+	}
+	c, _ = reported(t, Report{Legs: []Leg{{Name: "ntfy"}}, Open: []OpenIncident{{Subject: "shop", Severity: state.SeverityWarning}}})
+	if c.Severity != state.SeverityWarning || c.Message != "its ntfy alerts have never worked; open there: shop (warning)" {
+		t.Fatalf("a leg that never worked, alone: %+v", c)
 	}
 }
 

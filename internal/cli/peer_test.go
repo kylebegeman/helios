@@ -186,6 +186,7 @@ func TestPeerAddRefusesBadInput(t *testing.T) {
 		{[]string{"self", "--key", peerKey("a")}, "self and edge-provider are taken"},
 		{[]string{"edge-provider", "--key", peerKey("a")}, "self and edge-provider are taken"},
 		{[]string{"web1", "--key", peerKey("a")}, "web1 is this machine's own name"},
+		{[]string{"web1", "--mesh", mesh, "--public", public}, "web1 is this machine's own name"},
 		{[]string{"web2"}, "--key to let it read this machine"},
 		{[]string{"web2", "--mesh", mesh}, "--mesh and --public go together"},
 		{[]string{"web2", "--public", public}, "--mesh and --public go together"},
@@ -228,6 +229,12 @@ func TestServerInitNeedsPublicWithListen(t *testing.T) {
 	peerRun(t, dir, "peer", "init", "--name", "web1", "--listen", listen, "--public", "https://web1.example.test")
 	if self := sealedPeers(t, dir).Self; self.Listen != listen || !reflect.DeepEqual(self.Public, []string{"https://web1.example.test"}) {
 		t.Fatalf("kept %+v", self)
+	}
+	// Running it again moves where it answers and what it checks itself by.
+	moved, checks := meshListen("fc00::/7"), []string{"https://www.web1.example.test", "https://web1.example.test/up"}
+	peerRun(t, dir, "peer", "init", "--name", "web1", "--listen", moved, "--public", checks[0], "--public", checks[1])
+	if self := sealedPeers(t, dir).Self; self.Listen != moved || !reflect.DeepEqual(self.Public, checks) {
+		t.Fatalf("init again kept %+v", self)
 	}
 	// A Mac watches and answers no one, so it needs neither.
 	mac := t.TempDir()

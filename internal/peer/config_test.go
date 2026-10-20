@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/kylebegeman/helios/internal/manifest"
 	"github.com/kylebegeman/helios/internal/secrets"
 )
 
@@ -47,6 +48,33 @@ func TestListenAddressMustBeMeshOrLoopback(t *testing.T) {
 		}
 		if strings.Contains(err.Error(), refused.listen) {
 			t.Fatalf("the refusal repeats the address: %v", err)
+		}
+	}
+}
+
+// The tailnet's range runs from its first address to its last, and the
+// addresses either side of it are not on the mesh, for a listener or a
+// peer.
+func TestTheMeshRangeEndsAtItsEdges(t *testing.T) {
+	tailnet := netip.MustParsePrefix("100.64.0.0/10")
+	first := tailnet.Addr()
+	b := first.As4()
+	binary.BigEndian.PutUint32(b[:], binary.BigEndian.Uint32(b[:])|(1<<(32-tailnet.Bits())-1))
+	last := netip.AddrFrom4(b)
+	for _, tc := range []struct {
+		addr netip.Addr
+		on   bool
+	}{
+		{first.Prev(), false},
+		{first, true},
+		{last, true},
+		{last.Next(), false},
+	} {
+		address := at(tc.addr, 7700)
+		_, listenErr := ParseListen(address)
+		_, meshErr := ParseMesh(address)
+		if (listenErr == nil) != tc.on || (meshErr == nil) != tc.on {
+			t.Fatalf("%s: listen %v, mesh %v; want it on the mesh: %v", address, listenErr, meshErr, tc.on)
 		}
 	}
 }
@@ -100,6 +128,40 @@ func keyedStore(t *testing.T) *secrets.Store {
 		t.Fatal(err)
 	}
 	return store
+}
+
+// A sealed list is checked as it is read, as it was when it was saved,
+// and the refusal never repeats what it found.
+func TestLoadRefusesAnInvalidSealedList(t *testing.T) {
+	outside := at(in("192.0.2.0/24"), 7700)
+	whole := strconv.FormatUint(uint64(binary.BigEndian.Uint32(in("192.0.2.0/24").AsSlice())), 10) + ":7700"
+	token, err := NewToken()
+	if err != nil {
+		t.Fatal(err)
+	}
+	list := func(mesh string) string {
+		return fmt.Sprintf(`{"self":{"name":"web1"},"peers":[{"name":"web2","mesh":%q,"public":["https://web2.example.test"]}]}`, mesh)
+	}
+	for _, tc := range []struct {
+		list, token, secret, want string
+	}{
+		{list(outside), token, outside, "the sealed peer list: web2's mesh address must be a name or an address on the mesh"},
+		{list(whole), token, whole, "the sealed peer list: web2's mesh address has a host that reads as an IP address"},
+		{list(at(in("100.64.0.0/10"), 7700)), "hp1_" + token[4:20], token[4:20], "the sealed peer list: this machine's peer key is malformed"},
+		{list(at(in("100.64.0.0/10"), 7700)), "", "", "the sealed peer list: this machine's peer key is malformed"},
+	} {
+		store := keyedStore(t)
+		if _, err := store.SetAll(manifest.ReservedApp, map[string]*string{ListKey: &tc.list, TokenKey: &tc.token}); err != nil {
+			t.Fatal(err)
+		}
+		_, err := Load(store)
+		if err == nil || !strings.Contains(err.Error(), tc.want) {
+			t.Fatalf("got %v, want %q", err, tc.want)
+		}
+		if tc.secret != "" && strings.Contains(err.Error(), tc.secret) {
+			t.Fatalf("the refusal repeats what was sealed: %v", err)
+		}
+	}
 }
 
 // setUp is a store where peer watch is set up as web1.

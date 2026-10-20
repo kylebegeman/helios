@@ -18,12 +18,21 @@ func view(observer string, p Paths) View {
 // A host down or a stuck watcher is critical only when a majority of the
 // observers with a fresh view agree: this machine when its own public
 // URL answers, or for a watcher always, and each other observer that
-// passed its own self-check.
+// passed its own self-check, once, by its latest view of that peer. A
+// summary that is stale or refuses the key still answered, so the host
+// is up, and a stale one agrees its watcher is stuck.
 func TestCriticalNeedsAgreement(t *testing.T) {
 	notChecked := view("mac", publicUp)
 	notChecked.SelfCheck = false
 	old := view("mac", publicUp)
 	old.Age = 4 * time.Minute
+	earlier := view("mac", allDown)
+	earlier.Age = 2 * time.Minute
+	ofWeb3 := func(p Paths) View {
+		v := view("mac", p)
+		v.Subject = "web3"
+		return v
+	}
 	watcherDown := Paths{Summary: "refused", TLS: WordOK, Public: WordOK}
 	for _, tc := range []struct {
 		name      string
@@ -37,11 +46,20 @@ func TestCriticalNeedsAgreement(t *testing.T) {
 		{"the Mac sees its public URLs", allDown, true, []View{view("mac", publicUp)}, state.SeverityWarning},
 		{"the Mac's self-check failed", allDown, true, []View{notChecked}, state.SeverityCritical},
 		{"the Mac's view is old", allDown, true, []View{old}, state.SeverityCritical},
+		{"the Mac agrees, and sees web3's public URLs", allDown, true, []View{ofWeb3(publicUp), view("mac", allDown)}, state.SeverityCritical},
+		{"the Mac sees its public URLs, and web3 down", allDown, true, []View{ofWeb3(allDown), view("mac", publicUp)}, state.SeverityWarning},
+		{"the Mac's latest view sees its public URLs", allDown, true, []View{earlier, view("mac", publicUp)}, state.SeverityWarning},
+		{"the Mac's latest view, sent first, sees its public URLs", allDown, true, []View{view("mac", publicUp), earlier}, state.SeverityWarning},
+		{"the Mac's key is refused", allDown, true, []View{view("mac", Paths{WordUntrusted, "timeout", "timeout"})}, state.SeverityWarning},
+		{"the Mac reads its summary stale", allDown, true, []View{view("mac", Paths{WordStale, "timeout", "timeout"})}, state.SeverityWarning},
 		{"two of three", allDown, true, []View{view("web3", allDown), view("mac", publicUp)}, state.SeverityCritical},
+		{"two of three, the Mac's view sent twice", allDown, true, []View{view("web3", allDown), view("mac", publicUp), view("mac", publicUp)}, state.SeverityCritical},
 		{"one of three", allDown, true, []View{view("web3", publicUp), view("mac", publicUp)}, state.SeverityWarning},
 		{"own self-check failed, nobody else", allDown, false, nil, state.SeverityWarning},
 		{"own self-check failed, web3 agrees", allDown, false, []View{view("web3", allDown)}, state.SeverityCritical},
 		{"watcher, the Mac reads its summary", watcherDown, true, []View{view("mac", allOK)}, state.SeverityWarning},
+		{"watcher, the Mac's key is refused", watcherDown, true, []View{view("mac", Paths{WordUntrusted, WordOK, WordOK})}, state.SeverityWarning},
+		{"watcher, the Mac reads it stale", watcherDown, true, []View{view("mac", Paths{WordStale, WordOK, WordOK})}, state.SeverityCritical},
 		{"watcher, the Mac can't either", watcherDown, true, []View{view("mac", allDown)}, state.SeverityCritical},
 		{"watcher, own self-check failed", watcherDown, false, nil, state.SeverityCritical},
 	} {
@@ -98,8 +116,12 @@ func TestSenderIsLowestNamedEligibleObserver(t *testing.T) {
 	failedCheck.SelfCheck = false
 	quietLeg := eligible("web2")
 	quietLeg.Legs[1].LastOK = LegsFresh + time.Hour
+	neverWorked := eligible("web2")
+	neverWorked.Legs = []Leg{{Name: "pushover"}}
 	warningOnly := eligible("web2")
 	warningOnly.Findings[0].Severity = state.SeverityWarning
+	anotherPeer := eligible("web2")
+	anotherPeer.Findings[0].Key = "peer:web3"
 	for _, tc := range []struct {
 		name       string
 		severity   string
@@ -109,7 +131,9 @@ func TestSenderIsLowestNamedEligibleObserver(t *testing.T) {
 		{"all eligible", state.SeverityCritical, []Candidate{eligible("web4"), eligible("web1"), eligible("web3"), eligible("web2")}, "web2"},
 		{"its self-check failed", state.SeverityCritical, []Candidate{eligible("web4"), failedCheck, eligible("web3")}, "web3"},
 		{"a leg is quiet", state.SeverityCritical, []Candidate{eligible("web4"), quietLeg, eligible("web3")}, "web3"},
+		{"a leg never worked", state.SeverityCritical, []Candidate{eligible("web4"), neverWorked, eligible("web3")}, "web3"},
 		{"it sees only a warning", state.SeverityCritical, []Candidate{eligible("web4"), warningOnly, eligible("web3")}, "web3"},
+		{"it found another peer critical", state.SeverityCritical, []Candidate{eligible("web4"), anotherPeer, eligible("web3")}, "web3"},
 		{"it sees it graver", state.SeverityWarning, []Candidate{eligible("web4"), eligible("web2"), eligible("web3")}, "web2"},
 	} {
 		if got := Sender("web4", "peer:web1", tc.severity, tc.candidates); got != tc.sender {
