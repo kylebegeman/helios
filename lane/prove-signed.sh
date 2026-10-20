@@ -7,8 +7,9 @@
 # routed app and public DNS (m6 covers it on a dedicated machine), so the
 # webhook's check runs here through the gitdeploy tests, on the box's own
 # git and OpenSSH, as root the way the daemon runs it. First the daemon on
-# its own, then reconcile, let the push user through /etc/bedrock to the
-# policy without listing it.
+# its own, then reconcile on its own, each from a stock 755 root:root
+# /etc/bedrock, let the push user through it to the policy without listing
+# it.
 set -euo pipefail
 umask 077
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -83,13 +84,17 @@ run 'stat -c "%a %U:%G %n" /etc/bedrock /etc/bedrock/git'
 run '[ "$(stat -c "%a %U:%G" /etc/bedrock)" = "715 root:bedrock" ] && sudo -u bedrock test -x /etc/bedrock/git && ! sudo -u bedrock ls /etc/bedrock >/dev/null 2>&1' \
   || fail "the daemon left a stock /etc/bedrock other than 715 root:bedrock, or the push user can list it"
 
-echo "== reconcile lets the push user read the policy"
+echo "== reconcile on its own gives a stock /etc/bedrock to the bedrock group"
+# /etc/bedrock goes back to a stock 755 root:root, as before the daemon's
+# check, so reconcile is proven from a stock directory too and not from the
+# 715 root:bedrock the daemon left. Reconcile doesn't restart the daemon.
+run 'mkdir -p /etc/bedrock && chown root:root /etc/bedrock && chmod 755 /etc/bedrock'
 run 'bedrock host reconcile --yes' | quiet | grep -E "pushes|succeeded|failed"
 run 'git --version; ssh -V 2>&1; stat -c "%a %U:%G %n" /etc/bedrock /etc/bedrock/git; ls -l /etc/bedrock'
-# /etc/bedrock keeps whatever others had (755 on a stock box); only its
-# group becomes bedrock, and the group may pass through and list nothing.
-run '[ "$(stat -c "%U:%G" /etc/bedrock)" = "root:bedrock" ] && [ "$(stat -c "%a" /etc/bedrock | cut -c2)" = 1 ] && [ "$(stat -c "%a %U:%G" /etc/bedrock/git)" = "750 root:bedrock" ] && sudo -u bedrock test -x /etc/bedrock/git && ! sudo -u bedrock ls /etc/bedrock >/dev/null 2>&1' \
-  || fail "the push user can't reach /etc/bedrock/git, or can list /etc/bedrock"
+# chgrp bedrock and chmod g=x: others keep their r-x, and the group may
+# pass through and list nothing.
+run '[ "$(stat -c "%a %U:%G" /etc/bedrock)" = "715 root:bedrock" ] && [ "$(stat -c "%a %U:%G" /etc/bedrock/git)" = "750 root:bedrock" ] && sudo -u bedrock test -x /etc/bedrock/git && ! sudo -u bedrock ls /etc/bedrock >/dev/null 2>&1' \
+  || fail "reconcile left a stock /etc/bedrock other than 715 root:bedrock, the push user can't reach /etc/bedrock/git, or it can list /etc/bedrock"
 
 echo "== two apps the push key may deploy; hello will require signed commits"
 run 'rm -rf /var/lib/bedrock-git/hello.git /var/lib/bedrock-git/notes.git'

@@ -292,10 +292,16 @@ func TestTheBedrockGroupMayPassThroughEtcBedrockAndListNothing(t *testing.T) {
 		"755 root:bedrock":               {0o755, bedrock, -1, 0o715},
 		"755 of another group":           {0o755, adm, -1, 0o755},
 		"750 of another group gains o+x": {0o750, adm, -1, 0o751},
+		// os.Stat's mode, directory and all; chmod g=x keeps the
+		// setuid, setgid and sticky bits, and so does the daemon.
+		"2755 root:root":        {os.ModeDir | os.ModeSetgid | 0o755, 0, bedrock, os.ModeSetgid | 0o715},
+		"1777 root:root":        {os.ModeDir | os.ModeSticky | 0o777, 0, bedrock, os.ModeSticky | 0o717},
+		"4750 root:bedrock":     {os.ModeDir | os.ModeSetuid | 0o750, bedrock, -1, os.ModeSetuid | 0o710},
+		"3750 of another group": {os.ModeDir | os.ModeSetgid | os.ModeSticky | 0o750, adm, -1, os.ModeSetgid | os.ModeSticky | 0o751},
 	} {
 		group, mode := sharedParent(c.mode, c.gid, bedrock)
 		if group != c.wantGroup || mode != c.wantMode {
-			t.Errorf("%s: group %d mode %o, want %d %o", name, group, mode, c.wantGroup, c.wantMode)
+			t.Errorf("%s: group %d mode %v, want %d %v", name, group, mode, c.wantGroup, c.wantMode)
 		}
 	}
 }
