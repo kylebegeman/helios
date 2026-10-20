@@ -483,6 +483,86 @@ func TestAMovesCaptureThatFailsLeavesItsStagingToTheMove(t *testing.T) {
 	lastRunFailed(t, store, m.App, "docker isn't answering")
 }
 
+// A move's capture keeps no receipt naming its run, so each of its steps,
+// and its steps resumed after a restart, find the run as the app's newest
+// one still open. A backup stopped with its daemon leaves its run open
+// too, for its own resumed attempt, and a capture must never take that
+// one, whether it was left before the capture began or while it ran.
+func TestAMovesCaptureNeverTakesTheRunAStoppedBackupLeftOpen(t *testing.T) {
+	for _, when := range []string{"before the capture began", "while the capture ran"} {
+		t.Run(when, func(t *testing.T) {
+			b, raw := backupIdentityFixture(t, false)
+			dockertest.New(t)
+			reg := kernel.Registry{}
+			reg.Add(b)
+			stopBackup := func() state.BackupRun {
+				t.Helper()
+				ctx, cancel := context.WithCancel(context.Background())
+				defer cancel()
+				_, err := kernel.New(b.Store, reg, "daemon").Run(ctx, BackupKind, raw, func(ev kernel.Event) {
+					if ev.Type == kernel.EventStepFinished && ev.Step.Name == "prepare" && ev.Step.Status == state.StepSucceeded {
+						cancel()
+					}
+				})
+				if err == nil {
+					t.Fatal("the backup was not stopped")
+				}
+				last, err := b.Store.LastBackupRun(context.Background(), "hello", state.BackupRunBackup)
+				if err != nil || last == nil || last.Finished() {
+					t.Fatalf("the stopped backup must leave its run open: %+v %v", last, err)
+				}
+				return *last
+			}
+			capturePlan := func() *kernel.Plan {
+				t.Helper()
+				input, err := MoveCaptureInputFor(context.Background(), b.Store, "hello", "source", "target", false)
+				if err != nil {
+					t.Fatal(err)
+				}
+				in, _ := json.Marshal(input)
+				plan, err := MoveCapture{Backup: b.Backup}.Plan(context.Background(), in)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if plan.Steps[0].Name != "prepare" || plan.Steps[1].Name != "snapshot" {
+					t.Fatalf("the rehearsal capture's steps changed: %s, %s", plan.Steps[0].Name, plan.Steps[1].Name)
+				}
+				return plan
+			}
+
+			var stopped state.BackupRun
+			if when == "before the capture began" {
+				stopped = stopBackup()
+			}
+			if err := capturePlan().Steps[0].Apply(context.Background(), io.Discard); err != nil {
+				t.Fatal(err)
+			}
+			if when == "while the capture ran" {
+				stopped = stopBackup()
+			}
+			// The daemon restarts, and the capture's snapshot resumes with
+			// a plan built again, which has to find the run its prepare
+			// began.
+			dockerDown(t)
+			if err := capturePlan().Steps[1].Apply(context.Background(), io.Discard); err == nil || !strings.Contains(err.Error(), "docker isn't answering") {
+				t.Fatalf("got %v, want the capture to fail without Docker", err)
+			}
+			runs, err := b.Store.BackupRuns(context.Background(), "hello", state.BackupRunBackup, 10)
+			if err != nil || len(runs) != 2 {
+				t.Fatalf("the runs are %+v, want the backup's and the capture's: %v", runs, err)
+			}
+			for _, run := range runs {
+				switch {
+				case run.ID == stopped.ID && run.Finished():
+					t.Errorf("the stopped backup's run must stay open for its resumed attempt: %+v", run)
+				case run.ID != stopped.ID && (!run.Finished() || run.OK || !strings.Contains(run.Error, "docker isn't answering")):
+					t.Errorf("the capture's own run must be closed with its failure: %+v", run)
+				}
+			}
+		})
+	}
+}
+
 // An interrupted operation resumes, and a resumed snapshot reads the tree
 // its prepare staged, so a snapshot interrupted mid-backup keeps it. The
 // resumed snapshot can't know what the interrupted one wrote, so it

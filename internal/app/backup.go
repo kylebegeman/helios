@@ -76,20 +76,56 @@ type backupRun struct {
 	app   string
 	kind  string
 	id    int64
+	// receipts is set for a record no receipt names, such as a move's
+	// capture, to where backups keep theirs. A run one of them names is
+	// that backup's to close, even when its daemon stopped and left it
+	// open, so begin passes over it.
+	receipts string
 }
 
-// begin starts a run record, or adopts one a previous attempt left open.
+// begin starts a run record, or adopts one a previous attempt left open:
+// the newest of its app and kind, passing over the runs receipts name.
 func (r *backupRun) begin(ctx context.Context) error {
 	if r.id != 0 {
 		return nil
 	}
-	if last, err := r.store.LastBackupRun(ctx, r.app, r.kind); err == nil && last != nil && !last.Finished() {
+	if last, err := r.last(ctx); err == nil && last != nil && !last.Finished() {
 		r.id = last.ID
 		return nil
 	}
 	id, err := r.store.StartBackupRun(ctx, r.app, r.kind, time.Now().UTC())
 	r.id = id
 	return err
+}
+
+// last returns the newest run of the record's app and kind that no receipt
+// in receipts names, or nil. A receipt it can't read may name any run, so
+// it adopts none.
+func (r *backupRun) last(ctx context.Context) (*state.BackupRun, error) {
+	if r.receipts == "" {
+		return r.store.LastBackupRun(ctx, r.app, r.kind)
+	}
+	receipts, err := backupReceipts(r.receipts)
+	if err != nil {
+		return nil, err
+	}
+	named := map[int64]bool{}
+	for _, receipt := range receipts {
+		if receipt.Owner == r.app && receipt.Kind == r.kind {
+			named[receipt.RunID] = true
+		}
+	}
+	// No more than the named runs come before the newest one unnamed.
+	runs, err := r.store.BackupRuns(ctx, r.app, r.kind, len(named)+1)
+	if err != nil {
+		return nil, err
+	}
+	for i := range runs {
+		if !named[runs[i].ID] {
+			return &runs[i], nil
+		}
+	}
+	return nil, nil
 }
 
 // fail records a failed run and returns the error.
@@ -184,7 +220,7 @@ func (b Backup) appPlan(st *integration.Storage, rev *state.Revision, m *manifes
 	app := rev.App
 	keep := m.KeepPolicy()
 	x := &backingUp{
-		b: b, owner: app, target: app, receiptDir: filepath.Join(b.StateDir, "backups", ".receipts"),
+		b: b, owner: app, target: app, receiptDir: b.receipts(),
 		staging: filepath.Join(b.StateDir, "backups", app),
 		bucket:  st.Bucket(app),
 		keep:    restic.Keep{Daily: keep.Daily, Weekly: keep.Weekly, Monthly: keep.Monthly},
@@ -211,7 +247,7 @@ func (b Backup) machinePlan(st *integration.Storage) (*kernel.Plan, error) {
 	hostname := b.Hostname()
 	target := MachineTarget(hostname)
 	x := &backingUp{
-		b: b, owner: manifest.ReservedApp, target: target, receiptDir: filepath.Join(b.StateDir, "backups", ".receipts"),
+		b: b, owner: manifest.ReservedApp, target: target, receiptDir: b.receipts(),
 		staging: filepath.Join(b.StateDir, "backups", "machine"),
 		bucket:  st.Bucket(target),
 		keep:    restic.Keep{Daily: 7, Weekly: 4, Monthly: 6},
@@ -291,21 +327,12 @@ func (x *backingUp) readReceipt(ctx context.Context) (*backupSnapshotReceipt, er
 // The receipt is found by its operation, since what names its path, such
 // as the machine's host name, may be what changed. An operation writes one.
 func (b Backup) Abandon(ctx context.Context, operation, reason string) {
-	if b.Store == nil || b.StateDir == "" {
+	if b.Store == nil {
 		return
 	}
-	dir := filepath.Join(b.StateDir, "backups", ".receipts")
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		return
-	}
-	for _, entry := range entries {
-		if !entry.Type().IsRegular() || filepath.Ext(entry.Name()) != ".json" {
-			continue
-		}
-		data, err := os.ReadFile(filepath.Join(dir, entry.Name()))
-		var receipt backupSnapshotReceipt
-		if err != nil || json.Unmarshal(data, &receipt) != nil || receipt.Operation != operation {
+	receipts, _ := backupReceipts(b.receipts())
+	for _, receipt := range receipts {
+		if receipt.Operation != operation {
 			continue
 		}
 		run, err := b.Store.BackupRun(ctx, receipt.RunID)
@@ -314,6 +341,40 @@ func (b Backup) Abandon(ctx context.Context, operation, reason string) {
 		}
 		return
 	}
+}
+
+// receipts is where a backup keeps the receipts binding its runs to their
+// operations.
+func (b Backup) receipts() string { return filepath.Join(b.StateDir, "backups", ".receipts") }
+
+// backupReceipts reads the receipts in dir. It returns those it can read
+// and an error naming any it can't.
+func backupReceipts(dir string) ([]backupSnapshotReceipt, error) {
+	entries, err := os.ReadDir(dir)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	var receipts []backupSnapshotReceipt
+	var errs []error
+	for _, entry := range entries {
+		if !entry.Type().IsRegular() || filepath.Ext(entry.Name()) != ".json" {
+			continue
+		}
+		data, err := os.ReadFile(filepath.Join(dir, entry.Name()))
+		var receipt backupSnapshotReceipt
+		if err == nil {
+			err = json.Unmarshal(data, &receipt)
+		}
+		if err != nil {
+			errs = append(errs, fmt.Errorf("read backup receipt %s: %w", entry.Name(), err))
+			continue
+		}
+		receipts = append(receipts, receipt)
+	}
+	return receipts, errors.Join(errs...)
 }
 
 func (x *backingUp) beginBackup(ctx context.Context) error {

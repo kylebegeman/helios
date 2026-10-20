@@ -129,7 +129,7 @@ func (c MoveCapture) Plan(ctx context.Context, raw json.RawMessage) (*kernel.Pla
 			stateDir = filepath.Dir(c.Backup.Store.Path())
 		}
 		x := &backingUp{b: c.Backup, owner: in.App, target: in.App, staging: filepath.Join(stateDir, "moves", in.App, "capture"), bucket: h.Bucket,
-			run: &backupRun{store: c.Backup.Store, app: in.App, kind: state.BackupRunBackup}}
+			run: &backupRun{store: c.Backup.Store, app: in.App, kind: state.BackupRunBackup, receipts: c.Backup.receipts()}}
 		prepare := x.appPrepareStep(rev, m)
 		prepare.Change += " for " + identity
 		plan.Steps = append(plan.Steps, prepare)
