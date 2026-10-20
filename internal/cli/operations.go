@@ -134,9 +134,9 @@ func (a *app) follow(ctx context.Context, runner api.Runner, r *ui.Renderer, id 
 		case err == nil && receipt.Status.Final():
 			// The events since the restart went unseen: show the whole
 			// receipt, or under --json the event a run streamed to its end
-			// finishes with.
+			// finishes with, its message the reason the kernel gave.
 			if a.json {
-				r.Event(kernel.Event{Type: kernel.EventFinished, Operation: id, At: receipt.FinishedAt, Receipt: receipt})
+				r.Event(kernel.Event{Type: kernel.EventFinished, Operation: id, At: receipt.FinishedAt, Receipt: receipt, Message: receipt.Error})
 			} else {
 				r.Receipt(receipt)
 			}

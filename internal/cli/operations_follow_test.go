@@ -132,25 +132,40 @@ func TestAnUpgradeTheDaemonRestartsUnderIsFollowedToItsOutcome(t *testing.T) {
 
 func TestUnderJSONAFollowedOperationEndsWithTheEventARunEndsWith(t *testing.T) {
 	shortenFollowing(t, time.Minute)
-	d := &restartingDaemon{id: "op-restarted", canceled: true, answers: []func(http.ResponseWriter){
-		unavailable, receiptAnswer("op-restarted", state.Succeeded, ""),
-	}}
-	stdout, stderr, err := d.upgrade(t, withDeadline(t), true)
-	if err != nil {
-		t.Fatal(err)
-	}
-	lines := strings.Split(strings.TrimSpace(stdout), "\n")
-	for _, line := range lines {
-		if !json.Valid([]byte(line)) {
-			t.Fatalf("stdout carries more than JSON: %q", line)
-		}
-	}
-	var last kernel.Event
-	if json.Unmarshal([]byte(lines[len(lines)-1]), &last) != nil || last.Type != kernel.EventFinished || last.Receipt == nil || last.Receipt.Status != state.Succeeded {
-		t.Fatalf("the last line isn't the finished event: %q", lines[len(lines)-1])
-	}
-	if !strings.Contains(stderr, "following op-restarted") {
-		t.Errorf("the note isn't on stderr: %q", stderr)
+	for _, c := range []struct {
+		name   string
+		status state.OperationStatus
+		reason string
+	}{
+		{"succeeded", state.Succeeded, ""},
+		// The kernel's finished event carries the reason as its message.
+		{"failed", state.Failed, "restart: the new build didn't start"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			d := &restartingDaemon{id: "op-restarted", canceled: true, answers: []func(http.ResponseWriter){
+				unavailable, receiptAnswer("op-restarted", c.status, c.reason),
+			}}
+			stdout, stderr, err := d.upgrade(t, withDeadline(t), true)
+			if (err != nil) != (c.status != state.Succeeded) {
+				t.Fatalf("an upgrade that %s ended with %v", c.status, err)
+			}
+			lines := strings.Split(strings.TrimSpace(stdout), "\n")
+			for _, line := range lines {
+				if !json.Valid([]byte(line)) {
+					t.Fatalf("stdout carries more than JSON: %q", line)
+				}
+			}
+			var last kernel.Event
+			if json.Unmarshal([]byte(lines[len(lines)-1]), &last) != nil || last.Type != kernel.EventFinished || last.Receipt == nil || last.Receipt.Status != c.status {
+				t.Fatalf("the last line isn't the finished event: %q", lines[len(lines)-1])
+			}
+			if last.Message != last.Receipt.Error || last.Message != c.reason {
+				t.Errorf("the finished event's message is %q, want the receipt's error %q", last.Message, c.reason)
+			}
+			if !strings.Contains(stderr, "following op-restarted") {
+				t.Errorf("the note isn't on stderr: %q", stderr)
+			}
+		})
 	}
 }
 
@@ -165,6 +180,26 @@ func TestAFollowedOperationThatFailsNamesItsSavedOutput(t *testing.T) {
 	}
 	if !strings.Contains(stdout, "op-rolled-back  host.upgrade") {
 		t.Errorf("the failed receipt wasn't shown:\n%s", stdout)
+	}
+}
+
+// Each answer showing the operation under way starts the patience again, so
+// an operation that applies for longer than it is still followed.
+func TestAnOperationStillApplyingIsFollowedPastThePatience(t *testing.T) {
+	const patience, every, applyingReads = 30 * time.Millisecond, 3 * time.Millisecond, 40
+	shortenFollowing(t, patience)
+	followEvery = every
+	answers := []func(http.ResponseWriter){}
+	for range applyingReads {
+		answers = append(answers, receiptAnswer("op-slow", state.Applying, ""))
+	}
+	d := &restartingDaemon{id: "op-slow", canceled: true, answers: append(answers, receiptAnswer("op-slow", state.Succeeded, ""))}
+	start := time.Now()
+	if _, _, err := d.upgrade(t, withDeadline(t), false); err != nil {
+		t.Fatalf("an upgrade still applying past the patience, then succeeding, failed after %s: %v", time.Since(start), err)
+	}
+	if took := time.Since(start); took <= patience {
+		t.Fatalf("the operation applied for only %s, within the patience", took)
 	}
 }
 
