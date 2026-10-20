@@ -724,8 +724,9 @@ database copied in by hand as root: that app would answer its health check and
 then fail its first save.
 
 Before it restores anything, a drill checks that the snapshot fits with 5 GB
-to spare, the floor `helios watch` warns at, on every disk it writes to: its
-working directory, each scratch volume and the scratch database's volume. The
+or a tenth of the disk to spare, whichever is larger: the floors
+`helios watch` warns at. It checks every disk it writes to: its working
+directory, each scratch volume and the scratch database's volume. The
 size is what the snapshot's backup read, or restic's own count when the
 snapshot doesn't record it, plus a 4 KB block for each file, so a volume of many
 small files can't fill a disk its bytes alone would fit. A drill whose restore

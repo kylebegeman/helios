@@ -11,10 +11,16 @@ import (
 )
 
 // restoreFreeReserve is the free space a drill leaves on every disk it
-// restores to. It is watch.DiskFreeMin, the floor under which helios
-// watch calls the disk a problem, so a drill never takes the machine's
-// running apps below it.
+// restores to, or restoreFreePercent of the disk when that is more. They
+// are watch.DiskFreeMin and watch.DiskFreePercentMin, the floors under
+// which helios watch calls the disk a problem, so a drill never takes the
+// machine's running apps below either.
 const restoreFreeReserve = 5 << 30
+
+// restoreFreePercent is watch.DiskFreePercentMin: the share of a disk
+// helios watch keeps free. A restore that keeps a reserve keeps the
+// larger of restoreFreeReserve and this share of the disk it writes to.
+const restoreFreePercent = 10
 
 // restoreFileBlock is the block most Linux filesystems allocate: a
 // restored file takes whole blocks, however few bytes it holds.
@@ -34,10 +40,11 @@ func allocated(s restic.Size) int64 {
 	return s.Bytes + s.Files*restoreFileBlock
 }
 
-// disk is one filesystem: which device it is and how much of it is free.
+// disk is one filesystem: which device it is, how much of it is free and
+// how big it is.
 type disk struct {
-	dev  uint64
-	free int64
+	dev         uint64
+	free, total int64
 }
 
 // statDisk reports the filesystem a path is on. Tests replace it.
@@ -52,10 +59,22 @@ var statDisk = func(path string) (disk, error) {
 	}
 	block := uint64(fs.Bsize)
 	free := uint64(fs.Bavail)
-	if block == 0 || free > math.MaxInt64/block {
+	blocks := uint64(fs.Blocks)
+	if block == 0 || free > math.MaxInt64/block || blocks > math.MaxInt64/block {
 		return disk{}, fmt.Errorf("%s reports an invalid capacity", path)
 	}
-	return disk{dev: uint64(st.Dev), free: int64(free * block)}, nil
+	return disk{dev: uint64(st.Dev), free: int64(free * block), total: int64(blocks * block)}, nil
+}
+
+// reserveOn is what a restore leaves free on d: reserve, raised to
+// restoreFreePercent of the disk, rounded up so the watcher's share
+// can't be crossed by rounding. A restore that keeps no reserve
+// (helios restore, a move's restore, a release rollback) keeps none.
+func reserveOn(d disk, reserve int64) int64 {
+	if reserve <= 0 {
+		return reserve
+	}
+	return max(reserve, d.total/100*restoreFreePercent+restoreFreePercent)
 }
 
 // SpaceError is a restore that doesn't fit: the disk under Path has Free,
@@ -73,9 +92,10 @@ func (e *SpaceError) Error() string {
 }
 
 // checkRestoreSpace refuses a restore of need bytes that would leave less
-// than reserve free on the disk under any of paths. Paths on one disk are
-// checked once, as the first of them: each disk must hold the whole
-// restore, since what lands where isn't known before it runs.
+// than reserve, raised by reserveOn for that disk, free on the disk under
+// any of paths. Paths on one disk are checked once, as the first of them:
+// each disk must hold the whole restore, since what lands where isn't
+// known before it runs.
 func checkRestoreSpace(paths []string, need, reserve int64) error {
 	if need < 0 || reserve < 0 {
 		return errors.New("a restore can't need negative space")
@@ -90,8 +110,9 @@ func checkRestoreSpace(paths []string, need, reserve int64) error {
 			continue
 		}
 		seen[d.dev] = true
-		if need > math.MaxInt64-reserve || d.free < need+reserve {
-			return &SpaceError{Path: path, Need: need, Reserve: reserve, Free: d.free}
+		r := reserveOn(d, reserve)
+		if need > math.MaxInt64-r || d.free < need+r {
+			return &SpaceError{Path: path, Need: need, Reserve: r, Free: d.free}
 		}
 	}
 	return nil
