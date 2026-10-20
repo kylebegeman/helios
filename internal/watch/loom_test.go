@@ -420,6 +420,10 @@ func TestLoomGetsOneSignedBodyPerIncident(t *testing.T) {
 	if err := json.Unmarshal(body.Evidence, &evidence); err != nil {
 		t.Fatal(err)
 	}
+	if evidence.CollectedBy != "daemon" || evidence.Late || evidence.Host != "web.example.test" || inc.Subject == "" || evidence.Incident.Subject != inc.Subject {
+		t.Fatalf("the evidence should be the daemon's, on time, for this host and subject: by %q, late %v, host %q, subject %q",
+			evidence.CollectedBy, evidence.Late, evidence.Host, evidence.Incident.Subject)
+	}
 	saved, err := os.Stat(filepath.Join(incident.Dir(r.stateDir, inc.ID), incident.EvidenceFile))
 	if err != nil {
 		t.Fatal(err)
@@ -467,6 +471,14 @@ func TestAWarningThatBecomesAnOutageReachesLoomOnce(t *testing.T) {
 	if n := len(r.loom.got()); n != 1 || body.EventID != fmt.Sprintf("web.example.test:%d:repeat", inc.ID) || body.Transition != TransitionRepeat ||
 		body.Severity != state.SeverityCritical || body.Message != "web isn't running" || !body.OpenedAt.Equal(inc.OpenedAt) {
 		t.Fatalf("%d bodies, the last %+v", n, body)
+	}
+	// The repeat goes after the warning's alerts did, so its evidence is late.
+	var evidence incident.Evidence
+	if err := json.Unmarshal(body.Evidence, &evidence); err != nil {
+		t.Fatal(err)
+	}
+	if !evidence.Late || evidence.CollectedBy != "daemon" {
+		t.Fatalf("a repeat's evidence should be the daemon's, collected late: by %q, late %v", evidence.CollectedBy, evidence.Late)
 	}
 	r.rounds(3, down("hello"))
 	if n := len(r.loom.got()); n != 1 {
