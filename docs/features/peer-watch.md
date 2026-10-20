@@ -184,17 +184,18 @@ reached is never elected, so then the page goes out at once. Every machine's
 alert about one peer carries the same Pushover tag, so a recovery from any of
 them stops the ringing any of them started. The recovery goes once, from the
 machine that first sent the alert at its worst severity. Another server waits
-up to 5 minutes for that machine to send it; if it has not seen that machine
-in that time it sends the recovery itself, and otherwise leaves it to that
-machine, which sends it when its own alert closes. A server's log notes each
-wait once, as `alert held: web2: web1 is to send this`. A server that has lost
-its record of who sent an alert, because its peer state file was lost or it
-stopped before keeping it, sends the recovery itself and logs `peer state: no
-record of who told peer:web2; its recovery goes from here`. That recovery may
-then arrive twice. A machine that sent an alert and was down or cut off while
-another server sent its recovery sends no second recovery when it comes back,
-and the alert it sent before that recovery never stands in for the page of the
-next outage.
+for that machine to send it for as long as that machine's summary still lists
+the alert open, since it sends the recovery when its own alert closes. Once
+that machine has been out of reach for 5 minutes, the waiting server sends the
+recovery itself. A server's log notes each wait once, as
+`alert held: web2: web1 is to send this`. A server that has lost its record of
+who sent an alert, because its peer state file was lost or it stopped before
+keeping it, sends the recovery itself and logs
+`peer state: no record of who told peer:web2; its recovery goes from here`.
+That recovery may then arrive twice. A machine that sent an alert and was down
+or cut off while another server sent its recovery sends no second recovery
+when it comes back, and the alert it sent before that recovery never stands in
+for the page of the next outage.
 
 On the server that sent it, `helios alerts` says when it told you, as for any
 alert. Another server says who it waits for, then who sent it. With three

@@ -527,3 +527,43 @@ func TestARecoverySentForAnAbsentTellerLeavesTheNextOutagePaged(t *testing.T) {
 		}
 	}
 }
+
+// A recovery held for the observer that paged the outage waits for as
+// long as that observer lists it, and goes once. web1 pages web3's
+// outage, then loses its own paths to web3, so it keeps its incident open
+// past HandoffWait while web3 is back for web2. web1 goes down before it
+// closes the incident: web2 sends the recovery once web1 has been out of
+// sight for HandoffWait, and web1, back with its paths mended, sends none
+// of its own.
+func TestARecoveryHeldForASenderLostWhileItListsTheOutageGoesOnce(t *testing.T) {
+	c := formCluster(t, "web1", "web2", "web3")
+	web1, web2 := c.byName["web1"], c.byName["web2"]
+	c.rounds(t, 1)
+	c.takeDown("web3")
+	c.rounds(t, watch.DefaultOpenAfter+2)
+	if got, want := web1.told("peer:web3"), []string{"open critical"}; !slices.Equal(got, want) {
+		t.Fatalf("web1 told %q, want %q", got, want)
+	}
+	c.cutOff("web1", "web3")
+	c.bringBack(t, "web3")
+	c.rounds(t, watch.DefaultResolveAfter+handoff+3)
+	web1.open(t, "peer:web3")
+	mk := c.mark()
+	c.takeDown("web1")
+	c.rounds(t, 2*handoff+2)
+	if got, want := web2.told("peer:web3"), []string{"resolved critical"}; !slices.Equal(got, want) {
+		t.Fatalf("web2 told %q, want %q", got, want)
+	}
+	c.mend("web1", "web3")
+	c.bringBack(t, "web1")
+	c.rounds(t, watch.DefaultResolveAfter+handoff+2)
+	if got, want := c.toldSince(mk, "peer:web3"), []string{"resolved critical"}; !slices.Equal(got, want) {
+		t.Fatalf("its recovery was told %q, want %q", got, want)
+	}
+	for _, m := range c.machines {
+		pending, err := m.store.PendingResolvedIncidentNotices(context.Background())
+		if open := openIncidentKeys(t, m.store); len(open) != 0 || err != nil || len(pending) != 0 {
+			t.Fatalf("%s has open %v and owes %+v (%v)", m.name, open, pending, err)
+		}
+	}
+}

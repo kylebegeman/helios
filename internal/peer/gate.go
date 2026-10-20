@@ -134,10 +134,10 @@ func (g *Gate) page(ctx context.Context, self string, n watch.Notice) error {
 // recovered decides a recovery. It goes from the teller, and to nobody
 // when nobody told the incident. Another observer's recovery is its own
 // once its summary no longer lists the incident, and this machine holds
-// it while that observer still does, for HandoffWait at most: by then the
-// observer, in sight with its incident still open, sends the recovery
-// when it closes it. An observer out of sight for HandoffWait has its
-// recovery sent from here.
+// it for as long as that observer still does: the observer has its
+// incident open and sends the recovery when it closes it. An observer
+// out of sight for HandoffWait since the hold began, or since it was
+// last seen if that is later, has its recovery sent from here.
 //
 // An incident told with no record of who told it lost the record with
 // the sidecar, or stopped before the sidecar kept it. Its recovery goes
@@ -186,7 +186,7 @@ func (g *Gate) recovered(ctx context.Context, self string, n watch.Notice) error
 	}
 	theirs, seen := s.seen[teller.By]
 	since := later(s.hold(n, teller.By, now).Since, s.started)
-	if seen && (!theirs.lists(n.Key) || now.Sub(since) >= HandoffWait) {
+	if seen && !theirs.lists(n.Key) {
 		s.forget(n.IncidentID)
 		s.mu.Unlock()
 		return nil

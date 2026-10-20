@@ -374,7 +374,7 @@ func TestRecoveryIsSentByWhoeverToldTheOpen(t *testing.T) {
 	p.down("web3")
 	p.rounds(t, watch.DefaultOpenAfter)
 	p.up("web3")
-	p.rounds(t, watch.DefaultResolveAfter+handoff-1)
+	p.rounds(t, watch.DefaultResolveAfter+handoff)
 	if got := p.pending(t); !slices.Equal(got, []string{"peer:web3"}) {
 		t.Fatalf("the recovery isn't held while web1 lists web3: %v", got)
 	}
@@ -423,13 +423,13 @@ func TestARepeatSentHereLeavesTheRecoveryWithTheSender(t *testing.T) {
 	}
 }
 
-// A recovery held for the observer that told the incident is left to it
-// once this machine has held it for HandoffWait with that observer in
-// sight and still listing the incident: the observer has its own incident
-// open, and sends the recovery when it closes it. A hold, of a page or a
-// recovery, is a wait: it is logged once, and never as an alert that
-// wasn't delivered.
-func TestAHeldRecoveryIsLeftToTheSenderAfterHandoffWait(t *testing.T) {
+// A recovery held for the observer that told the incident stays held for
+// as long as that observer lists the incident, past HandoffWait: it has
+// its own incident open, and sends the recovery when it closes it. Once
+// that observer has been out of sight for HandoffWait, the recovery goes
+// from here, once. A hold, of a page or a recovery, is a wait: it is
+// logged once, and never as an alert that wasn't delivered.
+func TestAHeldRecoveryWaitsWhileTheSenderListsIt(t *testing.T) {
 	p := paging(t)
 	logged := p.logging()
 	p.web1(web3Open(nil, false))
@@ -438,13 +438,18 @@ func TestAHeldRecoveryIsLeftToTheSenderAfterHandoffWait(t *testing.T) {
 	p.web1(web3Open(seconds(20), false))
 	p.rounds(t, 1)
 	p.up("web3")
-	p.rounds(t, watch.DefaultResolveAfter+handoff-1)
+	p.rounds(t, watch.DefaultResolveAfter+2*handoff)
 	if got, pending := p.told("peer:web3"), p.pending(t); got != nil || !slices.Equal(pending, []string{"peer:web3"}) {
-		t.Fatalf("held for less than HandoffWait: sent %v, pending %v", got, pending)
+		t.Fatalf("held past HandoffWait while web1 lists web3: sent %v, pending %v", got, pending)
+	}
+	p.down("web1")
+	p.rounds(t, handoff-1)
+	if got := p.told("peer:web3"); got != nil {
+		t.Fatalf("sent %v before web1 was out of sight for HandoffWait", got)
 	}
 	p.rounds(t, 1)
-	if got, pending := p.told("peer:web3"), p.pending(t); got != nil || pending != nil {
-		t.Fatalf("held for HandoffWait: sent %v, pending %v", got, pending)
+	if got, pending := p.told("peer:web3"), p.pending(t); !slices.Equal(got, []string{watch.TransitionResolved}) || pending != nil {
+		t.Fatalf("web1 out of sight for HandoffWait: sent %v, pending %v", got, pending)
 	}
 
 	var held []string
