@@ -649,16 +649,17 @@ a critical one.
 
 A disk with under 5 GB free is critical. The daemon also keeps how much of the
 disk is in use each hour for 90 days, and each minute of the last 6 hours in
-memory. It fits a trend through each that a few odd samples can't swing. A
-lone sudden step in usage, such as a cleanup or a large download, is set aside
-so only steady growth counts; repeated steps, such as a nightly import, are
-read as the rhythm they are. A disk the 7 day trend fills within 14 days is a
-warning, and within 48 hours it is critical. A disk the 6 hour trend fills
-within 6 hours, as a runaway log does, is critical too. The alert, about free
-disk space, says how fast the disk is filling and which app's data grew most.
-A disk with under 10% free is critical until there are 2 days of hourly
-samples. After that it is a warning while the 7 day trend lasts beyond 14 days
-or isn't growing.
+memory. It fits a trend through each that a few odd samples can't swing. A lone
+step each way, such as a cleanup or a large download, is set aside so only
+steady growth counts. A passing bump, such as a temp file or a nightly dump, is
+smoothed over. Repeated steps, such as a nightly import, are read as the rhythm
+they are. A disk the 7 day trend fills within 14 days is a warning, and within
+48 hours it is critical. A disk the 6 hour trend fills within 6 hours, as a
+runaway log does, is critical too, but only while usage is still climbing over
+the last hour. The alert, about free disk space, says how fast the disk is
+filling and which app's data grew most. A disk with under 10% free is critical
+until there are 2 days of hourly samples. After that it is a warning while the
+7 day trend lasts beyond 14 days or isn't growing.
 
 | Command | Shows |
 |---|---|

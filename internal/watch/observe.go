@@ -38,6 +38,14 @@ const (
 	ForecastLongPoints  = 48
 	ForecastShortWindow = 6 * time.Hour
 	ForecastShortPoints = 60
+	// ForecastShortRecent is the newest stretch of the minute samples,
+	// and ForecastShortRecentPoints how many it needs, that must still
+	// climb before the short trend pages. The 6 hour trend keeps reading
+	// a download that finished hours ago as growth; the last hour says
+	// whether it goes on. Half the hour's minutes leaves room for missed
+	// rounds and still gives the fit enough points to see past noise.
+	ForecastShortRecent       = time.Hour
+	ForecastShortRecentPoints = 30
 	// DiskFullWarn and DiskFullCritical are how soon the long trend may
 	// fill the disk before it is a warning and a critical problem.
 	// DiskFullFast is how soon the short trend may fill it, such as a
@@ -45,11 +53,14 @@ const (
 	DiskFullWarn     = 14 * 24 * time.Hour
 	DiskFullCritical = 48 * time.Hour
 	DiskFullFast     = 6 * time.Hour
-	// DiskShiftPercentMin is the smallest share of the filesystem a step
-	// in usage must move, between two samples, before the trends may set
-	// it aside as a one-off, such as a cleanup or a large download. It
-	// keeps quiet noise on an otherwise flat disk from reading as steps.
+	// DiskShiftPercentMin and DiskShiftMax size the smallest step in
+	// usage, across all its samples, the trends may set aside as a
+	// one-off, such as a cleanup or a large download: 1% of the
+	// filesystem, but no more than 1 GiB, so a 9 GB cleanup on a 1 TB
+	// disk still counts. Smaller changes, such as quiet noise on a flat
+	// disk, are left to the fit.
 	DiskShiftPercentMin = 1.0
+	DiskShiftMax        = 1 << 30
 	// MemoryAvailableMin is the smallest share of memory that may be
 	// available.
 	MemoryAvailableMin = 5.0
@@ -756,13 +767,17 @@ func (p *Prober) host(ctx context.Context) []Condition {
 // Under DiskFreePercentMin is critical too, unless the long trend has
 // enough points and says the disk lasts beyond DiskFullWarn, or isn't
 // filling: then it is a warning. The forecast is a problem of its own,
-// for how soon either trend fills the disk.
+// for how soon either trend fills the disk, the short one only while
+// usage still climbs over the last ForecastShortRecent.
 func diskConditions(root string, free, total uint64, hourly, minutes []Point) (disk, forecast *Condition) {
 	// A lone cleanup or download moves every sample after it; set aside,
 	// only the steady growth around it counts.
-	floor := float64(total) * DiskShiftPercentMin / 100
+	floor := math.Min(float64(total)*DiskShiftPercentMin/100, DiskShiftMax)
 	long, longOK := Forecast(WithoutShifts(hourly, floor), ForecastLongPoints, free)
-	short, shortOK := Forecast(WithoutShifts(minutes, floor), ForecastShortPoints, free)
+	minutes = WithoutShifts(minutes, floor)
+	short, shortOK := Forecast(minutes, ForecastShortPoints, free)
+	// The short trend pages only while usage still climbs.
+	shortOK = shortOK && StillClimbing(minutes, ForecastShortRecent, ForecastShortRecentPoints, short.PerSecond)
 	longDays := fmt.Sprintf("%d day", int(ForecastLongWindow/(24*time.Hour)))
 	shortHours := fmt.Sprintf("%d hour", int(ForecastShortWindow/time.Hour))
 
