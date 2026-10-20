@@ -1,12 +1,19 @@
 package cli
 
 import (
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"text/tabwriter"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -29,7 +36,7 @@ func newPeer(a *app) *cobra.Command {
 	for _, mutation := range []*cobra.Command{initialize, add, remove} {
 		a.guardSecretMutation(mutation, func([]string) string { return manifest.ReservedApp })
 	}
-	cmd.AddCommand(initialize, key, add, remove, newPeerList(a))
+	cmd.AddCommand(initialize, key, add, remove, newPeerList(a), newPeerObserve(a))
 	return cmd
 }
 
@@ -313,4 +320,140 @@ func peerRows(c peer.Config) []peerRow {
 		rows = append(rows, *byName[name])
 	}
 	return rows
+}
+
+// launchctl runs launchctl for helios peer observe --install and
+// --uninstall; the real one when nil. Tests replace it.
+var launchctl func(ctx context.Context, args ...string) error
+
+// observeMemory is the file in the state directory where helios peer
+// observe --changes keeps a digest of what its last run printed.
+const observeMemory = "peer-observe.last"
+
+// newPeerObserve is helios peer observe: a Mac's look at the servers it
+// watches. It always runs where it is typed.
+func newPeerObserve(a *app) *cobra.Command {
+	var install, uninstall, changes bool
+	cmd := &cobra.Command{
+		Use:   "observe",
+		Short: "Look at every peer once and tell each what this machine saw. A Mac runs it every minute; it never pages.",
+		Long: "Look at every peer once and tell each what this machine saw. A Mac runs it every minute; it never pages.\n\n" +
+			"Each server counts the views while they are fresh, and the server elected to\n" +
+			"page says so when this machine stops sending them. It prints one line per\n" +
+			"server and exits 0 even when a server can't be reached. With --changes it\n" +
+			"prints the lines, each with the time, only when they differ from the last\n" +
+			"run with --changes, so its log grows only when something changes. --install\n" +
+			"has launchd run it that way every minute on macOS; elsewhere, run it from\n" +
+			"cron with --changes.",
+		Annotations: map[string]string{"client-only": "true"},
+		Args:        cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			switch {
+			case install:
+				plist, log, err := peer.InstallLaunchAgent(cmd.Context(), a.stateDir, launchctl)
+				if err != nil {
+					return err
+				}
+				fmt.Fprintf(a.stdout, "installed %s; launchd runs helios peer observe every minute and logs what changes to %s\n", plist, log)
+				return nil
+			case uninstall:
+				path, removed, err := peer.UninstallLaunchAgent(cmd.Context(), launchctl)
+				switch {
+				case err != nil:
+					return err
+				case !removed:
+					fmt.Fprintln(a.stdout, "no launch agent runs helios peer observe here")
+				default:
+					fmt.Fprintf(a.stdout, "removed %s; launchd no longer runs helios peer observe\n", path)
+				}
+				return nil
+			}
+			w, lines, err := a.observe(cmd.Context())
+			switch {
+			case changes && err != nil:
+				return a.printChanged(a.stderr, []string{"helios: " + err.Error()}, err)
+			case changes:
+				return a.printChanged(w, lines, nil)
+			case err != nil:
+				return err
+			}
+			for _, line := range lines {
+				fmt.Fprintln(w, line)
+			}
+			return nil
+		},
+	}
+	cmd.Flags().BoolVar(&install, "install", false, "on macOS, have launchd run this every minute")
+	cmd.Flags().BoolVar(&uninstall, "uninstall", false, "stop launchd running this and remove its launch agent")
+	cmd.Flags().BoolVar(&changes, "changes", false, "print only when the lines differ from the last run with --changes, each with the time")
+	cmd.MarkFlagsMutuallyExclusive("install", "uninstall", "changes")
+	return cmd
+}
+
+// observe is one run of helios peer observe: a line per server, as text
+// or JSON, or why there is none, and where the lines go.
+func (a *app) observe(ctx context.Context) (io.Writer, []string, error) {
+	observed, err := (&peer.Source{Secrets: a.secretsStore()}).ObserveOnly(ctx)
+	switch {
+	case err != nil:
+		return nil, nil, err
+	case len(observed) == 0:
+		return a.prose(), []string{"no peers to watch; run helios peer add"}, nil
+	}
+	lines := make([]string, len(observed))
+	for i, o := range observed {
+		lines[i] = o.String()
+		if a.json {
+			encoded, err := json.Marshal(o)
+			if err != nil {
+				return nil, nil, err
+			}
+			lines[i] = string(encoded)
+		}
+	}
+	return a.stdout, lines, nil
+}
+
+// printChanged prints a run's lines to w, each with the time unless it
+// is a JSON object, only when they differ from what the last run with
+// --changes printed. A log of it then grows when something changes and
+// never with a healthy round, and a run that fails the way the last one
+// did says nothing again but still exits 1.
+func (a *app) printChanged(w io.Writer, lines []string, failed error) error {
+	same, err := sameAsLastRun(a.stateDir, lines)
+	if err != nil {
+		return err
+	}
+	if !same {
+		at := time.Now().Format(time.DateTime) + " "
+		objects := a.json && w == a.stdout
+		for _, line := range lines {
+			if !objects {
+				line = at + line
+			}
+			fmt.Fprintln(w, line)
+		}
+	}
+	if failed != nil {
+		return quietError{code: 1}
+	}
+	return nil
+}
+
+// sameAsLastRun reports whether lines are what the last run of helios
+// peer observe --changes printed, and keeps them for the next run. The
+// state directory keeps only their digest, so the file holds no name. A
+// digest that can't be read counts as a change, so at worst a run prints
+// once more than it needed to.
+func sameAsLastRun(stateDir string, lines []string) (bool, error) {
+	sum := sha256.Sum256([]byte(strings.Join(lines, "\n")))
+	digest := hex.EncodeToString(sum[:])
+	path := filepath.Join(stateDir, observeMemory)
+	if last, err := os.ReadFile(path); err == nil && string(last) == digest {
+		return true, nil
+	}
+	if err := os.MkdirAll(stateDir, 0o700); err != nil {
+		return false, err
+	}
+	return false, os.WriteFile(path, []byte(digest), 0o600)
 }

@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"regexp"
 	"strconv"
 	"strings"
 	"testing"
@@ -281,5 +282,59 @@ func TestPeerKeyRotateChangesFingerprint(t *testing.T) {
 		if strings.Contains(out, token) || strings.Contains(out, "hp1_") {
 			t.Fatalf("the key itself was shown: %q", out)
 		}
+	}
+}
+
+// helios peer observe runs where it is typed, never through --target: a
+// Mac looks at its servers itself. With no peer watch it says how to set
+// one up, and with no server to watch it says so and exits 0.
+func TestObserveRunsWhereItIsTyped(t *testing.T) {
+	dir := t.TempDir()
+	// A target that doesn't exist: were observe sent there, it would fail.
+	elsewhere := []string{"--targets-file", filepath.Join(t.TempDir(), "targets.json"), "--target", "web2", "peer", "observe"}
+	if _, errOut, code := run(t, dir, elsewhere...); code != 1 || errOut != "helios: "+peer.ErrNotSet.Error()+"\n" {
+		t.Fatalf("before peer init: code %d, err %q", code, errOut)
+	}
+	peerRun(t, dir, "peer", "init", "--name", "mac")
+	if out, errOut, code := run(t, dir, elsewhere...); code != 0 || out != "no peers to watch; run helios peer add\n" || errOut != "" {
+		t.Fatalf("code %d, out %q, err %q", code, out, errOut)
+	}
+	if out, errOut, code := run(t, dir, append(elsewhere, "--json")...); code != 0 || out != "" || errOut != "no peers to watch; run helios peer add\n" {
+		t.Fatalf("--json: code %d, out %q, err %q", code, out, errOut)
+	}
+}
+
+// helios peer observe --changes prints a run's lines, each with the time,
+// only when they differ from the last run's, so the log launchd keeps of
+// it grows when something changes and never with a healthy round. A
+// failure is said once, and every run of it still exits 1. The state
+// directory keeps a digest of the lines, not the lines.
+func TestObserveWithChangesPrintsOnlyWhatChanged(t *testing.T) {
+	dir := t.TempDir()
+	stamped := func(line string) *regexp.Regexp {
+		return regexp.MustCompile(`^\d{4}-\d\d-\d\d \d\d:\d\d:\d\d ` + regexp.QuoteMeta(line) + "\n$")
+	}
+	notSet := stamped("helios: " + peer.ErrNotSet.Error())
+	if out, errOut, code := run(t, dir, "peer", "observe", "--changes"); code != 1 || out != "" || !notSet.MatchString(errOut) {
+		t.Fatalf("before peer init: code %d, out %q, err %q", code, out, errOut)
+	}
+	if out, errOut, code := run(t, dir, "peer", "observe", "--changes"); code != 1 || out != "" || errOut != "" {
+		t.Fatalf("failing again: code %d, out %q, err %q", code, out, errOut)
+	}
+	peerRun(t, dir, "peer", "init", "--name", "mac")
+	noPeers := stamped("no peers to watch; run helios peer add")
+	if out, errOut, code := run(t, dir, "peer", "observe", "--changes"); code != 0 || !noPeers.MatchString(out) || errOut != "" {
+		t.Fatalf("after peer init: code %d, out %q, err %q", code, out, errOut)
+	}
+	if out, errOut, code := run(t, dir, "peer", "observe", "--changes"); code != 0 || out != "" || errOut != "" {
+		t.Fatalf("the same again: code %d, out %q, err %q", code, out, errOut)
+	}
+	memory := filepath.Join(dir, "peer-observe.last")
+	info, err := os.Stat(memory)
+	if err != nil || info.Mode().Perm() != 0o600 {
+		t.Fatalf("%s: %v %v", memory, info, err)
+	}
+	if kept, err := os.ReadFile(memory); err != nil || !regexp.MustCompile(`^[0-9a-f]{64}$`).Match(kept) {
+		t.Fatalf("%s keeps %q (%v), not a digest", memory, kept, err)
 	}
 }

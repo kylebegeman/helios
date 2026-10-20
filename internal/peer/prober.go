@@ -224,11 +224,7 @@ func (s *Source) Observe(ctx context.Context) []watch.Condition {
 	case err != nil:
 		return s.Held(ctx)
 	}
-	deadline := s.deadline
-	if deadline == 0 {
-		deadline = RoundDeadline
-	}
-	rctx, cancel := context.WithTimeout(ctx, deadline)
+	rctx, cancel := context.WithTimeout(ctx, s.roundDeadline())
 	defer cancel()
 	var selfCheck bool
 	looks := make([]look, len(c.Peers))
@@ -239,6 +235,13 @@ func (s *Source) Observe(ctx context.Context) []watch.Condition {
 	}
 	wg.Wait()
 	return s.judge(ctx, c, selfCheck, looks)
+}
+
+func (s *Source) roundDeadline() time.Duration {
+	if s.deadline == 0 {
+		return RoundDeadline
+	}
+	return s.deadline
 }
 
 // judge turns a round's looks into conditions, with what the peers'
@@ -434,34 +437,48 @@ func (s *Source) public(ctx context.Context, urls []string) string {
 }
 
 // fetchSummary reads a peer's summary at its mesh address, presenting
-// token. It reaches only the mesh, never through a proxy, follows no
-// redirect, and reads at most MaxSummaryBytes.
+// token, and reads at most MaxSummaryBytes of it.
 func (s *Source) fetchSummary(ctx context.Context, mesh, token string) (Summary, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://"+mesh+SummaryPath, nil)
 	if err != nil {
 		return Summary{}, err
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
-	transport := &http.Transport{DialContext: s.dialer().DialContext, MaxResponseHeaderBytes: MaxHeaderBytes}
-	defer transport.CloseIdleConnections()
-	client := &http.Client{Transport: transport, Timeout: PathTimeout,
-		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
-	resp, err := client.Do(req)
+	resp, err := s.ask(req)
 	if err != nil {
 		return Summary{}, err
 	}
 	defer resp.Body.Close()
-	switch {
-	case resp.StatusCode == http.StatusUnauthorized && resp.Header.Get(Header) != "":
-		return Summary{}, errUntrusted
-	case resp.StatusCode != http.StatusOK:
-		return Summary{}, statusError(resp.StatusCode)
+	if err := unexpected(resp, http.StatusOK); err != nil {
+		return Summary{}, err
 	}
 	var summary Summary
 	if err := json.NewDecoder(io.LimitReader(resp.Body, MaxSummaryBytes)).Decode(&summary); err != nil {
 		return Summary{}, errUnreadable
 	}
 	return summary, nil
+}
+
+// ask sends req to a peer's Helios. It reaches only the mesh, never
+// through a proxy, follows no redirect, gives up after PathTimeout, and
+// closes its connection once the answer's body is closed.
+func (s *Source) ask(req *http.Request) (*http.Response, error) {
+	transport := &http.Transport{DialContext: s.dialer().DialContext, MaxResponseHeaderBytes: MaxHeaderBytes, DisableKeepAlives: true}
+	client := &http.Client{Transport: transport, Timeout: PathTimeout,
+		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	return client.Do(req)
+}
+
+// unexpected is a peer's answer other than the want it was asked for:
+// its Helios refusing this machine's key, or any other code.
+func unexpected(resp *http.Response, want int) error {
+	switch {
+	case resp.StatusCode == http.StatusUnauthorized && resp.Header.Get(Header) != "":
+		return errUntrusted
+	case resp.StatusCode != want:
+		return statusError(resp.StatusCode)
+	}
+	return nil
 }
 
 // shake shakes hands with a peer's edge on the mesh and passes when it
