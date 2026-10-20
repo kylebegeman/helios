@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"os"
 	"path/filepath"
 	"slices"
 	"strconv"
@@ -234,7 +235,7 @@ func TestMachineBackupStopsAnAppDataCopyAtItsDeadline(t *testing.T) {
 
 // A machine backup copies each app's last good snapshot onto the machine's
 // own disk. One that can't fit beside the running apps with the reserve
-// left refuses before copying it.
+// left refuses before copying any of it.
 func TestAMachineBackupWithoutRoomForAnAppsDataRefuses(t *testing.T) {
 	r, _ := recoveryFixture(t)
 	ctx := context.Background()
@@ -274,12 +275,15 @@ func TestAMachineBackupWithoutRoomForAnAppsDataRefuses(t *testing.T) {
 	onDisks(t, func(string) (disk, error) { return disk{dev: 1, free: 8 << 30}, nil })
 	b := Backup{Store: r.Store, Secrets: r.Secrets, StateDir: r.StateDir}
 	err = b.prepareMachineRecoveryCatalog(ctx, "old-host", stage, io.Discard)
-	want := "copy hello's snapshot eeeeeeee into the machine backup: restoring needs 90.0 GB plus a 5.0 GB reserve on " +
-		filepath.Join(stage, machineAppDataDir, m.App) + ", which has 8.0 GB free; free space and back up the machine again"
+	want := "copy the pinned app data into the machine backup: restoring needs 90.0 GB plus a 5.0 GB reserve on " + stage +
+		", which has 8.0 GB free (hello 90.0 GB); no app data was copied; free space and back up the machine again"
 	if err == nil || err.Error() != want {
 		t.Fatalf("got %v, want %q", err, want)
 	}
 	if !slices.Equal(commands, []string{"snapshots"}) {
 		t.Fatalf("a machine backup with no room went on to %v", commands)
+	}
+	if _, err := os.Stat(filepath.Join(stage, machineAppDataDir)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("a machine backup with no room made its app data directory: %v", err)
 	}
 }

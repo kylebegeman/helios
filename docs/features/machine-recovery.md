@@ -15,6 +15,15 @@ Before losing the source, record its machine snapshot IDs with
 `helios backups bedrock --json` on that source machine and keep the inventory
 with your recovery materials. This command reads local backup history.
 
+The machine backup stages all of this on the machine's own disk, under
+`backups/machine` in the state directory, before uploading it: the state copy
+and secrets, each data app's pinned snapshot and the workload image archive.
+Before it copies any app data, it adds up the pinned snapshots, as their
+backups recorded them, and the images, with room for the archive's framing,
+and refuses unless the total fits with the reserve `helios watch` keeps: 5 GB
+or a tenth of the disk, whichever is larger. It also refuses, before copying,
+a pin whose backup finished before the app's active revision.
+
 The backup omits the machine's private identity. Keep the source recovery
 identity and storage backup password separately. Workload images are archived
 by their immutable image IDs, including images built in the source machine's

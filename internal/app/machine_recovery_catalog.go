@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -157,6 +158,24 @@ func syncRecoveryDirectory(path string) error {
 	return dir.Sync()
 }
 
+// machineDockerTimeout bounds each Docker call the machine catalog makes
+// outside a restic run: connecting, resolving and sizing images. Tests
+// shorten it.
+var machineDockerTimeout = 2 * time.Minute
+
+// machineDocker runs one docker command for the machine catalog, which
+// holds the operation lock, so a Docker that stops answering can't hold
+// the lock with it.
+func machineDocker(ctx context.Context, args ...string) ([]byte, error) {
+	callCtx, cancel := context.WithTimeout(ctx, machineDockerTimeout)
+	defer cancel()
+	out, err := exec.CommandContext(callCtx, "docker", args...).Output()
+	if err != nil && ctx.Err() == nil && errors.Is(callCtx.Err(), context.DeadlineExceeded) {
+		return nil, fmt.Errorf("docker did not answer within %s", machineDockerTimeout)
+	}
+	return out, err
+}
+
 // recoveryImageID archives immutable image IDs. Docker save/load does not
 // preserve registry RepoDigests, and mutable tags can change after deploy.
 func recoveryImageID(ctx context.Context, ref, container string) (string, error) {
@@ -164,7 +183,7 @@ func recoveryImageID(ctx context.Context, ref, container string) (string, error)
 	if container != "" {
 		args = []string{"container", "inspect", "--format={{.Image}}", container}
 	}
-	out, err := exec.CommandContext(ctx, "docker", args...).Output()
+	out, err := machineDocker(ctx, args...)
 	if err != nil {
 		return "", fmt.Errorf("resolve the recorded recovery image: %w", err)
 	}
@@ -173,6 +192,51 @@ func recoveryImageID(ctx context.Context, ref, container string) (string, error)
 		return "", errors.New("Docker returned an invalid immutable recovery image ID")
 	}
 	return id, nil
+}
+
+// The sizes Docker reports add up to an estimate of the image archive,
+// not a bound: docker image save wraps each layer in a tar of its own,
+// with a header and block padding for every file, and the containerd
+// image store may report a size other than what it saves. So the
+// estimate keeps a tenth of the sum and 64 MiB on top, until the archive
+// is measured against the sum on a real host.
+const (
+	imageArchiveSlackPercent = 10
+	imageArchiveSlackBytes   = 64 << 20
+)
+
+// recoveryImageSizes estimates what archiving images writes: the sum of
+// the size Docker reports for each image, with the archive's slack on
+// top. Tests replace it.
+var recoveryImageSizes = func(ctx context.Context, ids []string) (int64, error) {
+	if len(ids) == 0 {
+		return 0, nil
+	}
+	out, err := machineDocker(ctx, append([]string{"image", "inspect", "--format={{.Size}}"}, ids...)...)
+	if err != nil {
+		return 0, fmt.Errorf("size the workload images: %w", err)
+	}
+	sizes := strings.Fields(string(out))
+	if len(sizes) != len(ids) {
+		return 0, fmt.Errorf("size the workload images: docker reported %d sizes for %d images", len(sizes), len(ids))
+	}
+	var sum int64
+	for _, s := range sizes {
+		n, err := strconv.ParseInt(s, 10, 64)
+		if err != nil || n < 0 {
+			return 0, fmt.Errorf("size the workload images: docker reported %q as an image's size", s)
+		}
+		sum = addSize(sum, n)
+	}
+	return addSize(sum, addSize(sum/100*imageArchiveSlackPercent, imageArchiveSlackBytes)), nil
+}
+
+// addSize adds two non-negative sizes, saturating rather than wrapping.
+func addSize(a, b int64) int64 {
+	if b > math.MaxInt64-a {
+		return math.MaxInt64
+	}
+	return a + b
 }
 
 // machineImagesTimeout bounds archiving the workload images into a machine
@@ -209,8 +273,77 @@ func loadMachineImages(ctx context.Context, path string) error {
 	return nil
 }
 
+// machineAppPin is one data app's pinned recovery point, found before
+// anything is copied.
+type machineAppPin struct {
+	rev  *state.Revision // points into the catalog's Revisions
+	m    manifest.Manifest
+	last *state.BackupRun // the last good backup run: the pin
+	size restic.Size      // what restoring it writes
+	snap *restic.Snapshot // nil until resolved in the repository
+	r    restic.Runner    // valid once snap is set
+}
+
+// checkMachineCopySpace refuses a machine backup whose pinned app data and
+// image archive can't all fit in its staging with the reserve left, before
+// any of it is written.
+func checkMachineCopySpace(staging string, pins []*machineAppPin, images int64) error {
+	if len(pins) == 0 {
+		return nil // the image check before the archive covers images alone
+	}
+	var need int64
+	parts := make([]string, 0, len(pins)+1)
+	for _, p := range pins {
+		n := allocated(p.size)
+		if n < 0 {
+			return fmt.Errorf("count %s's pinned data: the size is negative", p.rev.App)
+		}
+		need = addSize(need, n)
+		parts = append(parts, p.rev.App+" "+HumanBytes(n))
+	}
+	if images > 0 {
+		need = addSize(need, images)
+		parts = append(parts, "workload images up to "+HumanBytes(images))
+	}
+	if err := checkRestoreSpace([]string{staging}, need, restoreFreeReserve); err != nil {
+		return fmt.Errorf("copy the pinned app data into the machine backup: %w (%s); no app data was copied; free space and back up the machine again", err, strings.Join(parts, ", "))
+	}
+	return nil
+}
+
+// resolveMachinePin finds a pin's snapshot in its repository and keeps
+// the runner that copies it.
+func (b Backup) resolveMachinePin(ctx context.Context, connect func() (*docker.Engine, error), pin *machineAppPin) error {
+	e, err := connect()
+	if err != nil {
+		return err
+	}
+	r, _, err := openRepo(b.Secrets, e, manifest.ReservedApp, pin.rev.App, nil)
+	if err != nil {
+		return err
+	}
+	// The machine backup holds the operation lock while it copies the
+	// app's data in, so the copy has a limit like its other calls.
+	r.Deadlines = b.Deadlines
+	if r.Deadlines.Restore <= 0 {
+		r.Deadlines.Restore = restic.RestoreTimeout
+	}
+	snaps, err := r.Snapshots(ctx, pin.rev.App)
+	if err != nil {
+		return err
+	}
+	snap, err := resolveRecoverySnapshot(snaps, pin.last.Snapshot)
+	if err != nil {
+		return fmt.Errorf("pin %s's data recovery point: %w", pin.rev.App, err)
+	}
+	pin.r, pin.snap = r, snap
+	return nil
+}
+
 // prepareMachineRecoveryCatalog is called after taking the SQLite copy,
-// so its revisions and backup records describe the copied state.
+// so its revisions and backup records describe the copied state. It
+// plans every pinned copy and the image archive, and checks that they
+// all fit, before it copies any of them.
 func (b Backup) prepareMachineRecoveryCatalog(ctx context.Context, hostname, staging string, out io.Writer) error {
 	source, err := state.OpenReadOnly(filepath.Join(staging, "state.db"))
 	if err != nil {
@@ -239,13 +372,29 @@ func (b Backup) prepareMachineRecoveryCatalog(ctx context.Context, hostname, sta
 			return err
 		}
 	}
-	seen := map[string]bool{}
 	var e *docker.Engine
 	defer func() {
 		if e != nil {
 			e.Close()
 		}
 	}()
+	// Connect uses its context only to ping, so the limit bounds the wait
+	// for Docker's answer and the connection outlives it.
+	connect := func() (*docker.Engine, error) {
+		if e != nil {
+			return e, nil
+		}
+		pingCtx, cancel := context.WithTimeout(ctx, machineDockerTimeout)
+		defer cancel()
+		var err error
+		e, err = docker.Connect(pingCtx)
+		return e, err
+	}
+	// Plan every copy before writing any app data: resolve the images, and
+	// find each data app's pin and what restoring it writes, from its
+	// backup record when the record kept a size.
+	seen := map[string]bool{}
+	var pins []*machineAppPin
 	for i := range c.Revisions {
 		rev := &c.Revisions[i]
 		images := map[string]string{}
@@ -279,46 +428,59 @@ func (b Backup) prepareMachineRecoveryCatalog(ctx context.Context, hostname, sta
 		if last == nil || last.Snapshot == "" {
 			return fmt.Errorf("%s has no successful data backup; run helios backup %s before backing up the whole machine", rev.App, rev.App)
 		}
-		if e == nil {
-			e, err = docker.Connect(ctx)
-			if err != nil {
+		// The snapshot step writes the provenance this copy is checked
+		// against before its run finishes, so a run that finished before
+		// this revision was created can't prove it. The check after the
+		// copy still decides; this one spares copying what it would refuse.
+		if last.FinishedAt.Before(rev.CreatedAt) {
+			return freshRecoveryBackupRequired(*rev)
+		}
+		pin := &machineAppPin{rev: rev, m: m, last: last}
+		if last.Bytes > 0 && last.Files >= 0 {
+			pin.size = restic.Size{Bytes: last.Bytes, Files: last.Files}
+		} else {
+			// A record from before sizes were kept: ask the repository,
+			// and keep the answer for the copy.
+			if err := b.resolveMachinePin(ctx, connect, pin); err != nil {
+				return err
+			}
+			if pin.size, err = snapshotSize(ctx, pin.r, pin.snap, rev.App); err != nil {
 				return err
 			}
 		}
-		r, _, err := openRepo(b.Secrets, e, manifest.ReservedApp, rev.App, nil)
-		if err != nil {
-			return err
+		pins = append(pins, pin)
+	}
+	slices.Sort(c.Images)
+	archive, err := recoveryImageSizes(ctx, c.Images)
+	if err != nil {
+		return err
+	}
+	if err := checkMachineCopySpace(staging, pins, archive); err != nil {
+		return err
+	}
+	// Find every pin in its repository before copying any, so one that
+	// retention removed refuses before the apps ahead of it are copied.
+	for _, pin := range pins {
+		if pin.snap == nil {
+			if err := b.resolveMachinePin(ctx, connect, pin); err != nil {
+				return err
+			}
 		}
-		// The machine backup holds the operation lock while it copies the
-		// app's data in, so the copy has a limit like its other calls.
-		r.Deadlines = b.Deadlines
-		if r.Deadlines.Restore <= 0 {
-			r.Deadlines.Restore = restic.RestoreTimeout
-		}
-		snaps, err := r.Snapshots(ctx, rev.App)
-		if err != nil {
-			return err
-		}
-		snap, err := resolveRecoverySnapshot(snaps, last.Snapshot)
-		if err != nil {
-			return fmt.Errorf("pin %s's data recovery point: %w", rev.App, err)
-		}
-		c.AppSnapshots[rev.App] = snap.ID
+	}
+	for _, pin := range pins {
+		rev := pin.rev
+		c.AppSnapshots[rev.App] = pin.snap.ID
 		appData := filepath.Join(staging, machineAppDataDir, rev.App)
 		if err := os.MkdirAll(appData, 0o700); err != nil {
 			return err
 		}
-		// The copy lands beside the machine's running apps, after the
-		// copies before it, so like a drill it keeps the reserve and
-		// refuses what it can't count.
-		size, err := snapshotSize(ctx, r, snap, rev.App)
-		if err != nil {
-			return err
+		// Every copy fit together when planned, but the running apps keep
+		// writing beside them, so like a drill each copy checks again
+		// before it lands.
+		if err := checkRestoreSpace([]string{appData}, allocated(pin.size), restoreFreeReserve); err != nil {
+			return fmt.Errorf("copy %s's snapshot %s into the machine backup: %w; free space and back up the machine again", rev.App, short(pin.snap.ID), err)
 		}
-		if err := checkRestoreSpace([]string{appData}, allocated(size), restoreFreeReserve); err != nil {
-			return fmt.Errorf("copy %s's snapshot %s into the machine backup: %w; free space and back up the machine again", rev.App, short(snap.ID), err)
-		}
-		if _, err := r.Restore(ctx, snap.ID, rev.App, []string{restic.DirMount(appData, false)}); err != nil {
+		if _, err := pin.r.Restore(ctx, pin.snap.ID, rev.App, []string{restic.DirMount(appData, false)}); err != nil {
 			return fmt.Errorf("preserve %s's pinned data inside the machine backup: %w", rev.App, err)
 		}
 		data, err := os.ReadFile(filepath.Join(appData, "manifest.json"))
@@ -329,7 +491,7 @@ func (b Backup) prepareMachineRecoveryCatalog(ctx context.Context, hostname, sta
 		if json.Unmarshal(data, &backed) != nil {
 			return errors.New("invalid backed-up app manifest")
 		}
-		if err := compatibleRecoveryData(&m, &backed); err != nil {
+		if err := compatibleRecoveryData(&pin.m, &backed); err != nil {
 			return err
 		}
 		provenance, err := readAppBackupProvenance(appData, *rev)
@@ -338,9 +500,13 @@ func (b Backup) prepareMachineRecoveryCatalog(ctx context.Context, hostname, sta
 		}
 		c.AppData[rev.App] = provenance
 		fmt.Fprintf(out, "%s's pinned app snapshot embedded in the machine backup\n", rev.App)
-
 	}
-	slices.Sort(c.Images)
+	// The archive lands after the copies, so it checks the room they left.
+	if archive > 0 {
+		if err := checkRestoreSpace([]string{staging}, archive, restoreFreeReserve); err != nil {
+			return fmt.Errorf("archive the machine's workload images: %w; free space and back up the machine again", err)
+		}
+	}
 	if err := saveMachineImages(ctx, filepath.Join(staging, machineImagesFile), c.Images); err != nil {
 		return err
 	}

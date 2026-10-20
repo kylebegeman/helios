@@ -689,23 +689,24 @@ with no database fails validation; to back up none of it, set `backup.off:
 true` instead.
 
 Every restic call a backup makes has a limit, so one stuck call can't hold the
-machine's operations: opening the repository and clearing stale locks 5
-minutes each, a machine backup's upload 2 hours, forgetting old snapshots 15
-minutes and the prune that follows 1 hour. A machine backup also copies each
-data app's pinned snapshot in with a 2 hour limit per app and archives the
-workload images with a 1 hour limit. A call that runs out of time is stopped,
-and restic gets a minute to release its repository lock. When retention fails
-or runs out of time after a snapshot was taken, the snapshot is kept and the
-backup still counts as good: `helios backups` shows "retention deferred" with
-the reason (so does `helios status <app>` for an app's last good backup), and
-the next backup applies retention again. Every backup prunes, even when it
-forgot nothing, and one prune rewrites at most 2 GB, so a repository with a lot
-to reclaim catches up over several backups. Retention deferred on every backup
-for over 3 days raises an alert. Before each backup Helios runs `restic
-unlock`, which removes only locks restic considers stale (not refreshed for 30
-minutes). It never removes a live lock, so if a stopped call couldn't release
-its lock, a backup started within the next 30 minutes can still find the
-repository locked and fail; the next scheduled run goes through.
+machine's operations: opening the repository and clearing stale locks 5 minutes
+each, a machine backup's upload 2 hours, forgetting old snapshots 15 minutes
+and the prune that follows 1 hour. A machine backup also copies each data app's
+pinned snapshot in with a 2 hour limit per app and archives the workload images
+with a 1 hour limit. Connecting to Docker, and resolving and sizing the
+workload images, have a 2 minute limit each. A call that runs out of time is
+stopped, and restic gets a minute to release its repository lock. When
+retention fails or runs out of time after a snapshot was taken, the snapshot is
+kept and the backup still counts as good: `helios backups` shows "retention
+deferred" with the reason (so does `helios status <app>` for an app's last good
+backup), and the next backup applies retention again. Every backup prunes, even
+when it forgot nothing, and one prune rewrites at most 2 GB, so a repository
+with a lot to reclaim catches up over several backups. Retention deferred on
+every backup for over 3 days raises an alert. Before each backup Helios runs
+`restic unlock`, which removes only locks restic considers stale (not refreshed
+for 30 minutes). It never removes a live lock, so if a stopped call couldn't
+release its lock, a backup started within the next 30 minutes can still find
+the repository locked and fail; the next scheduled run goes through.
 
 | Command | What it does |
 |---|---|
@@ -738,6 +739,11 @@ of each app's data in `helios backup helios` keep the same reserve.
 `helios restore`, a move's restore and a release rollback refuse only a
 snapshot that can't fit at all, say how much the disk keeps free, and go ahead
 without a check when restic can't count the snapshot.
+
+Before it copies anything, `helios backup helios` adds up every data app's
+pinned snapshot, as its backup recorded it, and the workload images. It checks
+the total fits in `backups/machine` with that reserve, and refuses a pin whose
+backup finished before the app's active revision.
 
 `helios drill <app> --skip-next --reason <text>` skips the next scheduled
 drill when you know it can't run, such as while a disk is being resized. Its
