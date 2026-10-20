@@ -24,6 +24,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -63,10 +64,11 @@ var loomCodes = map[int]string{
 // fakeLoom stands in for the relay and the Loom task behind it. It checks
 // each body's signature as Loom's webhookVerification.ts does, and answers
 // with the statuses it is given, in order, then as Loom would: 202 for a
-// signed body and 401 for any other.
+// signed body and 401 for any other. A redirect names location.
 type fakeLoom struct {
 	mu       sync.Mutex
 	answers  []int
+	location string
 	requests []loomRequest
 	server   *httptest.Server
 }
@@ -95,8 +97,11 @@ func newFakeLoom(t *testing.T) *fakeLoom {
 			status = http.StatusUnauthorized
 		}
 		f.requests = append(f.requests, loomRequest{header: r.Header.Clone(), body: body, signed: signed, status: status})
-		n := len(f.requests)
+		n, location := len(f.requests), f.location
 		f.mu.Unlock()
+		if status/100 == 3 {
+			w.Header().Set("Location", location)
+		}
 		switch status {
 		case loomHang:
 			<-r.Context().Done()
@@ -127,6 +132,13 @@ func (f *fakeLoom) answer(statuses ...int) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.answers = append(f.answers, statuses...)
+}
+
+// redirect sets where a redirect sends the client.
+func (f *fakeLoom) redirect(location string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.location = location
 }
 
 func (f *fakeLoom) got() []loomRequest {
@@ -622,6 +634,41 @@ func TestARefusalIsNeverSentAgainAndRaisesAWarning(t *testing.T) {
 				t.Fatalf("Loom got %d requests", n)
 			}
 			r.hidesTheToken(inc.NotifyError)
+		})
+	}
+}
+
+// A hook URL that redirects isn't the task's relay webhook URL. The
+// redirect is refused and raised as a warning like any refusal, and never
+// followed, so the signed body goes nowhere else.
+func TestARedirectIsRefusedAndNeverFollowed(t *testing.T) {
+	for _, status := range []int{http.StatusMovedPermanently, http.StatusTemporaryRedirect, http.StatusPermanentRedirect} {
+		t.Run(strconv.Itoa(status), func(t *testing.T) {
+			var elsewhere atomic.Int32
+			other := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				elsewhere.Add(1)
+				w.WriteHeader(http.StatusAccepted)
+				fmt.Fprint(w, `{"deliveryId":"elsewhere-1"}`)
+			}))
+			defer other.Close()
+			r := newLoomRig(t)
+			r.loom.redirect(other.URL + loomPath)
+			r.loom.answer(status)
+			r.rounds(3, down("hello"))
+			if n := elsewhere.Load(); n != 0 || len(r.loom.got()) != 1 {
+				t.Fatalf("the redirect was followed: %d requests elsewhere, %d to Loom", n, len(r.loom.got()))
+			}
+			inc := openIncident(t, r.w)
+			want := fmt.Sprintf("the Loom webhook refused incident %d (HTTP %d): the URL redirects, so it isn't the task's relay webhook URL; it isn't sent again", inc.ID, status)
+			if inc.NotifyError != "loom_webhook: "+want+"; delivered by ntfy" {
+				t.Fatalf("notify error: %q", inc.NotifyError)
+			}
+			if m := r.marker(inc.ID); m.State != incident.LoomRefused || m.Status != status {
+				t.Fatalf("marker: %+v", m)
+			}
+			if got := NewProber(r.w.Store).alertTest(); len(got) != 1 || got[0].Key != "host:alerts" || !strings.Contains(got[0].Message, want) {
+				t.Fatalf("raised %+v", got)
+			}
 		})
 	}
 }
