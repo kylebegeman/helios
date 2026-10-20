@@ -628,6 +628,18 @@ rounds too, rather than at the next daily repeat. One that eases, an outage
 back to a warning, stays the outage until the milder state has held two
 rounds, so an outage that flaps is told once.
 
+A machine that is down can't say so, so machines that run Helios watch each
+other with `helios peer`. Every minute each server asks the others for a
+short summary over the mesh, checks their edge over the mesh, and checks their
+public URLs from the outside. Together the three answers tell a machine that
+is down from a Helios that has stopped, a broken mesh or a failing edge, and
+one healthy machine sends the page for all of them. A peer that answers none
+of the three is critical once most of the machines watching it agree. The
+summary also shows what is quietly wrong on a peer: a backup over 36 hours
+old, an overdue restore drill, or a way of sending alerts that has delivered
+nothing in 8 days. A Mac can add its own view every minute and never pages.
+See [peer watch](docs/features/peer-watch.md).
+
 Alerts go out every way that is set up, all at once. Email goes through the
 `email` mail server, and through `email2` only when the first one fails, so the
 same mail never arrives twice. Pushover or ntfy brings warnings and critical
@@ -650,6 +662,7 @@ a critical one.
 | Command | Shows |
 |---|---|
 | `helios alerts` | what is wrong now, and what was |
+| `helios peer ls` | the machines this one watches, and the ones that may read it |
 | `helios status` | health beside each app's requests, errors, p95, CPU, memory and disk |
 | `helios ls` | the registry: owner, hosts, repository, last deploy, last backup |
 | `helios exposure` | what each container may do and what reaches it |
@@ -884,7 +897,7 @@ complete log, and become available when an execution finishes.
 
 | | |
 |---|---|
-| **Machine** | `target` · `capabilities` · `host` · `daemon` · `doctor` · `upgrade` · `version` · `status` · `alerts` · `watch` |
+| **Machine** | `target` · `capabilities` · `host` · `daemon` · `doctor` · `upgrade` · `version` · `status` · `alerts` · `watch` · `peer` |
 | **Apps** | `init` · `check` · `launch` · `deploy` · `preview` · `rollback` · `remove` · `move` · `ls` · `ps` · `logs` · `history` · `gc` |
 | **Data** | `backup` · `backups` · `restore` · `recover` · `rehearse` · `drill` · `psql` |
 | **Access** | `secret` · `integration` · `git` · `exec` · `run` · `jobs` · `cron` |
@@ -1016,6 +1029,7 @@ remains available for initial binary installation.
 | [docs/features/safe-moves.md](docs/features/safe-moves.md) | source fencing and deliberate target cutover |
 | [docs/features/release-safety.md](docs/features/release-safety.md) | release rehearsal and data-aware rollback |
 | [docs/features/deployment-sources.md](docs/features/deployment-sources.md) | approved source captures, safe retries and cleanup |
+| [docs/features/peer-watch.md](docs/features/peer-watch.md) | machines that watch each other, and which one pages |
 | [docs/technical/performance.md](docs/technical/performance.md) | benchmark workloads, repeated comparisons and optimization results |
 | [docs/technical/minio-image-availability.md](docs/technical/minio-image-availability.md) | open object-service image distribution issue |
 | [lane/README.md](lane/README.md) | the proving ground |

@@ -338,3 +338,4 @@ hooks socket. `TestTwoObserversPageOnce` and
 `TestThreeObserversNeedAMajority` in `internal/peer` run them on real
 listeners instead, and `TestNoMeshAddressLeaves` in `internal/daemon`
 checks what a daemon says over many failed rounds.
+[Peer watch](../docs/features/peer-watch.md) covers setup and who pages.
