@@ -203,7 +203,8 @@ func TestAWarningThatBlipsToCriticalNeitherPagesNorBecomesCritical(t *testing.T)
 
 // A warning that stays an outage as long as a new incident must hold is
 // told then, once, rather than at the warning's next daily repeat. Easing
-// back to a warning for a round and failing again doesn't page again.
+// back to a warning for a round and failing again is the same outage, so
+// it doesn't page again however often it flaps.
 func TestAWarningThatStaysAnOutageIsToldOnceInTheRoundItHolds(t *testing.T) {
 	n := &fakeNotifier{}
 	w, now := newWatcher(t, n)
@@ -228,12 +229,48 @@ func TestAWarningThatStaysAnOutageIsToldOnceInTheRoundItHolds(t *testing.T) {
 	for range 5 {
 		round(down("shop"))
 	}
-	if inc := round(stale("shop")); inc.Severity != state.SeverityWarning {
-		t.Fatalf("an outage that eased is still critical: %+v", inc)
+	for range 3 {
+		if inc := round(stale("shop")); inc.Severity != state.SeverityCritical || inc.Message != "web isn't running" {
+			t.Fatalf("an outage that eased for a round is no longer the outage: %+v", inc)
+		}
+		for range DefaultOpenAfter {
+			round(down("shop"))
+		}
 	}
-	round(down("shop"))
 	if len(n.sent) != 2 {
 		t.Fatalf("the outage is told once: %+v", n.sent)
+	}
+}
+
+// An outage that eases back to a warning for as long as a recovery must
+// hold is a warning again, and an outage after that is a new one, told
+// again once it holds.
+func TestAnOutageThatEasesForAsLongAsARecoveryIsAWarningAgain(t *testing.T) {
+	n := &fakeNotifier{}
+	w, now := newWatcher(t, n)
+	round := shopRound(t, w, now)
+	for range DefaultOpenAfter {
+		round(stale("shop"))
+	}
+	for range DefaultOpenAfter {
+		round(down("shop"))
+	}
+	for range DefaultResolveAfter - 1 {
+		round(stale("shop"))
+	}
+	inc := round(stale("shop"))
+	if inc.Severity != state.SeverityWarning || inc.Message != stale("shop").Message || len(n.sent) != 2 {
+		t.Fatalf("an outage that eased as long as a recovery is still the outage: %+v, %+v", inc, n.sent)
+	}
+	for range DefaultOpenAfter - 1 {
+		round(down("shop"))
+	}
+	if len(n.sent) != 2 {
+		t.Fatalf("the new outage is told before it has held: %+v", n.sent)
+	}
+	round(down("shop"))
+	if len(n.sent) != 3 || n.sent[2].Subject != "box: shop is down" {
+		t.Fatalf("the new outage is told once it holds: %+v", n.sent)
 	}
 }
 

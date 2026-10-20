@@ -467,7 +467,9 @@ problem has to hold for three rounds before it becomes an alert, one alert
 per app, and you hear once when it starts, once a day while it lasts, and
 once when it recovers. An alert that grows graver, a warning that becomes an
 outage, is told as soon as the graver state has held three rounds too, rather
-than at the next daily repeat.
+than at the next daily repeat. One that eases, an outage back to a warning,
+stays the outage until the milder state has held two rounds, so an outage that
+flaps is told once.
 
 Alerts go out every way that is set up, all at once. Email goes through the
 `email` mail server, and through `email2` only when the first one fails, so the
