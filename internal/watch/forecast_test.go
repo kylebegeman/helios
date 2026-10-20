@@ -97,7 +97,35 @@ func wobble(k uint64) float64 {
 	return float64(x>>11)/(1<<53)*2 - 1
 }
 
+// bursty is a runaway that writes size bytes at once every period, the
+// newest burst newest before the newest of n samples step apart, and
+// stands at top after it.
+func bursty(n int, step, period, newest time.Duration, size, top float64) func(time.Duration) float64 {
+	return func(since time.Duration) float64 {
+		ago := time.Duration(n-1)*step - since
+		if ago <= newest {
+			return top
+		}
+		// The bursts since this sample.
+		return top - size*math.Ceil(float64(ago-newest)/float64(period))
+	}
+}
+
 func near(got, want, within float64) bool { return math.Abs(got-want) <= within }
+
+// judge is diskConditions on the root filesystem, once no sample of the
+// fixture holds more than the disk does, as none on a real disk can.
+func judge(t *testing.T, free, total float64, hourly, minutes []Point) (disk, forecast *Condition) {
+	t.Helper()
+	for _, points := range [][]Point{hourly, minutes} {
+		for _, p := range points {
+			if p.Used > total {
+				t.Fatalf("the fixture holds %.2f GB of a %.1f GB disk at %s", p.Used/gib, total/gib, p.At.Format(time.DateTime))
+			}
+		}
+	}
+	return diskConditions("/", uint64(free), uint64(total), hourly, minutes)
+}
 
 // wantCondition is the severity of a condition and part of its message;
 // no severity means no condition.
@@ -180,6 +208,23 @@ func TestTheForecastTakesOutOnlyALoneStepInUsage(t *testing.T) {
 		{"a spike is smoothed, not shifted", bump(n, time.Hour, hours(30), time.Hour, 30*gib, line), line, 1},
 		{"a spike and a cleanup take out only the cleanup",
 			stepped(n, time.Hour, hours(70), -30*gib, bump(n, time.Hour, hours(30), time.Hour, 20*gib, line)), line, 1},
+		// A temp file that sits for hours has an edge each way, and the
+		// level inside it is each edge's size. The levels either side of
+		// one edge stop at the other, or the hours after the file went
+		// would outvote it.
+		{"a five-hour temp file is smoothed", bump(n, time.Hour, hours(30), hours(5), 20*gib, line), line, 1},
+		{"a five-hour temp file and a cleanup take out only the cleanup",
+			stepped(n, time.Hour, hours(70), -30*gib, bump(n, time.Hour, hours(30), hours(5), 20*gib, line)), line, 1},
+		{"a five-hour temp file and a download take out only the download",
+			stepped(n, time.Hour, hours(70), 30*gib, bump(n, time.Hour, hours(30), hours(5), 20*gib, flat(50*gib))), flat(50 * gib), 1},
+		// Steps that don't cancel are no bump, however close: each is the
+		// only one its way.
+		{"a download and a larger cleanup soon after take out both",
+			stepped(n, time.Hour, hours(30), -30*gib, stepped(n, time.Hour, hours(35), 20*gib, line)), line, 1},
+		// Nor is a step undone more than a day later: smoothed as a bump,
+		// the half GB the cleanup left would stay.
+		{"a download and a cleanup a day and a half later take out both",
+			stepped(n, time.Hour, hours(30), -29.5*gib, stepped(n, time.Hour, hours(66), 30*gib, line)), line, 1},
 		{"a download in two parts a short gap apart is one step",
 			stepped(n, time.Hour, hours(47), 15*gib, stepped(n, time.Hour, hours(50), 15*gib, flat(50*gib))), flat(50 * gib), 1},
 		{"two downloads a longer gap apart are two steps",
@@ -190,10 +235,13 @@ func TestTheForecastTakesOutOnlyALoneStepInUsage(t *testing.T) {
 		{"a spike that ends at the newest sample is left alone",
 			bump(n, time.Hour, hours(1), time.Hour, 30*gib, line), bump(n, time.Hour, hours(1), time.Hour, 30*gib, line), 0},
 		// On a quiet disk a change can stand out from the noise and still
-		// be too small to matter.
+		// be too small to matter: this one is half the floor.
 		{"a step under the floor",
-			stepped(n, time.Hour, hours(50), gib/10, noisy(time.Hour, gib/1000, flat(50*gib))),
-			stepped(n, time.Hour, hours(50), gib/10, noisy(time.Hour, gib/1000, flat(50*gib))), 0},
+			stepped(n, time.Hour, hours(50), gib/2, noisy(time.Hour, gib/1000, flat(50*gib))),
+			stepped(n, time.Hour, hours(50), gib/2, noisy(time.Hour, gib/1000, flat(50*gib))), 0},
+		{"a plateau under the floor",
+			stepped(n, time.Hour, hours(40), -gib/2, stepped(n, time.Hour, hours(50), gib/2, noisy(time.Hour, gib/1000, flat(50*gib)))),
+			stepped(n, time.Hour, hours(40), -gib/2, stepped(n, time.Hour, hours(50), gib/2, noisy(time.Hour, gib/1000, flat(50*gib)))), 0},
 		// More than one fall, or rise, is the series' rhythm.
 		{"a daily log rotation", sawtooth, sawtooth, 0},
 		{"a daily staircase", staircase, staircase, 0},
@@ -224,6 +272,87 @@ func TestTheForecastTakesOutOnlyALoneStepInUsage(t *testing.T) {
 		if p != gap[i] {
 			t.Fatalf("a gap read as a step at sample %d: %.3f GB, want %.3f", i, p.Used/gib, gap[i].Used/gib)
 		}
+	}
+	// On the minute ring a temp file sits for minutes beside a download
+	// that took three. Read as a rise and a fall, the file would make the
+	// download one of two rises, and its fall would be taken out alone.
+	m := time.Minute
+	quiet := noisy(m, 0.05*gib, flat(83*gib))
+	ring := series(360, m, bump(360, m, 60*m, 5*m, 1.5*gib, download(360, m, 180*m, 9*gib, 3*gib/60, 0, quiet)))
+	want := series(360, m, quiet)
+	for i, p := range WithoutShifts(ring, gib) {
+		if !near(p.Used, want[i].Used, 0.2*gib) {
+			t.Fatalf("a five-minute temp file and a download: %d minutes back reads %.3f GB, want %.3f", 359-i, p.Used/gib, want[i].Used/gib)
+		}
+	}
+}
+
+// A temp file that sits for a few hours, or spans the end of one, is in
+// two to five hourly samples. On a noisy disk only one of its edges may
+// stand out from the noise, and twelve samples either side of that edge
+// outvote the file's, so it is no step. Or both stand out and noise puts
+// one just over a step and the other just under, and the two still pair.
+// Either way no sample outside the file moves. Near either end of the
+// week there are fewer than twelve. About 1 GB a day, and the noise is
+// about 1 GB from the mean.
+func TestATempFileInAFewHourlySamplesMovesNoOtherSample(t *testing.T) {
+	const week = 168
+	h := time.Hour
+	disks := []struct {
+		name string
+		used func(time.Duration) float64
+	}{
+		{"a flat disk", noisy(h, 1.7*gib, flat(100*gib))},
+		{"a disk growing 1 GB a day", noisy(h, 1.7*gib, growing(100*gib, gib))},
+	}
+	for _, d := range disks {
+		for samples := 2; samples <= 5; samples++ {
+			for ago := ShiftLevelSamples - 1; ago <= week-ShiftLevelSamples-1; ago++ {
+				given := series(week, h, bump(week, h, time.Duration(ago)*h, time.Duration(samples)*h, 10*gib, d.used))
+				for i, p := range WithoutShifts(given, gib) {
+					if back := week - 1 - i; (back > ago || back <= ago-samples) && p != given[i] {
+						t.Fatalf("%s with a file in %d samples from %d hours ago: %d hours back moved from %.3f GB to %.3f", d.name, samples, ago, back, given[i].Used/gib, p.Used/gib)
+					}
+				}
+			}
+		}
+	}
+}
+
+func TestRecentClimbReadsTheRiseAcrossTheNewestWindow(t *testing.T) {
+	m := time.Minute
+	threePerHour := 3 * gib / 3600
+	strays := series(360, m, growing(60*gib, 72*gib))
+	// A temp file in the newest round, and a sample read low at the oldest
+	// end.
+	strays[359].Used += 5 * gib
+	strays[359-120].Used -= 5 * gib
+	cases := []struct {
+		name   string
+		points []Point
+		ok     bool
+		// want is in bytes a second.
+		want float64
+	}{
+		{"a steady climb reads at its rate", series(360, m, growing(60*gib, 72*gib)), true, threePerHour},
+		// The ends are 120 to 106 and 14 to 0 minutes back, and their
+		// middles 106 minutes apart.
+		{"a burst between the ends counts in full", series(360, m, stepped(360, m, 90*m, 6*gib, flat(80*gib))), true, 6 * gib / (106 * 60)},
+		{"a burst before the window doesn't count", series(360, m, stepped(360, m, 150*m, 6*gib, flat(80*gib))), true, 0},
+		{"a stray sample at either end is outvoted", strays, true, threePerHour},
+		{"a ring shorter than the window is all of it", series(ForecastShortPoints, m, growing(60*gib, 72*gib)), true, threePerHour},
+		{"ends that would share samples", series(29, m, growing(60*gib, 72*gib)), false, 0},
+		{"a round every 7.5 minutes leaves two at each end", series(48, 450*time.Second, growing(60*gib, 72*gib)), true, threePerHour},
+		{"a round every 15 minutes leaves one at each end", series(24, 15*m, growing(60*gib, 72*gib)), false, 0},
+		{"an empty ring", nil, false, 0},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got, ok := RecentClimb(c.points, ForecastShortRecent, ForecastShortEnd, ForecastShortEndPoints)
+			if ok != c.ok || ok && !near(got, c.want, 1e-9*gib) {
+				t.Fatalf("%.4f GB an hour, %v; want %.4f, %v", got*3600/gib, ok, c.want*3600/gib, c.ok)
+			}
+		})
 	}
 }
 
@@ -302,6 +431,13 @@ func TestDiskConditionsFollowTheTrend(t *testing.T) {
 	runaway := series(360, time.Minute, func(since time.Duration) float64 {
 		return 60*gib + 3*gib*max(0, since.Hours()-3)
 	})
+	// sparse is a log growing 3 GB an hour since 3 hours ago, read by a
+	// round every step.
+	sparse := func(step time.Duration) []Point {
+		return series(int(ForecastShortWindow/step), step, func(since time.Duration) float64 {
+			return 83*gib + 3*gib*max(0, since.Hours()-3)
+		})
+	}
 	type want = wantCondition
 	cases := []struct {
 		name            string
@@ -318,7 +454,7 @@ func TestDiskConditionsFollowTheTrend(t *testing.T) {
 			disk:     want{state.SeverityCritical, "only 7.8 GB free of 100.0 GB (8%) on /"},
 			forecast: want{state.SeverityWarning, "fills in about 3 days at 2.6 GB a day (7 day trend), 7.8 GB free"}},
 		{name: "filling within 48 hours is critical", free: 30 * gib,
-			hourly:   series(168, time.Hour, growing(0, 20*gib)),
+			hourly:   series(72, time.Hour, growing(10.8*gib, 20*gib)),
 			forecast: want{state.SeverityCritical, "fills in about 36 hours at 20.0 GB a day (7 day trend), 30.0 GB free"}},
 		{name: "flat usage at 92% is a warning only", free: 8 * gib,
 			hourly: series(168, time.Hour, flat(92*gib)),
@@ -345,6 +481,26 @@ func TestDiskConditionsFollowTheTrend(t *testing.T) {
 			minutes:  runaway,
 			disk:     want{state.SeverityWarning, "only 8.0 GB free of 100.0 GB (8%) on /, but the 7 day trend isn't growing"},
 			forecast: want{state.SeverityCritical, "(6 hour trend), 8.0 GB free"}},
+		// On a host too loaded for a round a minute, each end of the
+		// climb still holds two rounds or more.
+		{name: "a runaway log pages with a round every 2.5 minutes", free: 8 * gib,
+			minutes:  sparse(150 * time.Second),
+			disk:     want{state.SeverityCritical, "only 8.0 GB free of 100.0 GB (8%) on /"},
+			forecast: want{state.SeverityCritical, "(6 hour trend), 8.0 GB free"}},
+		{name: "a runaway log pages with a round every 3 minutes", free: 8 * gib,
+			minutes:  sparse(3 * time.Minute),
+			disk:     want{state.SeverityCritical, "only 8.0 GB free of 100.0 GB (8%) on /"},
+			forecast: want{state.SeverityCritical, "(6 hour trend), 8.0 GB free"}},
+		{name: "a runaway log pages with a round every 5 minutes", free: 8 * gib,
+			minutes:  sparse(5 * time.Minute),
+			disk:     want{state.SeverityCritical, "only 8.0 GB free of 100.0 GB (8%) on /"},
+			forecast: want{state.SeverityCritical, "(6 hour trend), 8.0 GB free"}},
+		// After a restart the climb needs no more rounds than the trend.
+		{name: "a runaway pages once a restarted ring holds enough rounds", free: 8 * gib,
+			hourly:   series(168, time.Hour, flat(89*gib)),
+			minutes:  series(ForecastShortPoints, time.Minute, growing(89*gib, 72*gib)),
+			disk:     want{state.SeverityWarning, "only 8.0 GB free of 100.0 GB (8%) on /, but the 7 day trend isn't growing"},
+			forecast: want{state.SeverityCritical, "(6 hour trend), 8.0 GB free"}},
 		// Only a short trend filling within DiskFullFast pages; a slower
 		// one waits for the long trend to have enough hours.
 		{name: "a short trend filling in 12 hours waits for the long one", free: 20 * gib,
@@ -358,7 +514,7 @@ func TestDiskConditionsFollowTheTrend(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			disk, forecast := diskConditions("/", uint64(c.free), uint64(total), c.hourly, c.minutes)
+			disk, forecast := judge(t, c.free, total, c.hourly, c.minutes)
 			checkDisk(t, disk, forecast, c.disk, c.forecast)
 		})
 	}
@@ -372,7 +528,7 @@ func TestTheForecastSetsAsideALoneStepInUsage(t *testing.T) {
 	const week = 168
 	h := time.Hour
 	cleanup := func(ago time.Duration) []Point {
-		return series(week, time.Hour, stepped(week, time.Hour, ago, -10*gib, noisy(time.Hour, 0.2*gib, growing(96*gib, gib))))
+		return series(week, time.Hour, stepped(week, time.Hour, ago, -10*gib, noisy(time.Hour, 0.2*gib, growing(95.8*gib, gib))))
 	}
 	// nightly adds a backup's 1.5 GB dump to the sample at 03:00 UTC, the
 	// hour's largest use while the dump sits on the disk.
@@ -440,18 +596,18 @@ func TestTheForecastSetsAsideALoneStepInUsage(t *testing.T) {
 		// A temp file or dump that comes and goes is one passing bump. Read
 		// as a rise and a fall, one of them lone and taken out, it would
 		// leave a step that never happened.
-		{name: "a 5 GB download and a one-sample 10 GB temp file on a flat disk", free: 8 * gib, total: 100 * gib,
-			hourly: series(week, h, bump(week, h, 30*h, h, 10*gib, stepped(week, h, 84*h, 5*gib, flat(87*gib)))),
-			disk:   want{state.SeverityWarning, "only 8.0 GB free of 100.0 GB (8%) on /, but the 7 day trend isn't growing"}},
+		{name: "a 5 GB download and a one-sample 10 GB temp file on a flat disk", free: 11 * gib, total: 120 * gib,
+			hourly: series(week, h, bump(week, h, 30*h, h, 10*gib, stepped(week, h, 84*h, 5*gib, flat(104*gib)))),
+			disk:   want{state.SeverityWarning, "only 11.0 GB free of 120.0 GB (9%) on /, but the 7 day trend isn't growing"}},
 		// About 1 GB a day.
-		{name: "a 5 GB cleanup and a 10 GB temp file 6 hours ago", free: 7 * gib, total: 120 * gib,
-			hourly:   series(week, h, bump(week, h, 6*h, h, 10*gib, stepped(week, h, 70*h, -5*gib, growing(111*gib, gib)))),
+		{name: "a 5 GB cleanup and a 6 GB temp file 6 hours ago", free: 7 * gib, total: 120 * gib,
+			hourly:   series(week, h, bump(week, h, 6*h, h, 6*gib, stepped(week, h, 70*h, -5*gib, growing(111*gib, gib)))),
 			disk:     want{state.SeverityCritical, "only 7.0 GB free of 120.0 GB (6%) on /"},
 			forecast: want{state.SeverityWarning, "fills in about 7 days at "}},
-		{name: "a 5 GB spike and a 10 GB cleanup on a noisy disk", free: 7.1 * gib, total: 100 * gib,
-			hourly:   series(week, h, bump(week, h, 84*h, h, 5*gib, stepped(week, h, 20*h, -10*gib, noisy(h, 0.2*gib, growing(95.9*gib, gib))))),
-			disk:     want{state.SeverityCritical, "only 7.1 GB free of 100.0 GB (7%) on /"},
-			forecast: want{state.SeverityWarning, "fills in about 7 days at "}},
+		{name: "a 5 GB spike and a 10 GB cleanup on a noisy disk", free: 13 * gib, total: 140 * gib,
+			hourly:   series(week, h, bump(week, h, 84*h, h, 5*gib, stepped(week, h, 20*h, -10*gib, noisy(h, 0.2*gib, growing(130*gib, gib))))),
+			disk:     want{state.SeverityCritical, "only 13.0 GB free of 140.0 GB (9%) on /"},
+			forecast: want{state.SeverityWarning, "fills in about 13 days at "}},
 		{name: "a 5 GB spike and a 9 GB download on a flat 92% disk", free: 8 * gib, total: 100 * gib,
 			hourly: series(week, h, bump(week, h, 84*h, h, 5*gib, stepped(week, h, 20*h, 9*gib, flat(83*gib)))),
 			disk:   want{state.SeverityWarning, "only 8.0 GB free of 100.0 GB (8%) on /, but the 7 day trend isn't growing"}},
@@ -462,10 +618,10 @@ func TestTheForecastSetsAsideALoneStepInUsage(t *testing.T) {
 			forecast: want{state.SeverityWarning, "fills in about 7 days at "}},
 		// 1% of this disk is 10 GB, but a step of 1 GiB or more counts.
 		// About 2 GB a day.
-		{name: "a 9 GB cleanup 84 hours ago on a 1000 GB disk", free: 25 * gib, total: 1000 * gib,
-			hourly:   series(week, h, stepped(week, h, 84*h, -9*gib, noisy(h, 0.2*gib, growing(970*gib, 2*gib)))),
-			disk:     want{state.SeverityCritical, "only 25.0 GB free of 1000.0 GB (2%) on /"},
-			forecast: want{state.SeverityWarning, "fills in about 12 days at 2.0 GB a day (7 day trend), 25.0 GB free"}},
+		{name: "a 9 GB cleanup 84 hours ago on a 1000 GB disk", free: 24 * gib, total: 1000 * gib,
+			hourly:   series(week, h, stepped(week, h, 84*h, -9*gib, noisy(h, 0.2*gib, growing(971*gib, 2*gib)))),
+			disk:     want{state.SeverityCritical, "only 24.0 GB free of 1000.0 GB (2%) on /"},
+			forecast: want{state.SeverityWarning, "fills in about 12 days at 2.0 GB a day (7 day trend), 24.0 GB free"}},
 		// Since 3 days ago the disk has filled 1.2 GB an hour, each hour a
 		// sudden change on its own. A run that long, still going at the
 		// newest sample, is growth.
@@ -477,19 +633,20 @@ func TestTheForecastSetsAsideALoneStepInUsage(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			disk, forecast := diskConditions("/", uint64(c.free), uint64(c.total), c.hourly, c.minutes)
+			disk, forecast := judge(t, c.free, c.total, c.hourly, c.minutes)
 			checkDisk(t, disk, forecast, c.disk, c.forecast)
 		})
 	}
 	// On a disk this noisy a 10 GB sample may stray past the noise on one
 	// side only. The levels either side, not that one change, say the
-	// size, so it still reads as a bump. About 1 GB a day, and the noise
-	// is about 1 GB from the mean.
+	// size, so it still reads as a bump. About 2 GB a day, and the noise
+	// is about 1 GB from the mean. The 12 GB free leaves room for the file
+	// when it was there.
 	for _, ago := range []time.Duration{10, 41, 84, 125, 150} {
 		t.Run(fmt.Sprintf("a one-sample 10 GB plateau %d hours ago in 1 GB noise", ago), func(t *testing.T) {
-			hourly := series(week, h, bump(week, h, ago*h, h, 10*gib, noisy(h, 1.7*gib, growing(106*gib, gib))))
-			disk, forecast := diskConditions("/", uint64(7*gib), uint64(120*gib), hourly, nil)
-			checkDisk(t, disk, forecast, want{state.SeverityCritical, "only 7.0 GB free of 120.0 GB (6%) on /"}, want{state.SeverityWarning, "fills in about 7 days at "})
+			hourly := series(week, h, bump(week, h, ago*h, h, 10*gib, noisy(h, 1.7*gib, growing(104*gib, 2*gib))))
+			disk, forecast := judge(t, 12*gib, 130*gib, hourly, nil)
+			checkDisk(t, disk, forecast, want{state.SeverityCritical, "only 12.0 GB free of 130.0 GB (9%) on /"}, want{state.SeverityWarning, "fills in about 6 days at "})
 		})
 	}
 }
@@ -501,8 +658,11 @@ func TestTheShortForecastPagesOnlyWhileUsageStillClimbs(t *testing.T) {
 	const ring = 360
 	m := time.Minute
 	flat92 := noisy(m, 0.05*gib, flat(83*gib))
-	// The hourly samples hold the 9 GB that landed 3 hours ago.
-	hourly := series(168, time.Hour, stepped(168, time.Hour, 3*time.Hour, 9*gib, noisy(time.Hour, 0.2*gib, flat(83*gib))))
+	// landed is the hourly samples, holding 9 GB that landed ago.
+	landed := func(ago time.Duration) []Point {
+		return series(168, time.Hour, stepped(168, time.Hour, ago, 9*gib, noisy(time.Hour, 0.2*gib, flat(83*gib))))
+	}
+	hourly := landed(3 * time.Hour)
 	// The 9 GB took three minutes to land.
 	quick := download(ring, m, 180*m, 9*gib, 3*gib/60, 0, flat92)
 	cases := []struct {
@@ -524,13 +684,139 @@ func TestTheShortForecastPagesOnlyWhileUsageStillClimbs(t *testing.T) {
 			series(ring, m, noisy(m, 0.02*gib, func(since time.Duration) float64 {
 				return 86*gib + 3*gib*min(2, max(0, since.Hours()-2))
 			}))},
+		// The climb's ends are a quarter hour each: a pull that ended inside
+		// the newest, or before the oldest, is no climb.
+		{"a 9 GB pull over 10 minutes that ended 30 minutes ago", landed(time.Hour), series(ring, m, download(ring, m, 30*m, 9*gib, 0.9*gib/60, 0, flat92))},
+		{"a 9 GB pull over 10 minutes that ended 150 minutes ago", landed(3 * time.Hour), series(ring, m, download(ring, m, 150*m, 9*gib, 0.9*gib/60, 0, flat92))},
+		// A log grew 6 GB an hour from about 4.5 hours ago until about 2.5
+		// hours ago, before the 2 hours the climb reads.
+		{"a runaway that stopped 150 minutes ago",
+			series(168, time.Hour, stepped(168, time.Hour, 3*time.Hour, 3*gib, stepped(168, time.Hour, 4*time.Hour, 6*gib, stepped(168, time.Hour, 5*time.Hour, 3*gib, flat(80*gib))))),
+			series(ring, m, noisy(m, 0.02*gib, func(since time.Duration) float64 {
+				return 80*gib + 6*gib*min(2, max(0, since.Hours()-1.5))
+			}))},
+		// A log grew 3 GB an hour from 6 hours ago until 150 minutes ago,
+		// and has shrunk half a GB an hour since. Usage that falls is no
+		// climb, however fast the 6 hour trend.
+		{"a runaway that stopped 150 minutes ago and is shrinking",
+			series(168, time.Hour, stepped(168, time.Hour, 3*time.Hour, 3*gib, stepped(168, time.Hour, 4*time.Hour, 3*gib, stepped(168, time.Hour, 5*time.Hour, 3*gib, noisy(time.Hour, 0.2*gib, flat(83*gib)))))),
+			series(ring, m, noisy(m, 0.02*gib, func(since time.Duration) float64 {
+				return 82.75*gib + 3*gib*min(3.5, since.Hours()) - 0.5*gib*max(0, since.Hours()-3.5)
+			}))},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			disk, forecast := diskConditions("/", uint64(8*gib), uint64(100*gib), c.hourly, c.minutes)
+			disk, forecast := judge(t, 8*gib, 100*gib, c.hourly, c.minutes)
 			checkDisk(t, disk, forecast, wantCondition{state.SeverityWarning, "only 8.0 GB free of 100.0 GB (8%) on /, but the 7 day trend isn't growing"}, wantCondition{})
 		})
 	}
+}
+
+// A runaway that writes in bursts, such as a job that dumps its output
+// every so often, leaves usage flat between them. However its bursts fall,
+// one lands between the ends of the climb over the last 2 hours, so it
+// pages at every point of its cycle. About 4 GB an hour, with 16 GB free.
+func TestABurstyRunawayPagesAtEveryPointOfItsCycle(t *testing.T) {
+	m := time.Minute
+	for _, period := range []time.Duration{45 * m, time.Hour, 90 * m} {
+		for newest := time.Duration(0); newest < period; newest += m {
+			t.Run(fmt.Sprintf("a burst every %d minutes, the newest %d minutes ago", int(period.Minutes()), int(newest.Minutes())), func(t *testing.T) {
+				minutes := series(360, m, bursty(360, m, period, newest, 4*gib*period.Hours(), 84*gib))
+				disk, forecast := judge(t, 16*gib, 100*gib, nil, minutes)
+				checkDisk(t, disk, forecast, wantCondition{}, wantCondition{state.SeverityCritical, "(6 hour trend), 16.0 GB free"})
+			})
+		}
+	}
+}
+
+// The watcher opens an incident after three rounds of a condition and
+// resolves it after two without. A bursty runaway's stays open between
+// its bursts, until the disk is full.
+func TestABurstyRunawayKeepsItsIncidentOpenUntilTheDiskIsFull(t *testing.T) {
+	ctx := context.Background()
+	const total = 100 * gib
+	m := time.Minute
+	for _, period := range []time.Duration{45 * m, time.Hour, 90 * m} {
+		t.Run(fmt.Sprintf("a burst every %d minutes", int(period.Minutes())), func(t *testing.T) {
+			n := &fakeNotifier{}
+			w, now := newWatcher(t, n)
+			start := *now
+			// About 4 GB an hour. 84 GB are in use until the first burst
+			// of the watch, 7 minutes in.
+			size, first := 4*gib*period.Hours(), start.Add(7*m)
+			used := func(at time.Time) float64 {
+				return min(total, 84*gib+size*(math.Floor(float64(at.Sub(first))/float64(period))+1))
+			}
+			p := NewProber(w.Store)
+			p.Now = func() time.Time { return *now }
+			p.Disk = func(string) (uint64, uint64, bool) { return uint64(total - used(*now)), uint64(total), true }
+			// The rounds of the 6 hours before the watch.
+			for k := 359; k > 0; k-- {
+				at := start.Add(-time.Duration(k) * m)
+				p.minutes = append(p.minutes, Point{At: at, Used: used(at)})
+			}
+			var opened int64
+			for round := 1; used(*now) < total; round++ {
+				*now = now.Add(m)
+				if err := w.Round(ctx, p.host(ctx)); err != nil {
+					t.Fatal(err)
+				}
+				inc, err := w.Store.OpenIncidentByKey(ctx, "host:disk-forecast")
+				if err != nil {
+					t.Fatal(err)
+				}
+				switch {
+				case round < DefaultOpenAfter && inc != nil:
+					t.Fatalf("opened after %d rounds", round)
+				case round < DefaultOpenAfter:
+				case inc == nil || inc.Severity != state.SeverityCritical:
+					t.Fatalf("%d minutes in, %.1f GB free: the open incident is %+v", round, (total-used(*now))/gib, inc)
+				case opened == 0:
+					opened = inc.ID
+				case inc.ID != opened:
+					t.Fatalf("%d minutes in: incident %d replaced %d", round, inc.ID, opened)
+				}
+			}
+			for _, notice := range n.sent {
+				if notice.Key == "host:disk-forecast" && notice.Transition != TransitionOpen {
+					t.Fatalf("sent a %s notice: %+v", notice.Transition, notice)
+				}
+			}
+		})
+	}
+}
+
+// A runaway that slows still fills the disk. While it climbs across the
+// last 2 hours at half the 6 hour trend's rate or more, the trend says how
+// soon. Slower, the climb itself says, as long as it fills the disk within
+// 6 hours. This one grew 6 GB an hour, then 2.5 GB an hour, and 12 GB are
+// free.
+func TestASlowedRunawayStillPages(t *testing.T) {
+	m := time.Minute
+	// slowed grew 6 GB an hour until ago before the newest of 360 minute
+	// samples and rate an hour since, to 88 GB.
+	slowed := func(ago time.Duration, rate float64) []Point {
+		return series(360, m, func(since time.Duration) float64 {
+			back := 359*m - since
+			if back <= ago {
+				return 88*gib - rate*back.Hours()
+			}
+			return 88*gib - rate*ago.Hours() - 6*gib*(back-ago).Hours()
+		})
+	}
+	for ago := 40 * m; ago <= 2*time.Hour; ago += 10 * m {
+		t.Run(fmt.Sprintf("slowed %d minutes ago", int(ago.Minutes())), func(t *testing.T) {
+			disk, forecast := judge(t, 12*gib, 100*gib, nil, slowed(ago, 2.5*gib))
+			checkDisk(t, disk, forecast, wantCondition{}, wantCondition{state.SeverityCritical, ", 12.0 GB free"})
+		})
+	}
+	// It has climbed 2.5 GB an hour across all of the last 2 hours.
+	disk, forecast := judge(t, 12*gib, 100*gib, nil, slowed(2*time.Hour, 2.5*gib))
+	checkDisk(t, disk, forecast, wantCondition{}, wantCondition{state.SeverityCritical, "fills in about 5 hours at 2.5 GB an hour (last 2 hours), 12.0 GB free"})
+	// At 1.8 GB an hour the 12 GB last over 6 hours, so it waits for the
+	// long trend.
+	disk, forecast = judge(t, 12*gib, 100*gib, nil, slowed(130*m, 1.8*gib))
+	checkDisk(t, disk, forecast, wantCondition{}, wantCondition{})
 }
 
 // After a restart the minute ring is empty, but the hourly samples the
