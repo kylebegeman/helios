@@ -182,8 +182,8 @@ failed, a waiting server sends it through its own ways; while the sender is
 still sending it, they wait up to 5 minutes more. A server that can't be
 reached is never elected, so then the page goes out at once. Every machine's
 alert about one peer carries the same Pushover tag, so a recovery from any of
-them stops the ringing any of them started, and the machine that sent an
-alert sends its recovery.
+them stops the ringing any of them started. The recovery goes once, from the
+machine that first sent the alert at its worst severity.
 
 On the server that sent it, `helios alerts` says when it told you, as for any
 alert. Another server says who it waits for, then who sent it. With three

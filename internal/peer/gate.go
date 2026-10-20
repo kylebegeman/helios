@@ -42,7 +42,8 @@ func deferredTo(notifyError string) (string, bool) {
 // that sees a peer go down opens its own incident; the gate lets the one
 // elected by Sender page through its own fan-out, stands the rest down
 // once a summary shows it told, and has another page after HandoffWait
-// when it doesn't. A recovery goes from whoever told the incident opened.
+// when it doesn't. A recovery goes from whoever told the incident at its
+// gravest.
 // Notices about anything else, and peer watch's own isolation, pass
 // straight through.
 type Gate struct {
@@ -126,19 +127,19 @@ func (g *Gate) page(ctx context.Context, self string, n watch.Notice) error {
 	return &Deferred{To: sender}
 }
 
-// recovered decides a recovery. It goes from whoever told the incident
-// first, and to nobody when nobody told it. Another observer's recovery
-// is its own once its summary no longer lists the incident; this machine
-// holds it while that observer still does, and sends it once the
-// observer has been out of sight for HandoffWait.
+// recovered decides a recovery. It goes from the teller, and to nobody
+// when nobody told the incident. Another observer's recovery is its own
+// once its summary no longer lists the incident; this machine holds it
+// while that observer still does, and sends it once the observer has been
+// out of sight for HandoffWait.
 func (g *Gate) recovered(ctx context.Context, self string, n watch.Notice) error {
 	s := g.Source
 	now := s.now()
 	s.mu.Lock()
 	finishing := s.decide(self, n)
-	first, told := s.first(n.IncidentID)
+	teller, told := s.teller(n.IncidentID)
 	switch {
-	case finishing, told && first.By == self:
+	case finishing, told && teller.By == self:
 		s.forget(n.IncidentID)
 		s.mu.Unlock()
 		return g.send(ctx, n, finishing)
@@ -147,19 +148,19 @@ func (g *Gate) recovered(ctx context.Context, self string, n watch.Notice) error
 		s.mu.Unlock()
 		return nil
 	}
-	theirs, seen := s.seen[first.By]
+	theirs, seen := s.seen[teller.By]
 	if seen && !theirs.lists(n.Key) {
 		s.forget(n.IncidentID)
 		s.mu.Unlock()
 		return nil
 	}
-	held := s.hold(n, first.By, now)
-	due := !seen && now.Sub(later(s.lastGood[first.By], later(held.Since, s.started))) >= HandoffWait
+	held := s.hold(n, teller.By, now)
+	due := !seen && now.Sub(later(s.lastGood[teller.By], later(held.Since, s.started))) >= HandoffWait
 	s.mu.Unlock()
 	if due {
 		return g.send(ctx, n, false)
 	}
-	return &Deferred{To: first.By}
+	return &Deferred{To: teller.By}
 }
 
 // decide starts deciding a notice for this machine, named self, and
@@ -243,8 +244,7 @@ func (s *Source) toldElsewhere(n watch.Notice) (by string, at time.Time, ok bool
 	return by, at, ok
 }
 
-// latest is the incident's latest told record, and first its first. The
-// caller holds mu.
+// latest is the incident's latest told record. The caller holds mu.
 func (s *Source) latest(incident int64) (Told, bool) {
 	var found Told
 	ok := false
@@ -256,11 +256,20 @@ func (s *Source) latest(incident int64) (Told, bool) {
 	return found, ok
 }
 
-func (s *Source) first(incident int64) (Told, bool) {
+// teller is the incident's told record its recovery goes by: the first
+// at its gravest severity. Every observer that stood down on that notice
+// recorded it, and none that told a lesser notice earlier, or repeated
+// the notice later, reads another teller from its own records. The caller
+// holds mu.
+func (s *Source) teller(incident int64) (Told, bool) {
 	var found Told
 	ok := false
 	for _, t := range s.told {
-		if t.IncidentID == incident && (!ok || t.At.Before(found.At)) {
+		if t.IncidentID != incident {
+			continue
+		}
+		graver, same := rank(t.Severity) > rank(found.Severity), rank(t.Severity) == rank(found.Severity)
+		if !ok || graver || same && t.At.Before(found.At) {
 			found, ok = t, true
 		}
 	}

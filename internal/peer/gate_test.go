@@ -383,6 +383,29 @@ func TestRecoveryIsSentByWhoeverToldTheOpen(t *testing.T) {
 	}
 }
 
+// A repeat this machine sent while the observer that paged the outage
+// was out of its sight leaves the recovery with that observer, which told
+// the outage first: it would send its own, and two would go.
+func TestARepeatSentHereLeavesTheRecoveryWithTheSender(t *testing.T) {
+	p := paging(t)
+	p.wt.Renotify = 10 * time.Minute
+	p.web1(web3Open(seconds(20), false))
+	p.down("web3")
+	p.rounds(t, watch.DefaultOpenAfter)
+	p.fail("web1", pathSummary, syscall.ECONNREFUSED)
+	p.rounds(t, 10)
+	if got := p.told("peer:web3"); !slices.Equal(got, []string{watch.TransitionRepeat}) {
+		t.Fatalf("web1 out of sight at the repeat: %v", got)
+	}
+	p.up("web1", "web3")
+	p.rounds(t, watch.DefaultResolveAfter+1)
+	p.web1(nil)
+	p.rounds(t, 1)
+	if got, pending := p.told("peer:web3"), p.pending(t); !slices.Equal(got, []string{watch.TransitionRepeat}) || pending != nil {
+		t.Fatalf("web1 paged the outage: sent %v, pending %v", got, pending)
+	}
+}
+
 // Nobody heard an incident opened that was held for its sender and never
 // told, so nobody hears it recovered.
 func TestNoRecoveryWhenNobodyToldTheOpen(t *testing.T) {

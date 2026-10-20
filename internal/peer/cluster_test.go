@@ -192,6 +192,13 @@ func (c *cluster) cutOff(from, to string) {
 	c.cut[from+" "+to] = true
 }
 
+// mend lets every path from one machine to another through again.
+func (c *cluster) mend(from, to string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	delete(c.cut, from+" "+to)
+}
+
 // leg is a machine's fan-out made one leg with a ledger, as the daemon's
 // is, that fails every notice while failing is set. What it delivers is
 // what the machine told.
@@ -328,7 +335,8 @@ func TestThreeObserversNeedAMajority(t *testing.T) {
 // everyone while every leg of web1's fan-out fails. web1's summary lists
 // web3 as critical but shows only the warning told, so web2 doesn't stand
 // down on it and covers web1's failed page with its own. Once web1's legs
-// work again it stands down on web2's page, so each step is paged once.
+// work again it stands down on web2's page, so each step is paged once,
+// and the recovery goes once, from web2, which paged the outage.
 func TestAWarningToldIsNoPageOfTheOutage(t *testing.T) {
 	c := formCluster(t, "web1", "web2", "web3")
 	web1, web2 := c.byName["web1"], c.byName["web2"]
@@ -356,5 +364,58 @@ func TestAWarningToldIsNoPageOfTheOutage(t *testing.T) {
 	}
 	if inc := web1.open(t, "peer:web3"); inc.NotifyError != "" || inc.NotifiedAt.IsZero() {
 		t.Fatalf("web1 never stood down on web2's page: %+v", inc)
+	}
+
+	c.mend("web1", "web3")
+	c.bringBack(t, "web3")
+	c.rounds(t, watch.DefaultResolveAfter+2*handoff)
+	if got, want := web1.told("peer:web3"), []string{"open warning"}; !slices.Equal(got, want) {
+		t.Fatalf("web1 told %q, want %q", got, want)
+	}
+	if got, want := web2.told("peer:web3"), []string{"open critical", "resolved critical"}; !slices.Equal(got, want) {
+		t.Fatalf("web2 told %q, want %q", got, want)
+	}
+	for _, m := range c.machines {
+		pending, err := m.store.PendingResolvedIncidentNotices(context.Background())
+		if open := openIncidentKeys(t, m.store); len(open) != 0 || err != nil || len(pending) != 0 {
+			t.Fatalf("%s has open %v and owes %+v (%v)", m.name, open, pending, err)
+		}
+	}
+}
+
+// An outage two observers told in two steps recovers once. web2, cut off
+// from web3, tells web3's warning; web3 then goes down for everyone, and
+// web1 pages the outage while web2 stands down on its page. The recovery
+// goes from web1, which told the latest notice, and web2's goes nowhere
+// once web1's summary no longer lists web3.
+func TestAnOutageToldInTwoStepsRecoversOnce(t *testing.T) {
+	c := formCluster(t, "web1", "web2", "web3")
+	web1, web2 := c.byName["web1"], c.byName["web2"]
+	c.rounds(t, 1)
+	c.cutOff("web2", "web3")
+	c.rounds(t, watch.DefaultOpenAfter+2)
+	if got, want := web2.told("peer:web3"), []string{"open warning"}; !slices.Equal(got, want) {
+		t.Fatalf("web2 told %q, want %q", got, want)
+	}
+	c.takeDown("web3")
+	c.rounds(t, watch.DefaultOpenAfter+handoff)
+	if got, want := web1.told("peer:web3"), []string{"open critical"}; !slices.Equal(got, want) {
+		t.Fatalf("web1 told %q, want %q", got, want)
+	}
+	c.mend("web2", "web3")
+	c.bringBack(t, "web3")
+	c.rounds(t, watch.DefaultResolveAfter+2*handoff)
+
+	if got, want := web1.told("peer:web3"), []string{"open critical", "resolved critical"}; !slices.Equal(got, want) {
+		t.Fatalf("web1 told %q, want %q", got, want)
+	}
+	if got, want := web2.told("peer:web3"), []string{"open warning"}; !slices.Equal(got, want) {
+		t.Fatalf("web2 told %q, want %q", got, want)
+	}
+	for _, m := range c.machines {
+		pending, err := m.store.PendingResolvedIncidentNotices(context.Background())
+		if open := openIncidentKeys(t, m.store); len(open) != 0 || err != nil || len(pending) != 0 {
+			t.Fatalf("%s has open %v and owes %+v (%v)", m.name, open, pending, err)
+		}
 	}
 }
