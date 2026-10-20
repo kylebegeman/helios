@@ -77,6 +77,13 @@ To inspect an unsuccessful boot, use the exact container name printed by
 `lane/vm.sh up` with `docker logs`. The VM remains available after a failed
 proof for inspection. Remove it with `make lane-down` when finished.
 
+Each VM runs on a Docker network of its own, labelled with its identity, in
+`10.213.0.0/16`. On Docker's default bridge the guest sees SSH arrive from
+172.17.0.1, the address its own Docker later gives `docker0`, and it stops
+answering SSH as soon as `m2`'s host setup installs Docker. A VM created
+before this keeps the default bridge; `lane/vm.sh up` says so, and
+`make lane-reset` replaces it.
+
 The local loopback VM proves `m1`, `m2`, and `product`. Public certificate, external DNS
 and public webhook proofs require the dedicated externally reachable SSH
 machine described below. The runner refuses those scopes on the loopback

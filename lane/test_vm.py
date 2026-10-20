@@ -74,6 +74,44 @@ class OwnedVM(unittest.TestCase):
             self.assertEqual(command.call_count, 1)
             self.assertTrue((self.work / "machine.json").exists())
 
+    def test_foreign_network_name_is_refused_before_docker(self):
+        self.data["network"] = "bridge"
+        self.save()
+        with patch.object(VM, "command") as command:
+            with self.assertRaisesRegex(RuntimeError, "not the managed lane network"):
+                VM.destroy()
+            command.assert_not_called()
+
+    def test_owned_network_is_removed_after_its_container(self):
+        self.data["network"] = self.data["container"]
+        self.save()
+        info = [{"Config": {"Labels": {VM.LABEL: IDENTITY}}}]
+
+        def fake_command(*args, **kwargs):
+            if args[:3] == ("docker", "network", "ls"):
+                self.assertIn(f"label={VM.LABEL}={IDENTITY}", args)
+                return self.data["network"] + "\n"
+            return json.dumps(info)
+
+        with patch.object(VM, "command", side_effect=fake_command) as command:
+            VM.destroy()
+        calls = [call.args[:3] for call in command.call_args_list]
+        self.assertEqual(calls[-3:], [("docker", "rm", "-f"), ("docker", "network", "ls"), ("docker", "network", "rm")])
+        self.assertEqual(command.call_args.args[-1], self.data["network"])
+        self.assertFalse((self.work / "machine.json").exists())
+
+    def test_network_without_the_vm_label_is_left_alone(self):
+        self.data["network"] = self.data["container"]
+        self.save()
+        info = [{"Config": {"Labels": {VM.LABEL: IDENTITY}}}]
+
+        def fake_command(*args, **kwargs):
+            return "" if args[:3] == ("docker", "network", "ls") else json.dumps(info)
+
+        with patch.object(VM, "command", side_effect=fake_command) as command:
+            VM.destroy()
+        self.assertNotIn(("docker", "network", "rm"), [call.args[:3] for call in command.call_args_list])
+
 
     def test_invalid_memory_is_refused_before_docker_for_new_and_existing_vm(self):
         invalid = ("", "0", "0512", "001024", "511", "65537", "-1", "1g", "1024.0", " 1536", "1536\n",
@@ -320,6 +358,70 @@ class OwnedVM(unittest.TestCase):
         self.assertEqual(data["id"], IDENTITY)
         self.assertEqual(data["container"], "bedrock-lane-" + IDENTITY)
         self.assertFalse(data["ready"])
+
+    def test_new_provider_runs_on_its_own_labelled_network_past_taken_ranges(self):
+        (self.work / "machine.json").unlink()
+        name = "bedrock-lane-" + IDENTITY
+        tried = []
+
+        def fake_command(*args, **kwargs):
+            if args[0] == "ssh-keygen":
+                key = Path(args[-1])
+                key.write_text("test-only-key")
+                key.with_suffix(".pub").write_text("ssh-ed25519 test-only-public")
+            elif args[:3] == ("docker", "network", "create"):
+                tried.append(args[args.index("--subnet") + 1])
+                if len(tried) == 1:
+                    raise VM.subprocess.CalledProcessError(
+                        1, args, stderr="Error response from daemon: invalid pool request: Pool overlaps with other one on this address space")
+            elif args[:2] == ("docker", "inspect"):
+                return "sha256:" + "a" * 64
+            elif args[:2] == ("docker", "run"):
+                return "b" * 64 + "  /opt/ubuntu.img"
+            return ""
+
+        with (
+            patch.dict(VM.os.environ, {}, clear=True),
+            patch.object(VM.secrets, "token_hex", return_value=IDENTITY),
+            patch.object(VM, "command", side_effect=fake_command) as command,
+            patch.object(VM, "wait_ready", side_effect=lambda data: VM.write_config(data, "5555")),
+        ):
+            VM.up(prepared=(VM.IMAGE, {"guest_memory_mib": 3072, "tcg_cache_mib": 128}))
+        self.assertEqual(tried, ["10.213.1.0/24", "10.213.2.0/24"])
+        create_network = [call.args for call in command.call_args_list if call.args[:3] == ("docker", "network", "create")][-1]
+        self.assertEqual(create_network[-1], name)
+        self.assertIn(f"{VM.LABEL}={IDENTITY}", create_network)
+        create = next(call.args for call in command.call_args_list if call.args[:2] == ("docker", "create"))
+        self.assertEqual(create[create.index("--network") + 1], name)
+        # The guest's own Docker takes 172.17.0.0/16 and 192.168.0.0/16 by
+        # default, and QEMU's user network 10.0.2.0/24.
+        for subnet in VM.NETWORK_SUBNETS:
+            self.assertTrue(subnet.startswith("10.213."), subnet)
+        self.assertEqual(json.loads((self.work / "machine.json").read_text())["network"], name)
+
+    def test_failed_create_removes_the_network_it_made(self):
+        (self.work / "machine.json").unlink()
+
+        def fake_command(*args, **kwargs):
+            if args[0] == "ssh-keygen":
+                key = Path(args[-1])
+                key.write_text("test-only-key")
+                key.with_suffix(".pub").write_text("ssh-ed25519 test-only-public")
+            elif args[:2] == ("docker", "create"):
+                raise VM.subprocess.CalledProcessError(1, args)
+            elif args[:3] == ("docker", "network", "ls"):
+                return "bedrock-lane-" + IDENTITY
+            return ""
+
+        with (
+            patch.dict(VM.os.environ, {}, clear=True),
+            patch.object(VM.secrets, "token_hex", return_value=IDENTITY),
+            patch.object(VM, "command", side_effect=fake_command) as command,
+        ):
+            with self.assertRaises(VM.subprocess.CalledProcessError):
+                VM.up(prepared=(VM.IMAGE, {"guest_memory_mib": 3072, "tcg_cache_mib": 128}))
+        self.assertEqual(command.call_args.args, ("docker", "network", "rm", "bedrock-lane-" + IDENTITY))
+        self.assertFalse((self.work / "machine.json").exists())
 
     def config_values(self):
         return {line.split("=", 1)[0]: shlex.split(line.split("=", 1)[1])[0]
