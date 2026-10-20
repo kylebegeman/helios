@@ -54,9 +54,9 @@ const (
 // with its edge over the mesh, and its public URLs through the edge
 // provider.
 type Paths struct {
-	Summary string
-	TLS     string
-	Public  string
+	Summary string `json:"summary"`
+	TLS     string `json:"tls"`
+	Public  string `json:"public"`
 }
 
 // Class is what a look at a peer makes of it.

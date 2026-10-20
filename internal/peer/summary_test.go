@@ -1,0 +1,175 @@
+package peer
+
+import (
+	"context"
+	"encoding/json"
+	"net/http"
+	"path/filepath"
+	"reflect"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/kylebegeman/helios/internal/integration"
+	"github.com/kylebegeman/helios/internal/manifest"
+	"github.com/kylebegeman/helios/internal/state"
+	"github.com/kylebegeman/helios/internal/version"
+)
+
+func seconds(n int64) *int64 { return &n }
+
+// deployed makes app's active revision, first made at.
+func deployed(t *testing.T, store *state.Store, m manifest.Manifest, at time.Time) {
+	t.Helper()
+	encoded, err := json.Marshal(m)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SaveRevision(context.Background(), state.Revision{App: m.App, ID: "r1", Status: state.RevisionActive, Manifest: encoded,
+		Images: map[string]string{}, Containers: map[string]string{}, CreatedAt: at}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// ran records a backup or drill that started at and worked.
+func ran(t *testing.T, store *state.Store, appName, kind string, at time.Time) {
+	t.Helper()
+	ctx := context.Background()
+	id, err := store.StartBackupRun(ctx, appName, kind, at)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.FinishBackupRun(ctx, id, state.BackupRun{FinishedAt: at.Add(time.Minute), OK: true}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// opened records an open incident, told at told and owing a notice that
+// failed with owed.
+func opened(t *testing.T, store *state.Store, i state.Incident) {
+	t.Helper()
+	ctx := context.Background()
+	id, err := store.OpenIncident(ctx, i)
+	if err != nil {
+		t.Fatal(err)
+	}
+	i.ID = id
+	if err := store.UpdateIncident(ctx, i); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// The summary tells a peer what this machine may be unable to alert
+// about: its open incidents, whether each was told, its backups and
+// drills, when each alert leg last worked, its disk, and its own last
+// look at its peers. It never says why a notice failed or what a leg
+// delivered, and no address it knows.
+func TestSummaryReports(t *testing.T) {
+	w := setUpWeb1(t)
+	store, ctx := w.store, context.Background()
+	files := &manifest.Data{Volumes: map[string]manifest.Volume{"files": {}}}
+	deployed(t, store, manifest.Manifest{App: "shop", Data: files, Backup: &manifest.Backup{Drill: "10 6 * * 0"}}, now.Add(-10*24*time.Hour))
+	deployed(t, store, manifest.Manifest{App: "static"}, now.Add(-10*24*time.Hour))
+	// shop's last good backup was Sunday 03:00, so its drill was due
+	// Sunday 06:10 and none has run since the one a week before.
+	sunday := time.Date(2026, 10, 18, 3, 0, 0, 0, time.UTC)
+	ran(t, store, "shop", state.BackupRunBackup, sunday)
+	ran(t, store, "shop", state.BackupRunDrill, sunday.Add(-7*24*time.Hour+190*time.Minute))
+	ran(t, store, manifest.ReservedApp, state.BackupRunBackup, now.Add(-time.Hour))
+
+	const failure = "dial tcp smtp.example.test:587: connection refused"
+	opened(t, store, state.Incident{Key: "app:shop", Subject: "shop", Severity: state.SeverityWarning, OpenedAt: now.Add(-90 * time.Minute),
+		NotifiedAt: now.Add(-88 * time.Minute)})
+	opened(t, store, state.Incident{Key: "host:disk", Subject: "disk", Severity: state.SeverityCritical, OpenedAt: now.Add(-30 * time.Minute),
+		NotifyError: failure})
+
+	if _, _, err := integration.Set(w.secrets, integration.EmailName, map[string]string{"smtp_host": "smtp.example.test", "smtp_port": "587",
+		"from": "helios@example.test", "to": "ops@example.test"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := integration.Set(w.secrets, integration.PushoverName, map[string]string{"app_token": strings.Repeat("a", 30), "user_key": strings.Repeat("u", 30)}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.RecordIntegrationUse(ctx, integration.EmailName, "alert: web1: shop has a problem", now.Add(-time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+
+	s := w.server(t)
+	s.Deps.Last = func() Last {
+		return Last{Round: now.Add(-41 * time.Second), Looked: now.Add(-41 * time.Second), SelfCheck: true,
+			Findings: []Finding{{Key: "peer:web2", Severity: state.SeverityWarning}},
+			Paths:    map[string]Paths{"web2": {WordOK, WordOK, "timeout"}}}
+	}
+	rec := asked(s, at(in("100.64.0.0/10"), 7700), http.MethodGet, SummaryPath, w.keys["web2"], "")
+	if rec.Code != http.StatusOK || rec.Header().Get("Content-Type") != "application/json" {
+		t.Fatalf("got %d: %s", rec.Code, rec.Body)
+	}
+	raw := rec.Body.String()
+	var got Summary
+	if err := json.Unmarshal([]byte(raw), &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Disk == nil || got.Disk.TotalBytes == 0 || got.Disk.FreeBytes > got.Disk.TotalBytes {
+		t.Fatalf("the disk reads %+v", got.Disk)
+	}
+	got.Disk = nil
+	want := Summary{Name: "web1", Version: version.Current().Version, LastRoundAgeS: 41, SelfCheck: true,
+		Incidents: []SummaryIncident{
+			{Key: "app:shop", Subject: "shop", Severity: state.SeverityWarning, OpenedAgeS: 5400, ToldAgeS: seconds(5280)},
+			{Key: "host:disk", Subject: "disk", Severity: state.SeverityCritical, OpenedAgeS: 1800, Owed: true}},
+		Backups: []SummaryBackup{
+			{App: "shop", LastGoodBackupAgeS: seconds(54 * 3600), DeployedAgeS: seconds(10 * 86400),
+				LastGoodDrillAgeS: seconds(9*86400 + 170*60), DrillOverdueS: seconds(2*86400 + 170*60)},
+			{App: manifest.ReservedApp, LastGoodBackupAgeS: seconds(3600)}},
+		Legs:     []SummaryLeg{{Name: integration.EmailName, LastOKAgeS: seconds(3600)}, {Name: integration.PushoverName}},
+		Findings: []Finding{{Key: "peer:web2", Severity: state.SeverityWarning}},
+		Views:    []SummaryView{{Subject: "web2", AgeS: 41, Paths: Paths{WordOK, WordOK, "timeout"}}},
+	}
+	if !reflect.DeepEqual(got, want) {
+		gotJSON, _ := json.Marshal(got)
+		wantJSON, _ := json.Marshal(want)
+		t.Fatalf("the summary reads\n%s\nwant\n%s", gotJSON, wantJSON)
+	}
+	if strings.Contains(raw, `"told_age_s":null`) || strings.Count(raw, `"told_age_s"`) != 1 || strings.Count(raw, `"last_ok_age_s"`) != 1 {
+		t.Fatalf("an age with nothing to measure from is not left out: %s", raw)
+	}
+	mesh, _, _ := strings.Cut(at(in("100.64.0.0/10"), 7700), ":")
+	for _, kept := range []string{failure, "smtp.example.test", "has a problem", "ops@example.test", mesh, w.keys["web2"]} {
+		if strings.Contains(raw, kept) {
+			t.Fatalf("the summary carries %q: %s", kept, raw)
+		}
+	}
+}
+
+// A disk that can't be read leaves the disk out, rather than reporting
+// it empty or full.
+func TestSummaryOmitsDiskWhenUnreadable(t *testing.T) {
+	w := setUpWeb1(t)
+	summary, err := Build(context.Background(), Deps{Store: w.store, Secrets: w.secrets, Root: filepath.Join(t.TempDir(), "missing"),
+		Now: func() time.Time { return now }}, "web1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := json.Marshal(summary)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if summary.Disk != nil || strings.Contains(string(raw), `"disk"`) {
+		t.Fatalf("an unreadable disk is reported: %s", raw)
+	}
+}
+
+// A machine that has not finished a watch round yet, or has never
+// looked at its peers, reads as stale and shows no views, rather than
+// fresh and empty.
+func TestSummaryOfAMachineThatNeverWatchedReadsAsStale(t *testing.T) {
+	w := setUpWeb1(t)
+	summary, err := Build(context.Background(), Deps{Store: w.store, Secrets: w.secrets, Root: t.TempDir(),
+		Now: func() time.Time { return now }}, "web1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if time.Duration(summary.LastRoundAgeS)*time.Second <= StaleRound || summary.SelfCheck || len(summary.Views) != 0 {
+		t.Fatalf("got %+v", summary)
+	}
+}

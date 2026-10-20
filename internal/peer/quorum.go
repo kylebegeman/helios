@@ -92,8 +92,8 @@ type Candidate struct {
 
 // Finding is one peer condition a machine found, by key and severity.
 type Finding struct {
-	Key      string
-	Severity string
+	Key      string `json:"key"`
+	Severity string `json:"severity"`
 }
 
 // Sender picks the one machine to send a peer page at severity, so every
