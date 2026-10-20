@@ -476,11 +476,21 @@ func (x *backingUp) stopSnapshotHelpers(ctx context.Context) error {
 // would run, with no limit, inside the daemon's stop budget. Only a backup
 // with receipts writes the owner file that proves the staging is its own,
 // so a move's capture keeps its staging.
+//
+// The run stays open too: the resumed attempt adopts it from the receipt
+// and closes it with its own outcome. Closed here, it would read as a
+// failed backup until a resumed one that succeeds reopened it as good.
 func (x *backingUp) failStaged(ctx context.Context, err error) error {
-	if x.receiptDir != "" && ctx.Err() == nil {
+	if x.receiptDir == "" {
+		return x.run.fail(err)
+	}
+	if ctx.Err() == nil {
 		if derr := x.dropStaging(ctx); derr != nil {
 			err = fmt.Errorf("%w; its staging at %s could not be removed: %v", err, x.staging, derr)
 		}
+	}
+	if ctx.Err() != nil {
+		return err
 	}
 	return x.run.fail(err)
 }
@@ -788,8 +798,10 @@ func (x *backingUp) retentionStep() kernel.Step {
 			removed, err := x.forget(ctx)
 			detail := x.detail()
 			if err != nil {
+				// The resumed retention closes the run, as failStaged
+				// leaves it.
 				if ctx.Err() != nil {
-					return x.run.fail(err)
+					return err
 				}
 				reason := firstLine(err.Error())
 				detail += "; " + RetentionDeferred + ": " + reason

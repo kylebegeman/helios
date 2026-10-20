@@ -173,12 +173,10 @@ func TestBackupRetentionInterruptedByTheOperationIsNotDeferred(t *testing.T) {
 	if output := strings.Join(lines, "\n"); strings.Contains(output, RetentionDeferred) {
 		t.Fatalf("an interruption was reported as a deferral: %q", output)
 	}
-	// Only the interruption path closes the run, with its error; a deferral
-	// would have tried to record success with the cancelled context and
-	// left the run open.
+	// The run stays open for the resumed retention to close.
 	last, err := b.Store.LastBackupRun(context.Background(), "bedrock", state.BackupRunBackup)
-	if err != nil || last == nil || last.OK || !last.Finished() || last.Error == "" || strings.Contains(last.Detail, RetentionDeferred) {
-		t.Fatalf("an interruption was recorded as a deferral: %+v %v", last, err)
+	if err != nil || last == nil || last.OK || last.Finished() || strings.Contains(last.Detail, RetentionDeferred) {
+		t.Fatalf("an interruption was recorded as an outcome: %+v %v", last, err)
 	}
 }
 

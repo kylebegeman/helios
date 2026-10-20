@@ -753,7 +753,8 @@ fails and removes it if the stopped one had begun its upload. A failure after
 the upload began first stops any restic helper still reading the copy, such as
 one a killed daemon left running, and keeps the copy, saying so, while it
 can't. The next backup of that app or the machine replaces anything else left
-there.
+there. A stopped backup's run shows as running in `helios backups` until the
+resumed attempt closes it with its own result.
 
 `helios drill <app> --skip-next --reason <text>` skips the next scheduled
 drill when you know it can't run, such as while a disk is being resized. Its

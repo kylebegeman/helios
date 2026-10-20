@@ -152,9 +152,21 @@ func TestABackupWhoseCopyFailsWhilePreparingRemovesWhatItStaged(t *testing.T) {
 	})
 }
 
+// runOpen fails a test unless app's one backup run is still open, as an
+// interrupted backup leaves it for its resumed attempt to close.
+func runOpen(t *testing.T, store *state.Store, app string) state.BackupRun {
+	t.Helper()
+	runs, err := store.BackupRuns(context.Background(), app, state.BackupRunBackup, 10)
+	if err != nil || len(runs) != 1 || runs[0].Finished() {
+		t.Fatalf("the backup's one run must be left open: %+v %v", runs, err)
+	}
+	return runs[0]
+}
+
 // An interrupted prepare keeps what it staged, since its operation
 // resumes and the resumed prepare starts again from nothing. Removing a
-// large copy as the daemon stops would run past its stop budget.
+// large copy as the daemon stops would run past its stop budget. Its run
+// stays open for the resumed prepare.
 func TestAnInterruptedMachineBackupPrepareLeavesItsStagingToTheResumedPrepare(t *testing.T) {
 	r, _ := recoveryFixture(t)
 	ctx, cancel := context.WithCancel(context.Background())
@@ -171,7 +183,7 @@ func TestAnInterruptedMachineBackupPrepareLeavesItsStagingToTheResumedPrepare(t 
 	}
 	staging := filepath.Join(r.StateDir, "backups", "machine")
 	stagingKept(t, r.StateDir, staging, true)
-	lastRunFailed(t, r.Store, manifest.ReservedApp, context.Canceled.Error())
+	runOpen(t, r.Store, manifest.ReservedApp)
 
 	partial := filepath.Join(staging, machineAppDataDir, "hello", "partial")
 	if err := os.MkdirAll(filepath.Dir(partial), 0o700); err != nil {
@@ -188,6 +200,75 @@ func TestAnInterruptedMachineBackupPrepareLeavesItsStagingToTheResumedPrepare(t 
 		t.Error("the resumed prepare didn't stage the machine again from nothing")
 	}
 	stagingKept(t, r.StateDir, staging, true)
+	runOpen(t, r.Store, manifest.ReservedApp)
+}
+
+// A daemon that stops mid-backup leaves its operation to resume, and the
+// resumed attempt carries on the same run. So the stopped attempt leaves
+// that run open: closed, it would read as a failed backup, and then as a
+// recovered one when the resumed attempt succeeds.
+func TestABackupStoppedWithItsDaemonLeavesItsRunToTheResumedAttempt(t *testing.T) {
+	for _, stop := range []struct{ name, command string }{{"opening the repository", "init"}, {"applying retention", "forget"}} {
+		for _, machine := range []bool{false, true} {
+			t.Run(stop.name+"/"+map[bool]string{false: "app", true: "machine"}[machine], func(t *testing.T) {
+				b, raw := backupIdentityFixture(t, machine)
+				owner := map[bool]string{false: "hello", true: manifest.ReservedApp}[machine]
+				ctx, cancel := context.WithCancel(context.Background())
+				defer cancel()
+				var stopping atomic.Bool
+				stopping.Store(true)
+				at := time.Now().UTC().Truncate(time.Second)
+				summary, _ := json.Marshal(struct {
+					Type string `json:"message_type"`
+					restic.Summary
+				}{"summary", restic.Summary{SnapshotID: strings.Repeat("e", 64), BackupStart: at, BackupEnd: at.Add(time.Second), TotalFiles: 3, TotalBytes: 30}})
+				fake := dockertest.New(t)
+				fake.OnCreate = func(c dockertest.Container) {
+					fake.Update(c.Name, func(c *dockertest.Container) {
+						c.ExitAfter = 1
+						switch c.Cmd[0] {
+						case "init":
+							c.ExitCode, c.Logs = 1, `{"message_type":"exit_error","code":1,"message":"Fatal: config file already exists"}`
+						case "backup":
+							c.Logs = string(summary)
+						case "forget":
+							c.Logs = `[]`
+						}
+						if c.Cmd[0] == stop.command && stopping.Load() {
+							c.ExitAfter = 0
+							cancel()
+						}
+					})
+				}
+				reg := kernel.Registry{}
+				reg.Add(b)
+				var operation string
+				_, err := kernel.New(b.Store, reg, "old-daemon", kernel.WithClock(func() time.Time { return at })).Run(ctx, BackupKind, raw, func(ev kernel.Event) {
+					if ev.Type == kernel.EventPlanned {
+						operation = ev.Operation
+					}
+				})
+				if err == nil || operation == "" {
+					t.Fatalf("the backup was not stopped: %v", err)
+				}
+				stopped := runOpen(t, b.Store, owner)
+
+				stopping.Store(false)
+				recovered := kernel.New(b.Store, reg, "new-daemon", kernel.WithClock(func() time.Time { return at.Add(time.Minute) }))
+				if n, err := recovered.Recover(context.Background(), func(kernel.Event) {}); err != nil || n != 1 {
+					t.Fatalf("recovered %d operation(s): %v", n, err)
+				}
+				receipt, err := recovered.ReceiptOf(context.Background(), operation)
+				if err != nil || receipt.Status != state.Succeeded {
+					t.Fatalf("the resumed backup must succeed: %+v %v", receipt, err)
+				}
+				runs, err := b.Store.BackupRuns(context.Background(), owner, state.BackupRunBackup, 10)
+				if err != nil || len(runs) != 1 || runs[0].ID != stopped.ID || !runs[0].OK || runs[0].Error != "" {
+					t.Fatalf("the resumed backup must close the stopped one's run as good: %+v %v", runs, err)
+				}
+			})
+		}
+	}
 }
 
 // repositoryWhoseBackup answers restic as an existing repository would,
