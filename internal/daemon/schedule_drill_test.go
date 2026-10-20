@@ -20,7 +20,7 @@ func TestARefusedDrillWaitsForItsNextScheduledRun(t *testing.T) {
 	defer store.Close()
 	ctx := context.Background()
 	s := &Scheduler{Store: store, Log: func(string, ...any) {}}
-	const app, weekly = "notes", "10 6 * * 0"
+	const app, weekly = "hello", "10 6 * * 0"
 
 	// The store keeps times in UTC, and a schedule reads a time in its own
 	// zone.
@@ -31,7 +31,7 @@ func TestARefusedDrillWaitsForItsNextScheduledRun(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := store.FinishBackupRun(ctx, id, state.BackupRun{FinishedAt: refused.Add(time.Minute),
-		Error: "snapshot 7bfd5f28: restoring needs 89.7 GB plus a 5.0 GB reserve on /var/lib/helios/drills/notes, which has 7.8 GB free; free space or skip this drill"}); err != nil {
+		Error: "snapshot aaaaaaaa: restoring needs 90.0 GB plus a 5.0 GB reserve on /var/lib/helios/drills/hello, which has 8.0 GB free; free space or skip this drill"}); err != nil {
 		t.Fatal(err)
 	}
 	for _, now := range []time.Time{refused.Add(time.Minute), refused.Add(24 * time.Hour), time.Date(2026, 11, 1, 6, 9, 0, 0, time.UTC)} {

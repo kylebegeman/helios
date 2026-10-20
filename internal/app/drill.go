@@ -106,6 +106,7 @@ type drillState struct {
 	restored *restic.RestoreSummary
 	details  []string
 	started  time.Time
+	advice   string // what a restore that won't fit tells the operator to do
 }
 
 func (d *drillState) abort(e *docker.Engine, err error) error {
@@ -145,7 +146,8 @@ func (dr Drill) Plan(ctx context.Context, raw json.RawMessage) (*kernel.Plan, er
 		}
 	}
 	d := &drillState{dr: dr, app: in.App, snapshot: in.Snapshot, rev: rev, m: m,
-		run: &backupRun{store: dr.Store, app: in.App, kind: state.BackupRunDrill}, names: newDrillNames(dr.StateDir, &m)}
+		run: &backupRun{store: dr.Store, app: in.App, kind: state.BackupRunDrill}, names: newDrillNames(dr.StateDir, &m),
+		advice: "free space or skip this drill"}
 	plan := &kernel.Plan{Target: in.App, Recovery: kernel.Resume}
 	plan.Steps = append(plan.Steps, d.restoreStep())
 	if len(d.names.volumes) > 0 {
@@ -217,10 +219,11 @@ func (d *drillState) restoreStep() kernel.Step {
 }
 
 // checkSpace refuses a restore that would leave less than the reserve
-// free on the disk under the drill's files or any of its scratch volumes:
-// a drill that fills the disk takes the running app down with it.
+// free on the disk under the drill's files, any of its scratch volumes or
+// its scratch database: a drill that fills the disk takes the running app
+// down with it.
 func (d *drillState) checkSpace(ctx context.Context, e *docker.Engine, r restoreSizer) error {
-	need, err := snapshotSize(ctx, r, d.found, d.app)
+	size, err := snapshotSize(ctx, r, d.found, d.app)
 	if err != nil {
 		return err
 	}
@@ -232,8 +235,26 @@ func (d *drillState) checkSpace(ctx context.Context, e *docker.Engine, r restore
 		}
 		paths = append(paths, dir)
 	}
-	if err := checkRestoreSpace(paths, need, restoreFreeReserve); err != nil {
-		return fmt.Errorf("snapshot %s: %w; free space or skip this drill", short(d.found.ID), err)
+	// The dump loads into the scratch database's volume, which can be on
+	// another disk from the drill's files. The database step starts on the
+	// volume made here, and cleanup removes it.
+	if d.m.PostgresVersion() != "" {
+		if err := e.EnsureVolume(ctx, d.names.postgresVolume); err != nil {
+			return err
+		}
+		dir, err := e.VolumeMountpoint(ctx, d.names.postgresVolume)
+		if err != nil {
+			return fmt.Errorf("finding the scratch database's volume: %w", err)
+		}
+		paths = append(paths, dir)
+	}
+	err = checkRestoreSpace(paths, allocated(size), restoreFreeReserve)
+	var space *SpaceError
+	if errors.As(err, &space) && d.advice != "" {
+		return fmt.Errorf("snapshot %s: %w; %s", short(d.found.ID), err, d.advice)
+	}
+	if err != nil {
+		return fmt.Errorf("snapshot %s: %w", short(d.found.ID), err)
 	}
 	return nil
 }
@@ -241,19 +262,19 @@ func (d *drillState) checkSpace(ctx context.Context, e *docker.Engine, r restore
 // restoreSizer counts what restoring a snapshot writes. restic.Runner is
 // one.
 type restoreSizer interface {
-	RestoreSize(ctx context.Context, snapshot, host string) (int64, error)
+	RestoreSize(ctx context.Context, snapshot, host string) (restic.Size, error)
 }
 
-// snapshotSize is how many bytes restoring a snapshot writes: what its
-// backup recorded reading, or restic's count of its tree when the snapshot
+// snapshotSize is what restoring a snapshot writes: what its backup
+// recorded reading, or restic's count of its tree when the snapshot
 // doesn't say. Without either, nothing is restored.
-func snapshotSize(ctx context.Context, r restoreSizer, s *restic.Snapshot, host string) (int64, error) {
+func snapshotSize(ctx context.Context, r restoreSizer, s *restic.Snapshot, host string) (restic.Size, error) {
 	if s.Summary != nil && s.Summary.TotalBytes > 0 {
-		return s.Summary.TotalBytes, nil
+		return restic.Size{Bytes: s.Summary.TotalBytes, Files: max(s.Summary.TotalFiles, 0)}, nil
 	}
 	n, err := r.RestoreSize(ctx, s.ID, host)
 	if err != nil {
-		return 0, fmt.Errorf("counting what snapshot %s restores: %w", short(s.ID), err)
+		return restic.Size{}, fmt.Errorf("counting what snapshot %s restores: %w", short(s.ID), err)
 	}
 	return n, nil
 }
@@ -291,7 +312,7 @@ func (d *drillState) sqliteStep() kernel.Step {
 				return d.run.fail(err)
 			}
 			defer e.Close()
-			var checked []string
+			var checked, uncheckable []string
 			unchecked := 0
 			for _, v := range sortedKeys(d.names.volumes) {
 				dir, err := e.VolumeMountpoint(ctx, d.names.volumes[v])
@@ -309,6 +330,12 @@ func (d *drillState) sqliteStep() kernel.Step {
 					}
 					where := fmt.Sprintf("%s in volume %s", file, v)
 					problems, err := state.IntegrityCheck(ctx, filepath.Join(dir, file))
+					if name, ok := appCollation(err); ok {
+						// SQLite can't check an index without its
+						// collation, and only the app defines this one.
+						uncheckable = append(uncheckable, fmt.Sprintf("%s, which sorts by its app's collation %s", where, name))
+						continue
+					}
 					if err != nil {
 						return d.abort(e, fmt.Errorf("the restored SQLite database %s won't open: %w", where, err))
 					}
@@ -318,7 +345,7 @@ func (d *drillState) sqliteStep() kernel.Step {
 					checked = append(checked, where)
 				}
 			}
-			detail := sqliteDetail(checked, unchecked)
+			detail := sqliteDetail(checked, uncheckable, unchecked)
 			d.details = append(d.details, detail)
 			fmt.Fprintln(out, detail)
 			return nil
@@ -326,8 +353,21 @@ func (d *drillState) sqliteStep() kernel.Step {
 	}
 }
 
-// sqliteDetail sums up a drill's SQLite checks for its record.
-func sqliteDetail(checked []string, unchecked int) string {
+// appCollation is the collation a check stopped at because the database
+// sorts by one its app defines, which no other program has.
+func appCollation(err error) (string, bool) {
+	if err == nil {
+		return "", false
+	}
+	_, name, ok := strings.Cut(err.Error(), "no such collation sequence: ")
+	name, _, _ = strings.Cut(name, " (")
+	return name, ok && name != ""
+}
+
+// sqliteDetail sums up a drill's SQLite checks for its record: the
+// databases checked, those only their app can check, and how many past
+// the cap went unchecked.
+func sqliteDetail(checked, uncheckable []string, unchecked int) string {
 	var b strings.Builder
 	switch len(checked) {
 	case 0:
@@ -342,6 +382,9 @@ func sqliteDetail(checked []string, unchecked int) string {
 	}
 	if len(checked) > 0 {
 		b.WriteString(")")
+	}
+	if len(uncheckable) > 0 {
+		b.WriteString("; not checked: " + strings.Join(uncheckable, "; "))
 	}
 	if unchecked > 0 {
 		fmt.Fprintf(&b, "; %d more past the first %d not checked", unchecked, sqliteMax)

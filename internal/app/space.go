@@ -6,6 +6,8 @@ import (
 	"math"
 
 	"golang.org/x/sys/unix"
+
+	"github.com/kylebegeman/helios/internal/restic"
 )
 
 // restoreFreeReserve is the free space a drill leaves on every disk it
@@ -13,6 +15,24 @@ import (
 // watch calls the disk a problem, so a drill never takes the machine's
 // running apps below it.
 const restoreFreeReserve = 5 << 30
+
+// restoreFileBlock is the block most Linux filesystems allocate: a
+// restored file takes whole blocks, however few bytes it holds.
+const restoreFileBlock = 4 << 10
+
+// allocated is the most room a restore's files take: their bytes, and a
+// block for each file to round up into. A drill keeps its reserve against
+// this, so a volume of many small files can't fill a disk its bytes alone
+// would fit. A size that can't be added up is as big as can be.
+func allocated(s restic.Size) int64 {
+	if s.Bytes < 0 || s.Files <= 0 {
+		return s.Bytes
+	}
+	if s.Files > (math.MaxInt64-s.Bytes)/restoreFileBlock {
+		return math.MaxInt64
+	}
+	return s.Bytes + s.Files*restoreFileBlock
+}
 
 // disk is one filesystem: which device it is and how much of it is free.
 type disk struct {

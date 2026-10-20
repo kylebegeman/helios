@@ -307,6 +307,9 @@ func rollbackCheckpointStep(d Deploy, target *state.Revision, b state.ReleaseBou
 		if snapshot.ID != b.Snapshot {
 			return errors.New("rollback restore needs the exact checkpoint identity")
 		}
+		// The snapshot found here carries its summary, so the restore is
+		// sized without listing the repository again while the app is down.
+		x.snapshot = snapshot
 		if err := x.fetchStep().Apply(ctx, out); err != nil {
 			return err
 		}

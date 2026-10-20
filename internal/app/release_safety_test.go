@@ -286,14 +286,17 @@ func TestCheckpointRestoreRetainsAuthorityHistoryAndReplaysPartialDataUnderFence
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
 	failVolume := true
 	var volumeAttempts int
+	// The snapshot's summary sizes the restore, so the app isn't down
+	// while restic walks the snapshot's tree.
+	counted := false
 	fake.OnCreate = func(c dockertest.Container) {
 		fake.Update(c.Name, func(c *dockertest.Container) {
 			c.ExitAfter = 1
 			switch c.Cmd[0] {
 			case "snapshots":
-				c.Logs = `[{"id":"` + snapshot + `","short_id":"aaaaaaaa","time":"2026-10-10T00:00:00Z"}]`
+				c.Logs = `[{"id":"` + snapshot + `","short_id":"aaaaaaaa","time":"2026-10-10T00:00:00Z","summary":{"total_files_processed":1,"total_bytes_processed":12}}]`
 			case "stats":
-				c.Logs = `{"total_size":12,"total_file_count":1,"snapshots_count":1}`
+				counted = true
 			case "restore":
 				staging := ""
 				for _, bind := range c.HostConfig.Binds {
@@ -336,6 +339,9 @@ func TestCheckpointRestoreRetainsAuthorityHistoryAndReplaysPartialDataUnderFence
 	}
 	if volumeAttempts != 2 {
 		t.Fatalf("partial restore was not replayed from the same checkpoint: %d", volumeAttempts)
+	}
+	if counted {
+		t.Fatal("the rollback counted a snapshot whose summary already sizes it")
 	}
 	if err := CheckReleaseDataAccess(ctx, store.Path(), m.App); err != nil {
 		t.Fatal(err)

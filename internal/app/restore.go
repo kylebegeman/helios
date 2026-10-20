@@ -183,7 +183,7 @@ func (x *restoring) fetchStep() kernel.Step {
 				return x.run.fail(err)
 			}
 			if x.snapshot == nil {
-				x.snapshot = &restic.Snapshot{ID: id, ShortID: short(id)}
+				x.snapshot = x.resolve(ctx, rs, id)
 			}
 			if err := writeRestoreSnapshot(x.staging, x.snapshot); err != nil {
 				return x.run.fail(err)
@@ -248,13 +248,40 @@ func (x *restoring) volumesStep() kernel.Step {
 	}
 }
 
-// checkVolumesSpace refuses a restore of the snapshot's volumes that won't
+// resolve finds the snapshot fetched by id with the summary its backup
+// recorded, which sizes the restore without restic walking its tree. A
+// snapshot it can't find that way is known by its id alone.
+func (x *restoring) resolve(ctx context.Context, rs restic.Runner, id string) *restic.Snapshot {
+	if snaps, err := rs.Snapshots(ctx, x.app); err == nil {
+		if found, err := resolveRecoverySnapshot(snaps, id); err == nil {
+			return found
+		}
+	}
+	return &restic.Snapshot{ID: id, ShortID: short(id)}
+}
+
+// checkVolumesSpace refuses a restore of the snapshot's volumes that can't
 // fit on the disk under them, and otherwise says what that disk keeps
-// free. The volumes must exist.
+// free. Only a drill fails closed: a restore whose room can't be checked
+// goes ahead, as it did before there was a check. The volumes must exist.
 func (x *restoring) checkVolumesSpace(ctx context.Context, e *docker.Engine, r restoreSizer, volumes []string, out io.Writer) error {
 	if len(volumes) == 0 {
 		return nil
 	}
+	err := x.volumesFit(ctx, e, r, volumes, out)
+	var space *SpaceError
+	if errors.As(err, &space) {
+		return fmt.Errorf("snapshot %s: %w; free space on this machine and try again", short(x.id()), err)
+	}
+	if err != nil {
+		fmt.Fprintf(out, "restoring without a space check: %v\n", err)
+	}
+	return nil
+}
+
+// volumesFit is checkVolumesSpace's check, as a SpaceError when the
+// snapshot's volumes can't fit.
+func (x *restoring) volumesFit(ctx context.Context, e *docker.Engine, r restoreSizer, volumes []string, out io.Writer) error {
 	need, err := x.volumesNeed(ctx, r)
 	if err != nil {
 		return err
@@ -268,7 +295,7 @@ func (x *restoring) checkVolumesSpace(ctx context.Context, e *docker.Engine, r r
 		paths = append(paths, dir)
 	}
 	if err := checkRestoreSpace(paths, need, 0); err != nil {
-		return fmt.Errorf("snapshot %s: %w; free space on this machine and try again", short(x.id()), err)
+		return err
 	}
 	if left := spaceLeft(paths[0], need); left != "" {
 		fmt.Fprintln(out, left)
@@ -277,16 +304,19 @@ func (x *restoring) checkVolumesSpace(ctx context.Context, e *docker.Engine, r r
 }
 
 // volumesNeed is how many bytes restoring the snapshot's volumes writes:
-// the whole snapshot, less what fetch already staged from it.
+// the whole snapshot, less what fetch already staged from it. It counts
+// no blocks for the files, so a refusal is a restore that certainly can't
+// fit.
 func (x *restoring) volumesNeed(ctx context.Context, r restoreSizer) (int64, error) {
 	s := x.snapshot
 	if s == nil {
 		s = &restic.Snapshot{ID: x.id()}
 	}
-	total, err := snapshotSize(ctx, r, s, x.app)
+	size, err := snapshotSize(ctx, r, s, x.app)
 	if err != nil {
 		return 0, err
 	}
+	total := size.Bytes
 	var staged int64
 	err = filepath.WalkDir(x.staging, func(path string, entry fs.DirEntry, walkErr error) error {
 		if walkErr != nil {

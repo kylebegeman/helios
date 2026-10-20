@@ -150,7 +150,7 @@ func drillFixture(t *testing.T, volumes ...string) (*drillState, *dockertest.Ser
 		m.Data.Volumes[v] = manifest.Volume{}
 	}
 	d := &drillState{dr: Drill{Store: r.Store, Secrets: r.Secrets, StateDir: r.StateDir}, app: m.App, snapshot: strings.Repeat("a", 64), m: m,
-		run: &backupRun{store: r.Store, app: m.App, kind: state.BackupRunDrill}, names: newDrillNames(r.StateDir, &m)}
+		run: &backupRun{store: r.Store, app: m.App, kind: state.BackupRunDrill}, names: newDrillNames(r.StateDir, &m), advice: "free space or skip this drill"}
 	fake := dockertest.New(t)
 	for _, v := range volumes {
 		fake.AddVolume(docker.VolumeName(m.App, v), nil)
@@ -178,70 +178,91 @@ func snapshotList(id, summary string) string {
 }
 
 // A 90 GB snapshot restored onto a disk with 8 GB free fills the disk under
-// the running apps. The drill refuses before restoring anything, removes
-// what it made, and records a failed drill that says why.
+// the running apps, and so does a million small files whose bytes alone
+// would fit: each takes a block. The drill refuses before restoring
+// anything, removes what it made, and records a failed drill that says
+// why.
 func TestADrillWithoutRoomForItsRestoreRefuses(t *testing.T) {
-	ctx := context.Background()
-	d, fake := drillFixture(t, "uploads")
-	onDisks(t, func(string) (disk, error) { return disk{dev: 1, free: 8 << 30}, nil })
-	var ran []string
-	fake.OnCreate = func(c dockertest.Container) {
-		fake.Update(c.Name, func(c *dockertest.Container) {
-			c.ExitAfter = 1
-			ran = append(ran, c.Cmd[0])
-			if c.Cmd[0] == "snapshots" {
-				c.Logs = snapshotList(d.snapshot, `{"total_files_processed":41000,"total_bytes_processed":`+strconv.FormatInt(90<<30, 10)+`}`)
+	for _, c := range []struct {
+		name, summary, need string
+	}{
+		{"a big snapshot", `{"total_files_processed":41000,"total_bytes_processed":` + strconv.FormatInt(90<<30, 10) + `}`, "90.2 GB"},
+		{"many small files", `{"total_files_processed":1048576,"total_bytes_processed":` + strconv.FormatInt(2<<30, 10) + `}`, "6.0 GB"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			ctx := context.Background()
+			d, fake := drillFixture(t, "uploads")
+			onDisks(t, func(string) (disk, error) { return disk{dev: 1, free: 8 << 30}, nil })
+			var ran []string
+			fake.OnCreate = func(ct dockertest.Container) {
+				fake.Update(ct.Name, func(ct *dockertest.Container) {
+					ct.ExitAfter = 1
+					ran = append(ran, ct.Cmd[0])
+					if ct.Cmd[0] == "snapshots" {
+						ct.Logs = snapshotList(d.snapshot, c.summary)
+					}
+				})
+			}
+			err := d.restoreStep().Apply(ctx, io.Discard)
+			for _, want := range []string{"snapshot aaaaaaaa", c.need + " plus a 5.0 GB reserve", "which has 8.0 GB free", "free space or skip this drill"} {
+				if err == nil || !strings.Contains(err.Error(), want) {
+					t.Fatalf("the refusal should say %q: %v", want, err)
+				}
+			}
+			if slices.Contains(ran, "restore") || slices.Contains(ran, "stats") {
+				t.Fatalf("a drill with no room went on to %v", ran)
+			}
+			if got := fake.VolumeNames(); !slices.Equal(got, liveVolumes(d)) {
+				t.Fatalf("the refused drill left scratch volumes or touched live ones: %v", got)
+			}
+			if _, err := os.Stat(d.names.dir); !errors.Is(err, os.ErrNotExist) {
+				t.Errorf("scratch files outlived the refusal: %v", err)
+			}
+			run, err := d.dr.Store.LastBackupRun(ctx, d.app, state.BackupRunDrill)
+			if err != nil || run == nil || !run.Finished() || run.OK || !strings.Contains(run.Error, c.need) || !strings.Contains(run.Error, "8.0 GB free") {
+				t.Fatalf("the refusal wasn't recorded as a failed drill naming both sizes: %+v, %v", run, err)
 			}
 		})
-	}
-	err := d.restoreStep().Apply(ctx, io.Discard)
-	for _, want := range []string{"snapshot aaaaaaaa", "90.0 GB plus a 5.0 GB reserve", "which has 8.0 GB free", "free space or skip this drill"} {
-		if err == nil || !strings.Contains(err.Error(), want) {
-			t.Fatalf("the refusal should say %q: %v", want, err)
-		}
-	}
-	if slices.Contains(ran, "restore") || slices.Contains(ran, "stats") {
-		t.Fatalf("a drill with no room went on to %v", ran)
-	}
-	if got := fake.VolumeNames(); !slices.Equal(got, liveVolumes(d)) {
-		t.Fatalf("the refused drill left scratch volumes or touched live ones: %v", got)
-	}
-	if _, err := os.Stat(d.names.dir); !errors.Is(err, os.ErrNotExist) {
-		t.Errorf("scratch files outlived the refusal: %v", err)
-	}
-	run, err := d.dr.Store.LastBackupRun(ctx, d.app, state.BackupRunDrill)
-	if err != nil || run == nil || !run.Finished() || run.OK || !strings.Contains(run.Error, "90.0 GB") || !strings.Contains(run.Error, "8.0 GB free") {
-		t.Fatalf("the refusal wasn't recorded as a failed drill naming both sizes: %+v, %v", run, err)
 	}
 }
 
 // A snapshot that doesn't say how much it holds, as restic before 0.17
 // wrote them, is counted by restic before the drill restores it. A drill
-// that can't count it doesn't restore it.
+// that can't count it, or counts more than fits, doesn't restore it.
 func TestADrillCountsASnapshotWithoutASummaryBeforeRestoringIt(t *testing.T) {
-	for _, counts := range []bool{true, false} {
-		t.Run(map[bool]string{true: "counted", false: "the count fails"}[counts], func(t *testing.T) {
+	for _, c := range []struct {
+		name, stats string
+		fails       bool
+		free        int64
+		want        string
+	}{
+		{name: "counted", stats: `{"total_size":12,"total_file_count":1,"snapshots_count":1}`, free: 1 << 50},
+		{name: "counted too big", stats: `{"total_size":96636764160,"total_file_count":1000,"snapshots_count":1}`, free: 8 << 30,
+			want: "snapshot aaaaaaaa: restoring needs 90.0 GB plus a 5.0 GB reserve"},
+		{name: "the count fails", fails: true, free: 1 << 50, want: "counting what snapshot aaaaaaaa restores"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
 			ctx := context.Background()
 			d, fake := drillFixture(t, "uploads")
-			roomToRestore(t)
+			onDisks(t, func(string) (disk, error) { return disk{dev: 1, free: c.free}, nil })
 			var stats []string
 			restored := false
-			fake.OnCreate = func(c dockertest.Container) {
-				fake.Update(c.Name, func(c *dockertest.Container) {
-					c.ExitAfter = 1
-					switch c.Cmd[0] {
+			fake.OnCreate = func(ct dockertest.Container) {
+				fake.Update(ct.Name, func(ct *dockertest.Container) {
+					ct.ExitAfter = 1
+					switch ct.Cmd[0] {
 					case "snapshots":
-						c.Logs = snapshotList(d.snapshot, "")
+						ct.Logs = snapshotList(d.snapshot, "")
 					case "stats":
-						stats = c.Cmd
-						c.Logs = `{"total_size":12,"total_file_count":1,"snapshots_count":1}`
-						if !counts {
-							c.ExitCode = 1
-							c.Logs = `{"message_type":"exit_error","code":1,"message":"Fatal: repository is locked"}`
+						stats = ct.Cmd
+						ct.Logs = c.stats
+						if c.fails {
+							ct.ExitCode = 1
+							ct.Logs = `{"message_type":"exit_error","code":1,"message":"Fatal: repository is locked"}`
 						}
 					case "restore":
 						restored = true
-						c.Logs = `{"message_type":"summary","files_restored":1,"total_files":1,"bytes_restored":12,"total_bytes":12}`
+						ct.Logs = `{"message_type":"summary","files_restored":1,"total_files":1,"bytes_restored":12,"total_bytes":12}`
 					}
 				})
 			}
@@ -249,21 +270,67 @@ func TestADrillCountsASnapshotWithoutASummaryBeforeRestoringIt(t *testing.T) {
 			if !slices.Equal(stats, []string{"stats", d.snapshot, "--mode", "restore-size", "--json"}) {
 				t.Fatalf("restic wasn't asked what restoring the snapshot writes: %q", stats)
 			}
-			if counts {
+			if c.want == "" {
 				if err != nil || !restored {
 					t.Fatalf("a counted snapshot that fits wasn't restored: %v", err)
 				}
 				return
 			}
-			if err == nil || !strings.Contains(err.Error(), "counting what snapshot aaaaaaaa restores") || restored {
-				t.Fatalf("a snapshot that couldn't be counted was restored or the failure lost: %v", err)
+			if err == nil || !strings.Contains(err.Error(), c.want) || restored {
+				t.Fatalf("the snapshot was restored or the refusal doesn't say %q: %v", c.want, err)
 			}
 			if got := fake.VolumeNames(); !slices.Equal(got, liveVolumes(d)) {
-				t.Fatalf("scratch volumes outlived the failed count: %v", got)
+				t.Fatalf("scratch volumes outlived the refusal: %v", got)
 			}
 			run, err := d.dr.Store.LastBackupRun(ctx, d.app, state.BackupRunDrill)
-			if err != nil || run == nil || run.OK || !strings.Contains(run.Error, "counting what snapshot") {
-				t.Fatalf("the failed count wasn't recorded as a failed drill: %+v, %v", run, err)
+			if err != nil || run == nil || run.OK || !strings.Contains(run.Error, c.want) {
+				t.Fatalf("the refusal wasn't recorded as a failed drill: %+v, %v", run, err)
+			}
+		})
+	}
+}
+
+// Docker can keep volumes on another disk from the drill's files, and the
+// scratch database loads its dump into a volume of its own. The drill
+// checks the disk under each, refuses by the one without room, and removes
+// the scratch volumes it made.
+func TestADrillChecksTheDiskUnderEveryScratchVolume(t *testing.T) {
+	for _, name := range []string{"a files volume", "the scratch database"} {
+		t.Run(name, func(t *testing.T) {
+			ctx := context.Background()
+			d, fake := drillFixture(t, "uploads")
+			full := d.names.volumes["uploads"]
+			if name == "the scratch database" {
+				d, fake = drillFixture(t)
+				d.m.Data.Postgres = &manifest.Postgres{}
+				full = d.names.postgresVolume
+			}
+			onDisks(t, func(path string) (disk, error) {
+				if path == fake.VolumeDir(full) {
+					return disk{dev: 2, free: 8 << 30}, nil
+				}
+				return disk{dev: 1, free: 1 << 50}, nil
+			})
+			var ran []string
+			fake.OnCreate = func(ct dockertest.Container) {
+				fake.Update(ct.Name, func(ct *dockertest.Container) {
+					ct.ExitAfter = 1
+					ran = append(ran, ct.Cmd[0])
+					if ct.Cmd[0] == "snapshots" {
+						ct.Logs = snapshotList(d.snapshot, `{"total_files_processed":1,"total_bytes_processed":`+strconv.FormatInt(10<<30, 10)+`}`)
+					}
+				})
+			}
+			err := d.restoreStep().Apply(ctx, io.Discard)
+			want := "snapshot aaaaaaaa: restoring needs 10.0 GB plus a 5.0 GB reserve on " + fake.VolumeDir(full) + ", which has 8.0 GB free"
+			if err == nil || !strings.HasPrefix(err.Error(), want) {
+				t.Fatalf("got %v, want %q", err, want)
+			}
+			if slices.Contains(ran, "restore") {
+				t.Fatal("a drill with no room for its scratch volumes restored")
+			}
+			if got := fake.VolumeNames(); !slices.Equal(got, liveVolumes(d)) {
+				t.Fatalf("the refused drill left scratch volumes: %v", got)
 			}
 		})
 	}
@@ -375,18 +442,91 @@ func TestADrillFailsOnACorruptRestoredSQLiteDatabase(t *testing.T) {
 
 func TestADrillsRecordSumsUpItsSQLiteChecks(t *testing.T) {
 	many := []string{"a.db in volume data", "b.db in volume data", "c.db in volume data", "d.db in volume data", "e.db in volume data"}
+	sorted := []string{"f.db in volume data, which sorts by its app's collation reverse"}
 	for _, c := range []struct {
-		checked   []string
-		unchecked int
-		want      string
+		checked, uncheckable []string
+		unchecked            int
+		want                 string
 	}{
-		{nil, 0, "no SQLite databases"},
-		{many[:1], 0, "1 SQLite database intact (a.db in volume data)"},
-		{many[:3], 0, "3 SQLite databases intact (a.db in volume data, b.db in volume data, c.db in volume data)"},
-		{many, 2, "5 SQLite databases intact (a.db in volume data, b.db in volume data, c.db in volume data and 2 more); 2 more past the first 64 not checked"},
+		{nil, nil, 0, "no SQLite databases"},
+		{many[:1], nil, 0, "1 SQLite database intact (a.db in volume data)"},
+		{many[:3], nil, 0, "3 SQLite databases intact (a.db in volume data, b.db in volume data, c.db in volume data)"},
+		{many, nil, 2, "5 SQLite databases intact (a.db in volume data, b.db in volume data, c.db in volume data and 2 more); 2 more past the first 64 not checked"},
+		{nil, sorted, 0, "no SQLite databases; not checked: f.db in volume data, which sorts by its app's collation reverse"},
 	} {
-		if got := sqliteDetail(c.checked, c.unchecked); got != c.want {
+		if got := sqliteDetail(c.checked, c.uncheckable, c.unchecked); got != c.want {
 			t.Errorf("got %q, want %q", got, c.want)
 		}
+	}
+}
+
+// A drill checks the first 64 SQLite databases it finds and says how many
+// more it left unchecked.
+func TestADrillChecksAtMost64SQLiteDatabases(t *testing.T) {
+	ctx := context.Background()
+	d, fake := drillFixture(t, "data")
+	if err := d.run.begin(ctx); err != nil {
+		t.Fatal(err)
+	}
+	fake.AddVolume(d.names.volumes["data"], nil)
+	data := fake.VolumeDir(d.names.volumes["data"])
+	if err := os.MkdirAll(data, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	one := filepath.Join(t.TempDir(), "one.db")
+	sqliteDatabase(t, one)
+	db, err := os.ReadFile(one)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := range sqliteMax + 2 {
+		if err := os.WriteFile(filepath.Join(data, fmt.Sprintf("db-%02d.sqlite", i)), db, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := d.sqliteStep().Apply(ctx, io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	d.found = &restic.Snapshot{ID: d.snapshot, ShortID: short(d.snapshot), Time: time.Now().Add(-time.Hour)}
+	d.started = time.Now()
+	if err := d.cleanupStep().Apply(ctx, io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	run, err := d.dr.Store.LastBackupRun(ctx, d.app, state.BackupRunDrill)
+	want := "64 SQLite databases intact (db-00.sqlite in volume data, db-01.sqlite in volume data, db-02.sqlite in volume data and 61 more); 2 more past the first 64 not checked"
+	if err != nil || run == nil || !run.OK || !strings.Contains(run.Detail, want) {
+		t.Fatalf("the drill's record doesn't say %q: %+v, %v", want, run, err)
+	}
+}
+
+// An index sorted by a collation the app defines can't be checked by any
+// other program. The drill says it couldn't check that database rather
+// than failing a backup that may be sound.
+func TestADrillSaysWhichDatabasesOnlyTheirAppCanCheck(t *testing.T) {
+	ctx := context.Background()
+	d, fake := drillFixture(t, "data")
+	if err := d.run.begin(ctx); err != nil {
+		t.Fatal(err)
+	}
+	fake.AddVolume(d.names.volumes["data"], nil)
+	data := fake.VolumeDir(d.names.volumes["data"])
+	sqliteDatabase(t, filepath.Join(data, "app.db"))
+	sorted := filepath.Join(data, "sorted.db")
+	sqliteDatabase(t, sorted)
+	db, err := sql.Open("sqlite", sorted)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = db.Exec(`PRAGMA writable_schema = ON; UPDATE sqlite_schema SET sql = 'CREATE INDEX notes_body ON notes (body COLLATE reverse)' WHERE name = 'notes_body'`)
+	db.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := d.sqliteStep().Apply(ctx, io.Discard); err != nil {
+		t.Fatalf("a database only its app can check failed the drill: %v", err)
+	}
+	want := "1 SQLite database intact (app.db in volume data); not checked: sorted.db in volume data, which sorts by its app's collation reverse"
+	if !slices.Contains(d.details, want) {
+		t.Fatalf("the drill's details %q don't say %q", d.details, want)
 	}
 }

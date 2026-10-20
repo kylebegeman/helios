@@ -314,7 +314,7 @@ func (x *releaseRehearsal) run(ctx context.Context, out io.Writer) (result error
 	candidateJSON, _ := json.Marshal(x.candidate)
 	rev := &state.Revision{App: x.candidate.App, ID: x.input.Revision, Manifest: candidateJSON, SecretsVersion: version, Images: x.proof.Images}
 	d := &drillState{dr: Drill{Store: x.def.Store, Secrets: scratchSecrets, StateDir: x.def.StateDir}, app: x.candidate.App, snapshot: x.input.Snapshot, rev: rev, m: *x.candidate,
-		run: &backupRun{store: x.def.Store, app: x.candidate.App, kind: "rehearse"}, names: x.names}
+		run: &backupRun{store: x.def.Store, app: x.candidate.App, kind: "rehearse"}, names: x.names, advice: "free space and rehearse again"}
 	rehearsalRun = d.run
 	// Only long-running workloads belong to the startup step. Release containers
 	// are tracked separately so cleanup can remove interrupted release jobs too.

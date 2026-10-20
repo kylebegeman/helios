@@ -535,34 +535,42 @@ func (r Runner) Restore(ctx context.Context, snapshot, host string, mounts []str
 // whole tree but reads none of its file contents.
 const StatsTimeout = 30 * time.Minute
 
-// RestoreSize is how many bytes restoring a snapshot writes, as restic
-// counts them from the snapshot's tree.
-func (r Runner) RestoreSize(ctx context.Context, snapshot, host string) (int64, error) {
+// Size is what restoring a snapshot writes: its files' bytes, and how
+// many files hold them.
+type Size struct {
+	Bytes, Files int64
+}
+
+// RestoreSize is what restoring a snapshot writes, as restic counts it
+// from the snapshot's tree.
+func (r Runner) RestoreSize(ctx context.Context, snapshot, host string) (Size, error) {
 	args := []string{"stats", snapshot, "--mode", "restore-size", "--json"}
 	if snapshot == "latest" {
 		args = append(args, "--host", host, "--tag", Tag)
 	}
 	lines, err := r.bounded(ctx, StatsTimeout, nil, args...)
 	if err != nil {
-		return 0, err
+		return Size{}, err
 	}
 	return restoreSize(lines)
 }
 
 // restoreSize reads what restic stats --mode restore-size --json printed.
-func restoreSize(lines []string) (int64, error) {
+// restic leaves out a file count of zero.
+func restoreSize(lines []string) (Size, error) {
 	for i := len(lines) - 1; i >= 0; i-- {
 		var s struct {
 			TotalSize *int64 `json:"total_size"`
+			Files     int64  `json:"total_file_count"`
 		}
 		if json.Unmarshal([]byte(lines[i]), &s) == nil && s.TotalSize != nil {
-			if *s.TotalSize < 0 {
-				return 0, fmt.Errorf("restic stats: a restore size of %d bytes", *s.TotalSize)
+			if *s.TotalSize < 0 || s.Files < 0 {
+				return Size{}, fmt.Errorf("restic stats: a restore size of %d bytes in %d files", *s.TotalSize, s.Files)
 			}
-			return *s.TotalSize, nil
+			return Size{Bytes: *s.TotalSize, Files: s.Files}, nil
 		}
 	}
-	return 0, errors.New("restic stats: no restore size in the output")
+	return Size{}, errors.New("restic stats: no restore size in the output")
 }
 
 // VolumeMount mounts a volume where a named volume lives in the tree.

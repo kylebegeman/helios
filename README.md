@@ -496,17 +496,24 @@ then fail its first save.
 
 Before it restores anything, a drill checks that the snapshot fits with 5 GB
 to spare, the floor `helios watch` warns at, on every disk it writes to: its
-working directory and each scratch volume. The size is what the snapshot's
-backup read, or restic's own count when the snapshot doesn't record it. A drill
-that won't fit removes what it made and fails with both sizes in its record,
-and the next drill waits for its scheduled time. The check counts the
-snapshot's files, so a PostgreSQL database loaded from its dump takes more room
-than that, which the reserve only partly covers. `helios restore`, a move's
-restore and a release rollback refuse only a snapshot that can't fit at all,
-and say how much the disk keeps free. After restoring, a drill runs SQLite's
-integrity check on every SQLite database in the restored volumes, up to 64. A
-database that is corrupt or won't open fails the drill by its path in its
-volume, and the drill's record lists the sound ones.
+working directory, each scratch volume and the scratch database's volume. The
+size is what the snapshot's backup read, or restic's own count when the
+snapshot doesn't record it, plus a 4 KB block for each file, so a volume of many
+small files can't fill a disk its bytes alone would fit. A drill whose restore
+can't be counted or won't fit removes what it made and fails with the reason in
+its record, and the next drill waits for its scheduled time. A PostgreSQL
+database loaded from its dump takes more room than its snapshot, which the
+reserve only partly covers. `helios rehearse`, `helios move test` and the copy
+of each app's data in `helios backup helios` keep the same reserve.
+`helios restore`, a move's restore and a release rollback refuse only a
+snapshot that can't fit at all, say how much the disk keeps free, and go ahead
+without a check when restic can't count the snapshot.
+
+After restoring, a drill runs SQLite's integrity check on every SQLite database
+in the restored volumes, up to 64. A database that is corrupt or won't open
+fails the drill by its path in its volume, and the drill's record lists the
+sound ones. A database whose indexes sort by a collation its own app defines
+can't be checked without that app, so the record names it as not checked.
 
 A workload that can't write its own volume is the same problem on the live app.
 The daemon raises it as an alert, and `helios doctor` names the files and the
