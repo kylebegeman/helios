@@ -419,15 +419,19 @@ func journalctl(ctx context.Context, args []string) (io.ReadCloser, func() error
 	return out, wait, nil
 }
 
-// boundedBuffer keeps the first max bytes written to it.
+// boundedBuffer keeps the first max bytes written to it. It has no
+// ReadFrom, so the copy exec makes from journalctl's stderr comes through
+// Write.
 type boundedBuffer struct {
-	bytes.Buffer
+	buf bytes.Buffer
 	max int
 }
 
 func (b *boundedBuffer) Write(p []byte) (int, error) {
-	if room := b.max - b.Len(); room > 0 {
-		b.Buffer.Write(p[:min(len(p), room)])
+	if room := b.max - b.buf.Len(); room > 0 {
+		b.buf.Write(p[:min(len(p), room)])
 	}
 	return len(p), nil
 }
+
+func (b *boundedBuffer) String() string { return b.buf.String() }

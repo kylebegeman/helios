@@ -277,6 +277,14 @@ func TestAJournalThatCantBeReadSaysWhatToDo(t *testing.T) {
 	}
 }
 
+func TestJournalctlKeepsNoMoreThan64KiBOfWhatItSaysOnStderr(t *testing.T) {
+	fakeJournalctl(t, "s=x; for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17; do s=$s$s; done\nprintf %s \"$s\" >&2\nexit 1\n")
+	_, err := Journal{}.Read(context.Background(), JournalQuery{Names: []string{"bedrock-hello-web-r1"}})
+	if err == nil || len(err.Error()) > len("journalctl: ")+64<<10 {
+		t.Fatalf("an error of %d bytes", len(fmt.Sprint(err)))
+	}
+}
+
 // Following the journal ends when the person watching stops it, and that
 // is not a failure.
 func TestFollowingTheJournalEndsQuietlyWhenStopped(t *testing.T) {
