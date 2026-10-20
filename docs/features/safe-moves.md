@@ -56,17 +56,21 @@ presenting the certificate minted on the source. `helios edge origin-pull
 list --json` shows each CA's PEM as `ca_pem`:
 
 ```sh
-# On the source, save the host's CA.
+# On the source, save the host's CA that runs out last.
 helios edge origin-pull list --json \
-  | jq -r '.[] | select(.host == "shop.example.com") | .cas[0].ca_pem' > ca.pem
+  | jq -r '.[] | select(.host == "shop.example.com") | .cas[-1].ca_pem' > ca.pem
 
 # Copy ca.pem to the target and trust it there.
 helios edge origin-pull trust shop.example.com ca.pem
 ```
 
-A host in the middle of a rotation trusts two CAs; trust the one whose
-certificate Cloudflare presents (`.cas[1]` is the second). Trust takes the
-CA, never the certificate uploaded to Cloudflare.
+A host's CAs are listed from the one that runs out first, with its
+`fingerprint` and `not_after`. A CA that ran out stays listed until it is
+forgotten, and `trust` refuses it. A host in the middle of a rotation
+trusts more than one CA that hasn't run out: trust the one whose
+certificate Cloudflare presents, matched by the fingerprint `mint` printed
+for it, or trust each of them. Trust takes the CA, never the certificate
+uploaded to Cloudflare.
 
 `helios move stage` refuses the app until the target trusts a CA for each
 such host, and `helios move cutover` refuses it again if that CA was

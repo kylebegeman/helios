@@ -498,9 +498,11 @@ takes, and the file holds the only copy of the key. Upload it to
 Cloudflare, then delete it. With --target, the certificate is made here and
 only the CA goes to the target.
 
-Mint again to replace a certificate. The old CA stays trusted until it runs
-out or helios edge origin-pull forget drops it, so the host keeps working
-while Cloudflare takes the new one.
+Mint again to replace a certificate. The old CA stays trusted beside the
+new one, so the host keeps working while Cloudflare switches. Once
+Cloudflare presents the new certificate, run helios edge origin-pull forget
+<host> <old fingerprint>: helios can't see which certificate Cloudflare
+presents, so an old CA left to run out raises a critical alert.
 Usage:
   helios edge origin-pull mint <host> [flags]
 

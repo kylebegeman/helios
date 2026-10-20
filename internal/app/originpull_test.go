@@ -638,6 +638,59 @@ func TestTheLastUsableCAOfARequiredHostIsKeptBesideOneThatRanOut(t *testing.T) {
 	}
 }
 
+// helios can't see which certificate Cloudflare presents, so a CA that
+// ran out beside a newer one stays in the trust, where the watch keeps
+// saying so, until forget takes it out. Trusting another CA, for its host
+// or any other, must not quietly drop it; the edge checks against it no
+// more either way.
+func TestACAThatRanOutStaysTrustedUntilItIsForgotten(t *testing.T) {
+	ctx := context.Background()
+	quietEdge(t)
+	now := time.Now()
+	store := goldenStore(t)
+	sec := newSecrets(t)
+	saveRunning(t, store, originPullSite("site"), false)
+	host := "a-required.example.com"
+	old, newer := mintCA(t, host, now.Add(time.Hour-edge.OriginPullLifetime)), mintCA(t, host, now)
+	for _, ca := range []edge.OriginPullCA{old, newer} {
+		if _, err := TrustOriginPull(ctx, store, sec, host, ca.PEM, now); err != nil {
+			t.Fatal(err)
+		}
+	}
+	later := now.Add(2 * time.Hour)
+	other := mintCA(t, "b-optional.example.com", later)
+	if _, err := TrustOriginPull(ctx, store, sec, "b-optional.example.com", other.PEM, later); err != nil {
+		t.Fatal(err)
+	}
+	newest := mintCA(t, host, later)
+	if _, err := TrustOriginPull(ctx, store, sec, host, newest.PEM, later); err != nil {
+		t.Fatal(err)
+	}
+	trust, err := LoadOriginPullTrust(sec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cas := trust[host]; len(cas) != 3 || cas[0].PEM != old.PEM {
+		t.Fatalf("%s trusts %d CAs, and the one that ran out isn't the first: trusting another CA dropped it", host, len(cas))
+	}
+	routes, err := edgeRoutes(ctx, store, sec, later)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, r := range routes {
+		if r.Host == host && !slices.Equal(r.ClientCAs, []string{caDER(t, newer), caDER(t, newest)}) {
+			t.Fatalf("%s%s checks against %d CAs, want the two that haven't run out", r.Host, r.Path, len(r.ClientCAs))
+		}
+	}
+	fingerprint, err := OriginPullFingerprint(old.PEM)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n, err := ForgetOriginPull(ctx, store, sec, host, fingerprint, later); err != nil || n != 1 {
+		t.Fatalf("forget the CA that ran out: %d %v", n, err)
+	}
+}
+
 func TestTrustingAndForgettingOriginPullCAs(t *testing.T) {
 	ctx := context.Background()
 	now := time.Now()

@@ -266,9 +266,11 @@ func OriginPullFingerprint(caPEM string) (string, error) {
 
 // TrustOriginPull has the edge take client certificates the CA in caPEM
 // signs for host, keeping the host's other CAs so a leaf being replaced at
-// Cloudflare keeps working until it is, and forgetting the ones that ran
-// out. It reports false when host already trusted the CA. The edge is
-// reloaded either way.
+// Cloudflare keeps working until it is. A CA leaves the trust only through
+// ForgetOriginPull, even once it runs out: the edge checks against none that
+// did, but the watch has to keep seeing one beside a newer CA, since helios
+// can't tell whether Cloudflare still presents its certificate. It reports
+// false when host already trusted the CA. The edge is reloaded either way.
 func TrustOriginPull(ctx context.Context, store *state.Store, sec *secrets.Store, host, caPEM string, now time.Time) (bool, error) {
 	host = strings.ToLower(host)
 	if !manifest.ValidHost(host) {
@@ -289,7 +291,6 @@ func TrustOriginPull(ctx context.Context, store *state.Store, sec *secrets.Store
 	if err != nil {
 		return false, err
 	}
-	t.Prune(now)
 	added := t.Trust(host, edge.OriginPullCA{PEM: strings.TrimSpace(caPEM) + "\n", NotAfter: cert.NotAfter.UTC()})
 	if err := saveOriginPullTrust(sec, t); err != nil {
 		return false, err

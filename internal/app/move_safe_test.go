@@ -855,3 +855,66 @@ func TestMoveStageCannotRegressCutoverWriterAuthority(t *testing.T) {
 		})
 	}
 }
+
+// The edge holds a host to the strictest origin pull any app here asks of
+// it, so a moved app asking less of a host that another app requires still
+// lands behind a check the target's edge needs a CA for.
+func TestAMoveOntoAHostAnotherAppRequiresWaitsForTheTargetToTrustItsCA(t *testing.T) {
+	for name, mode := range map[string]manifest.OriginPullMode{"optional": manifest.OriginPullOptional, "off": manifest.OriginPullOff} {
+		t.Run(name, func(t *testing.T) {
+			ctx := context.Background()
+			host := "site.example.com"
+			store, m, h, dir := safeMoveFixture(t)
+			w := m.Workloads["web"]
+			w.Routes = []manifest.Route{{Host: host, DNS: manifest.DNSProxied, OriginPull: mode}}
+			m.Workloads["web"] = w
+			writeManifestFile(t, dir, m)
+			h.ManifestDigest = manifestDigest(m)
+			api := &manifest.Manifest{App: "api", Workloads: map[string]manifest.Workload{"web": {Kind: manifest.Web, Image: "api:1", Port: 8080,
+				Routes: []manifest.Route{{Host: host, Path: "/api", DNS: manifest.DNSProxied, OriginPull: manifest.OriginPullRequired}}}}}
+			if err := api.Validate(); err != nil {
+				t.Fatal(err)
+			}
+			saveActive(t, store, api)
+			sec := newSecrets(t)
+			if _, _, err := integration.Set(sec, integration.CloudflareName, map[string]string{"token": "token"}); err != nil {
+				t.Fatal(err)
+			}
+			revision := MoveTargetRevision(h)
+			stage := MoveStage{Deploy: Deploy{Store: store, Secrets: sec}, Hostname: func() string { return "target" }}
+			staging, _ := json.Marshal(MoveStageInput{Source: dir, Revision: revision, Handoff: h})
+			_, err := stage.Plan(ctx, staging)
+			for _, want := range []string{"api requires origin pull on site.example.com", "helios edge origin-pull trust <host>", "then stage again"} {
+				if err == nil || !strings.Contains(err.Error(), want) {
+					t.Fatalf("a move was staged onto a host api requires and the edge would refuse: %v", err)
+				}
+			}
+
+			data, _ := json.Marshal(m)
+			if err := store.SaveRevision(ctx, state.Revision{App: m.App, ID: revision, Status: revisionStaged, Manifest: data, CreatedAt: time.Now()}); err != nil {
+				t.Fatal(err)
+			}
+			if err := saveMigration(store.Path(), &migrationRecord{Handoff: h, Role: "target", Phase: "staged", TargetRevision: revision}); err != nil {
+				t.Fatal(err)
+			}
+			c := MoveCutover{Deploy: Deploy{Store: store, Secrets: sec}}
+			cutover, _ := json.Marshal(MoveCutoverInput{App: m.App, Migration: h.Migration, Revision: revision})
+			_, err = c.Plan(ctx, cutover)
+			for _, want := range []string{"api requires origin pull on site.example.com", "helios edge origin-pull trust <host>", "then cut over again"} {
+				if err == nil || !strings.Contains(err.Error(), want) {
+					t.Fatalf("a move was cut over onto a host api requires and the edge would refuse: %v", err)
+				}
+			}
+
+			if _, err := TrustOriginPull(ctx, store, sec, host, mintCA(t, host, time.Now()).PEM, time.Now()); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := stage.Plan(ctx, staging); err != nil {
+				t.Fatalf("a target trusting the CA was refused staging: %v", err)
+			}
+			if _, err := c.Plan(ctx, cutover); err != nil {
+				t.Fatalf("a target trusting the CA was refused cutover: %v", err)
+			}
+		})
+	}
+}

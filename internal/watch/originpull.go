@@ -24,19 +24,21 @@ func originPullKey(host string) string { return "edge:origin-pull:" + host }
 // with it, the one Cloudflare presents, along.
 //
 // Every CA a host trusts counts until it is forgotten, not only the
-// newest. helios can't see which leaf Cloudflare presents, and minting a
-// new CA changes nothing there until its certificate is uploaded, so an
-// old CA nearing its end warns even beside a newer one. One that runs out
-// while a newer one is trusted beside it is critical in either mode: the
-// edge then checks against the newer CA alone and refuses the old leaf,
-// which Cloudflare keeps presenting, expired, until the new one replaces
-// it.
+// newest, and only forget takes one out of the trust. helios can't see
+// which leaf Cloudflare presents, and minting a new CA changes nothing
+// there until its certificate is uploaded, so an old CA nearing its end
+// warns even beside a newer one. One that runs out while a newer one is
+// trusted beside it is critical in either mode: the edge then checks
+// against the newer CA alone and refuses the old leaf, which Cloudflare
+// keeps presenting, expired, until the new one replaces it. Forgetting
+// the old CA once Cloudflare presents the new leaf clears either.
 //
 // A host that trusts a CA but that no app sets origin_pull for says
-// nothing, however near its CA's end. The edge asks it for no
-// certificate, so nothing changes when the CA runs out, and a warning
-// would repeat daily about nothing; deploying it with origin_pull:
-// required again is refused until it has a CA that hasn't run out.
+// nothing, however near its CA's end, and even with one that ran out
+// beside a newer one, as when its app was removed or a CA was trusted
+// ahead of the switch. The edge asks it for no certificate, so nothing
+// is refused, and an alert would repeat about nothing; deploying it with
+// origin_pull again brings back whatever its CAs then call for.
 //
 // A machine where no app sets origin_pull reads nothing but its active
 // revisions.
@@ -101,10 +103,12 @@ func (p *Prober) originPull(ctx context.Context) []Condition {
 			c.Severity = state.SeverityCritical
 			c.Message = fmt.Sprintf("the edge refuses every connection to %s: it requires origin pull and none of the CAs it trusts for it is usable; %s", host, mint)
 		case !ranOut.IsZero():
-			// The daemon reloads the edge when a CA runs out, so it no
-			// longer asks for a certificate it can't check.
+			// The daemon reloads the edge when a CA runs out, retrying
+			// until it answers, and the edge then asks for no certificate
+			// it can't check. Until then it still checks against the CA,
+			// and refuses the expired leaf.
 			c.Severity = state.SeverityWarning
-			c.Message = fmt.Sprintf("the last origin-pull CA %s trusts ran out on %s, and the certificate Cloudflare presents with it, so the edge checks no certificate for it; %s", host, ranOut.UTC().Format(time.DateOnly), mint)
+			c.Message = fmt.Sprintf("the last origin-pull CA %s trusts ran out on %s, with the certificate Cloudflare presents; once the daemon has reloaded the edge, as it does when a CA runs out, the edge checks no certificate for %s, and until then it refuses the expired one Cloudflare presents; %s", host, ranOut.UTC().Format(time.DateOnly), host, mint)
 		case len(cas) > 0:
 			c.Severity = state.SeverityWarning
 			c.Message = fmt.Sprintf("none of the origin-pull CAs %s trusts is usable, so the edge checks no certificate for it; %s", host, mint)
@@ -124,14 +128,17 @@ func (p *Prober) originPull(ctx context.Context) []Condition {
 // OriginPullWarn. found is false when neither is so.
 func originPullRotation(host string, usable, lapsed []originPullCA, now time.Time, mint string) (c Condition, found bool) {
 	c = Condition{Key: originPullKey(host), Subject: host, Severity: state.SeverityWarning}
-	clears := func(ca originPullCA) string {
-		return fmt.Sprintf("upload the newer certificate at Cloudflare if it isn't there, and this clears once Cloudflare presents it and helios edge origin-pull forget %s %s drops the old CA", host, ca.fingerprint)
+	// Both cases are said plainly, since helios can't tell them apart:
+	// Cloudflare still presents the old certificate, or already presents
+	// a newer one and the old CA only waits to be forgotten.
+	replace := func(ca originPullCA) string {
+		return fmt.Sprintf("so upload the certificate minted with a newer CA at Cloudflare; once Cloudflare presents it, helios edge origin-pull forget %s %s clears this", host, ca.fingerprint)
 	}
 	var says []string
 	for _, ca := range lapsed {
 		c.Severity = state.SeverityCritical
-		says = append(says, fmt.Sprintf("the origin-pull CA %s that %s trusts ran out on %s, and while Cloudflare still presents the certificate minted with it, the edge refuses every connection Cloudflare makes to %s: %s",
-			ca.fingerprint, host, ca.notAfter.UTC().Format(time.DateOnly), host, clears(ca)))
+		says = append(says, fmt.Sprintf("%s's CA %s ran out on %s: if Cloudflare still presents its certificate, the edge refuses every connection Cloudflare makes to %s, %s",
+			host, ca.fingerprint, ca.notAfter.UTC().Format(time.DateOnly), host, replace(ca)))
 	}
 	for i, ca := range usable {
 		if ca.notAfter.Sub(now) >= OriginPullWarn {
@@ -142,8 +149,8 @@ func originPullRotation(host string, usable, lapsed []originPullCA, now time.Tim
 				host, ca.notAfter.UTC().Format(time.DateOnly), ago(now, ca.notAfter), mint))
 			continue
 		}
-		says = append(says, fmt.Sprintf("the origin-pull CA %s that %s trusts runs out on %s, in %s, and if Cloudflare still presents the certificate minted with it then, the edge refuses every connection Cloudflare makes to %s: %s",
-			ca.fingerprint, host, ca.notAfter.UTC().Format(time.DateOnly), ago(now, ca.notAfter), host, clears(ca)))
+		says = append(says, fmt.Sprintf("%s's CA %s runs out on %s, in %s: if Cloudflare still presents its certificate then, the edge refuses every connection Cloudflare makes to %s, %s",
+			host, ca.fingerprint, ca.notAfter.UTC().Format(time.DateOnly), ago(now, ca.notAfter), host, replace(ca)))
 	}
 	if len(says) == 0 {
 		return Condition{}, false

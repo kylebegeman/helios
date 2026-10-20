@@ -567,11 +567,13 @@ What to know before turning it on:
 To rotate, mint again into a new file, upload that certificate at
 Cloudflare, associate the hostname with it, and delete the old certificate
 there. Rotating always means minting again: nothing renews a certificate,
-and the CA that signed the old one can sign nothing more. The edge keeps
-trusting the old CA beside the new one until it runs out or you forget it,
-so the host keeps working while Cloudflare switches. helios can't see which
-certificate Cloudflare presents, so the old CA keeps a warning open until
-you forget it, and becomes a critical alert if it runs out first:
+and the CA that signed the old one can sign nothing more. helios keeps
+trusting the old CA beside the new one until you forget it, so the host
+keeps working while Cloudflare switches. helios can't see which certificate
+Cloudflare presents, so forget the old CA once Cloudflare presents the new
+certificate; `mint` prints the command when the host trusts an older CA.
+An old CA left to run out becomes a critical alert, and only `forget`
+clears it, since trusting or minting another CA never drops one:
 
 ```sh
 helios edge origin-pull mint shop.example.com --out shop.example.com-2.pem
@@ -585,15 +587,21 @@ leave a host that requires origin pull with none, since the edge would then
 refuse every connection to it; deploy the host with `origin_pull: optional`
 or without `origin_pull` first.
 
-The daemon warns 30 days before each CA a host trusts runs out, and keeps
-warning about an old CA until you forget it, so drop it once Cloudflare
+The daemon warns 30 days before each CA a host trusts runs out. For an old
+CA beside a newer one, the warning says to forget it once Cloudflare
 presents the new certificate. A CA that runs out while the host still
 trusts it beside a newer one is a critical alert in either mode, since the
-edge then refuses the certificate Cloudflare still presents with it. A host
-that requires origin pull with no usable CA left is a critical alert too.
+edge then refuses the certificate Cloudflare may still present with it; it
+stays open until you forget that CA. A host that requires origin pull with
+no usable CA left is a critical alert too. A host that no app sets
+`origin_pull` for raises no alert, whatever its CAs, since the edge asks
+it for no certificate.
+
 When a CA runs out, the daemon reloads the edge, so an optional host whose
-last CA ran out then checks no certificate rather than refusing the
-expired one. `helios upgrade` refuses a build without origin-pull support
+last CA ran out then checks no certificate; until that reload, the edge
+refuses the expired one. An edge that isn't answering then, or when the
+daemon starts after a CA ran out, is reloaded within a minute of
+answering. `helios upgrade` refuses a build without origin-pull support
 while any host sets `origin_pull`, since that build's edge would stop
 checking the certificate. Moving an app that requires it needs the CA on
 the other machine first; see [safe moves](docs/features/safe-moves.md).

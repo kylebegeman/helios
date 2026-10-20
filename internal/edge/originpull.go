@@ -93,28 +93,6 @@ func (t OriginPullTrust) Trust(host string, ca OriginPullCA) bool {
 	return true
 }
 
-// Prune forgets every CA that ran out before now, and a host left with
-// none. It returns how many it forgot.
-func (t OriginPullTrust) Prune(now time.Time) int {
-	n := 0
-	for host, cas := range t {
-		kept := cas[:0]
-		for _, ca := range cas {
-			if ca.NotAfter.After(now) {
-				kept = append(kept, ca)
-			} else {
-				n++
-			}
-		}
-		if len(kept) == 0 {
-			delete(t, host)
-		} else {
-			t[host] = kept
-		}
-	}
-	return n
-}
-
 // ClientCAs are host's CAs as the edge takes them, base64 DER, leaving out
 // any that ran out or that isn't a CA's certificate. None means the host
 // has nothing to check a client against.

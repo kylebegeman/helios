@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -120,6 +121,9 @@ func TestMintWritesTheCertificateAndKeyOnceAndTrustsOnlyTheCA(t *testing.T) {
 		}
 	}
 	keyNotShown(t, keyPEM, out, errOut)
+	if strings.Contains(out, "origin-pull forget") {
+		t.Fatalf("a host that trusted no other CA has none to forget:\n%s", out)
+	}
 	raw, _, err := secrets.DefaultStore(stateDir).LoadCurrent(integration.App)
 	if err != nil {
 		t.Fatal(err)
@@ -142,13 +146,40 @@ func TestMintWritesTheCertificateAndKeyOnceAndTrustsOnlyTheCA(t *testing.T) {
 	}
 
 	// Minting again keeps the old CA, so the certificate Cloudflare has
-	// keeps working until the new one replaces it.
+	// keeps working until the new one replaces it, and says to forget the
+	// old CA once it has: helios can't see the switch, and the old CA
+	// raises a critical alert if it runs out still trusted.
 	next := filepath.Join(t.TempDir(), "shop-next.pem")
-	if _, errOut, code := run(t, stateDir, "edge", "origin-pull", "mint", "shop.example.com", "--out", next); code != 0 {
+	out, errOut, code = run(t, stateDir, "edge", "origin-pull", "mint", "shop.example.com", "--out", next)
+	if code != 0 {
 		t.Fatalf("code %d, err %q", code, errOut)
 	}
 	if n := len(trusted(t, stateDir, "shop.example.com")); n != 2 {
 		t.Fatalf("trusted %d CAs after a second mint, want 2", n)
+	}
+	forget := "helios --state-dir " + shellArgument(stateDir) + " edge origin-pull forget shop.example.com "
+	for _, want := range []string{"5. Once Cloudflare presents the new certificate, forget the older CA; left to run out, it raises a critical alert:", forget + fingerprint + "\n"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("the output lacks %q:\n%s", want, out)
+		}
+	}
+	if strings.Count(out, "origin-pull forget") != 1 {
+		t.Fatalf("only the older CA is to be forgotten, not the new one:\n%s", out)
+	}
+	cas = trusted(t, stateDir, "shop.example.com")
+	third := filepath.Join(t.TempDir(), "shop-third.pem")
+	out, errOut, code = run(t, stateDir, "edge", "origin-pull", "mint", "shop.example.com", "--out", third)
+	if code != 0 {
+		t.Fatalf("code %d, err %q", code, errOut)
+	}
+	if !strings.Contains(out, "forget the older CAs; left to run out, each raises a critical alert:") {
+		t.Fatalf("the output doesn't say to forget both older CAs:\n%s", out)
+	}
+	for _, ca := range cas {
+		fp, _ := apps.OriginPullFingerprint(ca.PEM)
+		if !strings.Contains(out, forget+fp+"\n") {
+			t.Fatalf("the output doesn't say to forget %s:\n%s", fp, out)
+		}
 	}
 	_, errOut, code = run(t, stateDir, "edge", "origin-pull", "mint", "shop.example.com")
 	if code != 1 || !strings.Contains(errOut, "give --out") {
@@ -352,7 +383,9 @@ func originPullTarget(t *testing.T, capabilities ...string) (config, record, std
 case "$*" in
  *capabilities*) printf '%s\n' '{"api_version":1,"manifest_version":1,"state_version":1,"machine_id":"fixture-machine","capabilities":` + string(caps) + `}'; exit 0 ;;
  *"origin-pull list"*)
-  if [ -n "$BEDROCK_TEST_REMOTE_KEPT" ]; then
+  if [ -n "$BEDROCK_TEST_REMOTE_LIST" ]; then
+   cat "$BEDROCK_TEST_REMOTE_LIST"
+  elif [ -n "$BEDROCK_TEST_REMOTE_KEPT" ]; then
    awk 'BEGIN { printf "[{\"host\":\"shop.example.com\",\"cas\":[{\"ca_pem\":\"" } { printf "%s\\n", $0 } END { print "\"}]}]" }' "$BEDROCK_TEST_REMOTE_STDIN"
   else
    echo '[]'
@@ -480,6 +513,88 @@ func TestAMintForATargetWhoseTrustFailedKeepsTheFileUnlessTheCAWasntKept(t *test
 	verifiesAgainst(t, leaf, string(sent))
 }
 
+// The target trusted the new CA, but the file couldn't be written: the
+// error names the CA and the forget command for that very target, since
+// nobody holds a key for it. The file is opened before the trust, so only
+// a write can fail once the target has answered, and a file-size limit
+// makes it fail at the key.
+func TestAMintForATargetWhoseFileCantBeWrittenSaysHowToForgetTheCAThere(t *testing.T) {
+	config, _, stdin := originPullTarget(t, "edge.origin-pull.v1")
+	path := filepath.Join(t.TempDir(), "shop.pem")
+	var limit syscall.Rlimit
+	if err := syscall.Getrlimit(syscall.RLIMIT_FSIZE, &limit); err != nil {
+		t.Fatal(err)
+	}
+	// The CA sent to the target fits, and so does the certificate, but
+	// not the key after it. The limit is the whole process's, which is
+	// safe while this test, which can't be parallel, runs.
+	const fits = 2048
+	if limit.Cur < fits {
+		t.Skipf("files are already limited to %d bytes", limit.Cur)
+	}
+	restore := func() {
+		if err := syscall.Setrlimit(syscall.RLIMIT_FSIZE, &limit); err != nil {
+			t.Errorf("the file-size limit wasn't restored: %v", err)
+		}
+	}
+	t.Cleanup(restore)
+	small := limit
+	small.Cur = fits
+	if err := syscall.Setrlimit(syscall.RLIMIT_FSIZE, &small); err != nil {
+		t.Fatal(err)
+	}
+	out, stderr, code := targetRun(t, config, "edge", "origin-pull", "mint", "shop.example.com", "--out", path)
+	restore()
+
+	sent, _ := os.ReadFile(stdin)
+	fp, err := apps.OriginPullFingerprint(string(sent))
+	if err != nil {
+		t.Fatalf("the target wasn't sent the CA: %v", err)
+	}
+	forget := "helios --target one --targets-file " + shellArgument(config) + " edge origin-pull forget shop.example.com " + fp
+	for _, want := range []string{"shop.example.com trusts the new CA " + fp + ", but " + path + " couldn't be written", "forget the CA with " + forget + " and mint again"} {
+		if code != 1 || !strings.Contains(stderr, want) {
+			t.Fatalf("code %d, err lacks %q:\n%s", code, want, stderr)
+		}
+	}
+	if strings.Contains(out, "Next:") {
+		t.Fatalf("a mint that wrote no file says what to do with it:\n%s", out)
+	}
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatalf("the partly written file was left: %v", err)
+	}
+}
+
+// Minting for a target that trusts an older CA for the host says to forget
+// it there once Cloudflare presents the new certificate, and a target that
+// can't say what it trusts gets the step hedged.
+func TestAMintForATargetSaysToForgetTheOlderCAThere(t *testing.T) {
+	config, _, _ := originPullTarget(t, "edge.origin-pull.v1")
+	older, err := edge.MintOriginPull("shop.example.com", time.Now().Add(-time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	olderPrint, _ := apps.OriginPullFingerprint(older.CA.PEM)
+	listed, _ := json.Marshal([]apps.OriginPullHost{{Host: "shop.example.com", CAs: []apps.OriginPullTrustedCA{{Fingerprint: olderPrint, NotAfter: older.CA.NotAfter, PEM: older.CA.PEM}}}})
+	list := filepath.Join(t.TempDir(), "list.json")
+	if err := os.WriteFile(list, listed, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("BEDROCK_TEST_REMOTE_LIST", list)
+	helios := "helios --target one --targets-file " + shellArgument(config) + " edge origin-pull "
+	out, stderr, code := targetRun(t, config, "edge", "origin-pull", "mint", "shop.example.com", "--out", filepath.Join(t.TempDir(), "shop.pem"))
+	if code != 0 || !strings.Contains(out, "forget the older CA; left to run out, it raises a critical alert:\n       "+helios+"forget shop.example.com "+olderPrint+"\n") {
+		t.Fatalf("code %d, err %q, out lacks the forget step:\n%s", code, stderr, out)
+	}
+
+	t.Setenv("BEDROCK_TEST_REMOTE_LIST", "")
+	t.Setenv("BEDROCK_TEST_REMOTE_LIST_EXIT", "1")
+	out, stderr, code = targetRun(t, config, "edge", "origin-pull", "mint", "shop.example.com", "--out", filepath.Join(t.TempDir(), "shop-2.pem"))
+	if code != 0 || !strings.Contains(out, "If shop.example.com trusts an older CA, as "+helios+"list shows, forget it with "+helios+"forget shop.example.com <old fingerprint> once Cloudflare presents the new certificate") {
+		t.Fatalf("code %d, err %q, out lacks the hedged forget step:\n%s", code, stderr, out)
+	}
+}
+
 func TestAMintWhoseEdgeDidntReloadStillWritesTheFile(t *testing.T) {
 	// The edge's admin socket is the machine's own, so a reload can't be
 	// made to fail here; this is what the local trust step reports when
@@ -488,9 +603,9 @@ func TestAMintWhoseEdgeDidntReloadStillWritesTheFile(t *testing.T) {
 	a := &app{stdout: &stdout, stderr: &stderr, stateDir: t.TempDir()}
 	path := filepath.Join(t.TempDir(), "shop.pem")
 	var sent string
-	err := a.mintOriginPull("shop.example.com", path, func(caPEM string) (originPullKept, error) {
+	err := a.mintOriginPull("shop.example.com", path, func(caPEM string) (originPullKept, edge.OriginPullTrust, error) {
 		sent = caPEM
-		return caKept, errors.New("edge rejected the configuration: 400 Bad Request")
+		return caKept, edge.OriginPullTrust{"shop.example.com": {{PEM: caPEM}}}, errors.New("edge rejected the configuration: 400 Bad Request")
 	})
 	if err == nil || !strings.Contains(err.Error(), "shop.example.com trusts the new CA, but the edge didn't reload: edge rejected the configuration") {
 		t.Fatalf("err %v", err)

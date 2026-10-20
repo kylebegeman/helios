@@ -64,9 +64,22 @@ applied; missing non-storage integrations and operational keys are
 recovered while target storage and already configured target values remain
 authoritative. The CAs the edge trusts for origin pull are merged host by
 host: the target keeps every CA it already trusts and gains each one the
-source trusts that it lacks, leaving behind any that ran out. If either
-machine's origin-pull trust doesn't parse, recovery stops before it changes
-the target.
+source trusts that it lacks. A CA that ran out comes too. The edge checks
+against none that did, but one beside a newer CA stays a critical alert
+until you forget it, as it was on the source.
+
+Recovery stops at the profile step if the backup's origin-pull trust
+doesn't parse, or if the target's doesn't while the backup trusts any CA.
+By then it has loaded images, restored data, started private workloads and
+applied the source host profile, but it has recovered no integration or
+operational key. The recovery still reserves the machine, so commands that
+change the target's trust are refused and a retry stops the same way. Stop
+it with `helios recover abandon <recovery-id>`. Abandoning keeps the
+restored volumes and resealed secrets, so recovering again needs a clean
+target. Before recovering, check the target's trust with
+`helios edge origin-pull list`; if it can't read it,
+`helios secret remove bedrock EDGE_ORIGIN_PULL` drops it, with every CA the
+target trusts.
 
 The source state is imported additively. The target operation journal, identity
 and configured integrations stay in place. Original source revisions remain

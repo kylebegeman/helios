@@ -243,7 +243,7 @@ func RecoverMissing(target, source *secrets.Store) ([]string, error) {
 			}
 		}
 	}
-	trust, err := mergeOriginPull(current[OriginPullName], raw[OriginPullName], transferNow())
+	trust, err := mergeOriginPull(current[OriginPullName], raw[OriginPullName])
 	if err != nil {
 		return nil, err
 	}
@@ -269,15 +269,20 @@ func RecoverMissing(target, source *secrets.Store) ([]string, error) {
 // whole, as its hook and deploy keys do, would drop each host only the
 // source trusts, and once DNS points here the edge would refuse every
 // Cloudflare connection to it. Nothing can mint those CAs again, since
-// their keys were forgotten at mint. A source CA that ran out stays
-// behind, as Prune forgets one; the target keeps all of its own.
-func mergeOriginPull(target, source string, now time.Time) (string, error) {
+// their keys were forgotten at mint. A source CA that ran out comes too:
+// the edge checks against none that did, but the watch has to keep seeing
+// one beside a newer CA until the operator forgets it, since Cloudflare
+// may still present its certificate. The target keeps all of its own.
+func mergeOriginPull(target, source string) (string, error) {
 	from, err := edge.ParseOriginPullTrust(source)
 	if err != nil {
 		return "", fmt.Errorf("the source's origin-pull trust can't be recovered: %w", err)
 	}
-	from.Prune(now)
-	if len(from) == 0 {
+	carried := 0
+	for _, cas := range from {
+		carried += len(cas)
+	}
+	if carried == 0 {
 		return "", nil
 	}
 	// Merging needs both values whole: keeping either one as it stands

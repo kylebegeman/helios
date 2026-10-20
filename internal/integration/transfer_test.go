@@ -175,7 +175,9 @@ func TestRecoveryCarriesOriginPullTrustTheTargetLacks(t *testing.T) {
 
 // A host both machines trust keeps the target's CA and gains the
 // source's: the leaf Cloudflare presents may be either one's, and the
-// edge takes a leaf any of the host's CAs signed.
+// edge takes a leaf any of the host's CAs signed. A CA that ran out comes
+// too, since only forget takes one out of the trust: Cloudflare may still
+// present its certificate, and the watch has to keep saying so.
 func TestRecoveryAddsTheSourcesCAsBesideTheTargetsForTheSameHost(t *testing.T) {
 	source, target, _ := transferStores(t)
 	now := time.Now()
@@ -183,8 +185,8 @@ func TestRecoveryAddsTheSourcesCAsBesideTheTargetsForTheSameHost(t *testing.T) {
 	ranOut := mintedCA(t, "shop.example.com", now.Add(-2*edge.OriginPullLifetime))
 	setTrust(t, target, edge.OriginPullTrust{"shop.example.com": {ours}})
 	// The source trusts the target's CA too, spaced as a hand-edited value
-	// might hold it, which is still one certificate. It also trusts CAs
-	// that ran out, for this host and for one it no longer serves.
+	// might hold it, which is still one certificate. It also trusts a CA
+	// that ran out, for this host and for one no app routes any more.
 	respaced := edge.OriginPullCA{PEM: "\n" + strings.TrimSpace(ours.PEM) + "\n\n", NotAfter: ours.NotAfter}
 	setTrust(t, source, edge.OriginPullTrust{
 		"shop.example.com": {respaced, theirs, ranOut},
@@ -194,7 +196,7 @@ func TestRecoveryAddsTheSourcesCAsBesideTheTargetsForTheSameHost(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := loadTrust(t, target)
-	if len(got) != 1 || !trustsOnly(got["shop.example.com"], ours, theirs) {
+	if len(got) != 2 || !trustsOnly(got["shop.example.com"], ranOut, ours, theirs) || !trustsOnly(got["old.example.com"], ranOut) {
 		t.Fatalf("CAs by host: %v", caCounts(got))
 	}
 }
@@ -221,7 +223,12 @@ func TestRecoveryStopsOnOriginPullTrustThatDoesntParse(t *testing.T) {
 	if raw, after, _ := target.LoadCurrent(App); after != before || raw[OriginPullName] != "[" {
 		t.Fatalf("a target trust that doesn't parse was changed: %q, version %d to %d", raw[OriginPullName], before, after)
 	}
-	// With no CA to add, the target's value is no reason to stop.
+	// With no CA to add, the target's value is no reason to stop, whether
+	// the source trusts nothing or only lists a host with no CA.
+	setTrust(t, source, edge.OriginPullTrust{"shop.example.com": {}})
+	if _, err := RecoverMissing(target, source); err != nil {
+		t.Fatalf("a source host with no CA stopped recovery: %v", err)
+	}
 	source.SetAll(App, map[string]*string{OriginPullName: nil})
 	if _, err := RecoverMissing(target, source); err != nil {
 		t.Fatal(err)

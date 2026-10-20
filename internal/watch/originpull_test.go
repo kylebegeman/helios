@@ -11,6 +11,7 @@ import (
 	"encoding/pem"
 	"errors"
 	"math/big"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -19,6 +20,7 @@ import (
 	"github.com/kylebegeman/helios/internal/docker"
 	"github.com/kylebegeman/helios/internal/edge"
 	"github.com/kylebegeman/helios/internal/manifest"
+	"github.com/kylebegeman/helios/internal/secrets"
 	"github.com/kylebegeman/helios/internal/state"
 )
 
@@ -209,9 +211,10 @@ func TestAnOriginPullCAWarnsThirtyDaysBeforeItRunsOut(t *testing.T) {
 		t.Fatalf("the old CA still warns beside a newer one: %+v", found)
 	}
 	for _, want := range []string{
-		"the origin-pull CA " + oldFingerprint + " that www.example.com trusts runs out on 2026-10-18, in 29 days",
-		"if Cloudflare still presents the certificate minted with it then, the edge refuses every connection Cloudflare makes to www.example.com",
-		"this clears once Cloudflare presents it and helios edge origin-pull forget www.example.com " + oldFingerprint + " drops the old CA",
+		"www.example.com's CA " + oldFingerprint + " runs out on 2026-10-18, in 29 days",
+		"if Cloudflare still presents its certificate then, the edge refuses every connection Cloudflare makes to www.example.com",
+		"upload the certificate minted with a newer CA at Cloudflare",
+		"once Cloudflare presents it, helios edge origin-pull forget www.example.com " + oldFingerprint + " clears this",
 	} {
 		if !strings.Contains(found[1].Message, want) {
 			t.Fatalf("the warning should say %q: %s", want, found[1].Message)
@@ -232,8 +235,8 @@ func TestAnOriginPullCAWarnsThirtyDaysBeforeItRunsOut(t *testing.T) {
 // its certificate, so Cloudflare still presents the old one. When the old
 // CA runs out the host is down in either mode, since the edge checks
 // Cloudflare's certificate against the newer CA alone, and the warning
-// already open says so at once rather than at its next daily repeat.
-// Forgetting the old CA is what clears it.
+// already open says so as soon as the outage holds rather than at its
+// next daily repeat. Forgetting the old CA is what clears it.
 func TestAnOriginPullCAThatRunsOutBesideANewerOneIsAnOutage(t *testing.T) {
 	ctx := context.Background()
 	notifier := &fakeNotifier{}
@@ -280,6 +283,12 @@ func TestAnOriginPullCAThatRunsOutBesideANewerOneIsAnOutage(t *testing.T) {
 	}
 
 	*now = runsOut
+	for range DefaultOpenAfter - 1 {
+		round()
+	}
+	if len(notifier.sent) != 2 {
+		t.Fatalf("the outage is told before it has held: %+v", notifier.sent)
+	}
 	found := round()
 	if len(found) != 2 {
 		t.Fatalf("both hosts are down: %+v", found)
@@ -289,9 +298,10 @@ func TestAnOriginPullCAThatRunsOutBesideANewerOneIsAnOutage(t *testing.T) {
 			t.Fatalf("an old CA that ran out beside a newer one is an outage whatever the mode: %+v", c)
 		}
 		for _, want := range []string{
-			"the origin-pull CA " + fingerprints[c.Subject] + " that " + c.Subject + " trusts ran out on 2026-09-20",
-			"while Cloudflare still presents the certificate minted with it, the edge refuses every connection Cloudflare makes to " + c.Subject,
-			"helios edge origin-pull forget " + c.Subject + " " + fingerprints[c.Subject],
+			c.Subject + "'s CA " + fingerprints[c.Subject] + " ran out on 2026-09-20",
+			"if Cloudflare still presents its certificate, the edge refuses every connection Cloudflare makes to " + c.Subject,
+			"upload the certificate minted with a newer CA at Cloudflare",
+			"once Cloudflare presents it, helios edge origin-pull forget " + c.Subject + " " + fingerprints[c.Subject] + " clears this",
 		} {
 			if !strings.Contains(c.Message, want) {
 				t.Fatalf("the outage should say %q: %s", want, c.Message)
@@ -299,7 +309,7 @@ func TestAnOriginPullCAThatRunsOutBesideANewerOneIsAnOutage(t *testing.T) {
 		}
 	}
 	if len(notifier.sent) != 4 || told("box: www.example.com is down") != 1 || told("box: docs.example.com is down") != 1 {
-		t.Fatalf("a warning that became an outage is told in the round it did: %+v", notifier.sent)
+		t.Fatalf("a warning that became an outage is told as soon as the outage holds: %+v", notifier.sent)
 	}
 	round()
 	if len(notifier.sent) != 4 {
@@ -320,9 +330,9 @@ func TestAnOriginPullCAThatRunsOutBesideANewerOneIsAnOutage(t *testing.T) {
 }
 
 // A required host whose only CA runs out goes from a warning to down, and
-// the person hears that it is down in the round it happens, not at the
-// warning's next daily repeat.
-func TestARequiredOriginPullHostIsToldAtOnceWhenItsWarningBecomesAnOutage(t *testing.T) {
+// the person hears that it is down once the outage has held as long as a
+// new incident must, not at the warning's next daily repeat.
+func TestARequiredOriginPullHostIsToldItIsDownOnceItsOutageHolds(t *testing.T) {
 	ctx := context.Background()
 	notifier := &fakeNotifier{}
 	w, now := newWatcher(t, notifier)
@@ -344,10 +354,71 @@ func TestARequiredOriginPullHostIsToldAtOnceWhenItsWarningBecomesAnOutage(t *tes
 		t.Fatalf("the expiry ahead is told as a warning: %+v", notifier.sent)
 	}
 	*now = runsOut
+	for range DefaultOpenAfter - 1 {
+		round()
+	}
+	if len(notifier.sent) != 1 {
+		t.Fatalf("the outage is told before it has held: %+v", notifier.sent)
+	}
 	round()
 	if len(notifier.sent) != 2 || notifier.sent[1].Subject != "box: www.example.com is down" || notifier.sent[1].Severity != state.SeverityCritical ||
 		!strings.Contains(notifier.sent[1].Body, "the edge refuses every connection to www.example.com") {
-		t.Fatalf("the outage is told in the round the CA ran out: %+v", notifier.sent)
+		t.Fatalf("the outage is told in the round it has held: %+v", notifier.sent)
+	}
+}
+
+// Trusting a CA for another host must not take out a CA that ran out
+// beside a newer one: helios can't see that Cloudflare stopped presenting
+// its certificate, so the outage stays open until forget takes the CA
+// out, rather than closing as recovered while every connection Cloudflare
+// makes is still refused.
+func TestAnOriginPullOutageOutlastsTrustingAnotherCA(t *testing.T) {
+	ctx := context.Background()
+	notifier := &fakeNotifier{}
+	w, now := newWatcher(t, notifier)
+	saveOriginPullApp(t, w.Store, "hello", "www.example.com", manifest.OriginPullRequired, now.Add(-time.Hour))
+	dir := t.TempDir()
+	sec := &secrets.Store{Dir: filepath.Join(dir, "secrets"), KeyPath: filepath.Join(dir, "key")}
+	if _, _, _, err := sec.EnsureKey(); err != nil {
+		t.Fatal(err)
+	}
+	runsOut := now.Add(12 * time.Hour)
+	old := testOriginPullCA(t, now.Add(-365*24*time.Hour), runsOut)
+	for _, ca := range []edge.OriginPullCA{old, testOriginPullCA(t, now.Add(-time.Hour), now.Add(365*24*time.Hour))} {
+		if _, err := app.TrustOriginPull(ctx, w.Store, sec, "www.example.com", ca.PEM, *now); err != nil {
+			t.Fatal(err)
+		}
+	}
+	p := originPullProber(t, w.Store, now, nil)
+	p.OriginPullTrust = func() (edge.OriginPullTrust, error) { return app.LoadOriginPullTrust(sec) }
+	round := func() []Condition {
+		t.Helper()
+		*now = now.Add(time.Minute)
+		found := originPullConditions(p)
+		if err := w.Round(ctx, found); err != nil {
+			t.Fatal(err)
+		}
+		return found
+	}
+
+	*now = runsOut
+	for range DefaultOpenAfter {
+		round()
+	}
+	if len(notifier.sent) != 1 || notifier.sent[0].Subject != "box: www.example.com is down" {
+		t.Fatalf("the old CA that ran out is an outage: %+v", notifier.sent)
+	}
+	other := testOriginPullCA(t, now.Add(-time.Hour), now.Add(365*24*time.Hour))
+	if _, err := app.TrustOriginPull(ctx, w.Store, sec, "api.example.com", other.PEM, *now); err != nil {
+		t.Fatal(err)
+	}
+	for range DefaultResolveAfter + 1 {
+		if found := round(); len(found) != 1 || found[0].Severity != state.SeverityCritical || !strings.Contains(found[0].Message, originPullFingerprint(t, old)) {
+			t.Fatalf("trusting another host's CA cleared the outage: %+v", found)
+		}
+	}
+	if len(notifier.sent) != 1 {
+		t.Fatalf("the outage was told as recovered while Cloudflare may still be refused: %+v", notifier.sent)
 	}
 }
 
@@ -388,7 +459,11 @@ func TestAnOriginPullHostWhoseCAsRanOut(t *testing.T) {
 		t.Fatalf("a required host whose CAs ran out is down: %+v", required)
 	}
 	optional := byHost["docs.example.com"]
-	if optional.Severity != state.SeverityWarning || !strings.Contains(optional.Message, "the last origin-pull CA docs.example.com trusts ran out on 2026-09-17") || !strings.Contains(optional.Message, "helios edge origin-pull mint docs.example.com --out FILE") {
+	// The edge goes on refusing the expired certificate until the daemon
+	// reloads it, so the warning says when it checks none.
+	if optional.Severity != state.SeverityWarning || !strings.Contains(optional.Message, "the last origin-pull CA docs.example.com trusts ran out on 2026-09-17") ||
+		!strings.Contains(optional.Message, "once the daemon has reloaded the edge, as it does when a CA runs out, the edge checks no certificate for docs.example.com, and until then it refuses the expired one Cloudflare presents") ||
+		!strings.Contains(optional.Message, "helios edge origin-pull mint docs.example.com --out FILE") {
 		t.Fatalf("an optional host whose CAs ran out warns: %+v", optional)
 	}
 	unusable := byHost["shop.example.com"]
@@ -426,7 +501,9 @@ func TestUnreadableOriginPullTrust(t *testing.T) {
 
 // Nothing is said where nothing would change: a host that trusts a CA no
 // app asks it to check, however near its end, and an optional host that
-// has no CA yet, whose edge checks nothing.
+// has no CA yet, whose edge checks nothing. That holds even for a CA that
+// ran out beside a newer one, which only forget takes out of the trust:
+// the edge asks such a host for no certificate, so nothing is refused.
 func TestOriginPullStaysQuietWhereTheEdgeChecksNothing(t *testing.T) {
 	w, now := newWatcher(t, &fakeNotifier{})
 	saveOriginPullApp(t, w.Store, "docs", "docs.example.com", manifest.OriginPullOptional, now.Add(-time.Hour))
@@ -435,6 +512,10 @@ func TestOriginPullStaysQuietWhereTheEdgeChecksNothing(t *testing.T) {
 	reader := &trustReader{trust: edge.OriginPullTrust{
 		"old.example.com":    {testOriginPullCA(t, issued, now.Add(5*24*time.Hour))},
 		"unused.example.com": {testOriginPullCA(t, issued, now.Add(-24*time.Hour))},
+		"gone.example.com": {
+			testOriginPullCA(t, issued, now.Add(-24*time.Hour)),
+			testOriginPullCA(t, *now, now.Add(365*24*time.Hour)),
+		},
 	}}
 	p := originPullProber(t, w.Store, now, reader)
 	if found := originPullConditions(p); len(found) != 0 {

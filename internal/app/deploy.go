@@ -572,40 +572,61 @@ func servePort(w manifest.Workload, r *manifest.Route) int {
 // for, when it is up. The daemon does this at start, so a helios that
 // changed how it configures the edge takes effect without a deploy.
 func ReloadEdge(ctx context.Context, store *state.Store, sec *secrets.Store) error {
-	admin := edge.NewAdmin()
+	_, err := LoadEdge(ctx, store, sec)
+	return err
+}
+
+// LoadEdge is ReloadEdge, and also reports whether the edge took the
+// configuration: one whose admin API doesn't answer takes none, and keeps
+// running whatever it last took.
+func LoadEdge(ctx context.Context, store *state.Store, sec *secrets.Store) (bool, error) {
+	return loadEdge(ctx, edge.NewAdmin(), store, sec)
+}
+
+// edgeAdmin is what loading the edge needs of its admin API.
+type edgeAdmin interface {
+	Answers(context.Context) bool
+	Load(context.Context, []byte) error
+}
+
+func loadEdge(ctx context.Context, admin edgeAdmin, store *state.Store, sec *secrets.Store) (bool, error) {
 	if !admin.Answers(ctx) {
-		return nil
+		return false, nil
 	}
 	cfg, err := EdgeConfig(ctx, store, sec)
 	if err != nil {
-		return err
+		return false, err
 	}
-	return admin.Load(ctx, cfg)
+	if err := admin.Load(ctx, cfg); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 // UpgradeEdge replaces an edge an older helios made, keeping its routes,
-// and then gives it the current configuration. A machine without an edge
-// yet is left for host setup.
-func UpgradeEdge(ctx context.Context, store *state.Store, sec *secrets.Store, out io.Writer) error {
+// and then gives it the current configuration, reporting as LoadEdge does
+// whether it took it. A machine without an edge yet is left for host
+// setup.
+func UpgradeEdge(ctx context.Context, store *state.Store, sec *secrets.Store, out io.Writer) (bool, error) {
 	e, err := docker.Connect(ctx)
 	if err != nil {
-		return err
+		return false, err
 	}
 	defer e.Close()
 	info, err := e.Inspect(ctx, edge.Container)
 	if err != nil {
-		return nil
+		return false, nil
 	}
 	if info.Labels[edge.LayoutLabel] != edge.Layout {
 		boot, err := EdgeConfig(ctx, store, sec)
 		if err != nil {
-			return err
+			return false, err
 		}
 		if err := edge.Ensure(ctx, e, boot, out); err != nil {
-			return err
+			return false, err
 		}
 	}
-	return ReloadEdge(ctx, store, sec)
+	return LoadEdge(ctx, store, sec)
 }
 
 // servesAny reports whether any of an app's workloads takes traffic from

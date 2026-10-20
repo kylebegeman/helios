@@ -80,30 +80,34 @@ takes, and the file holds the only copy of the key. Upload it to
 Cloudflare, then delete it. With --target, the certificate is made here and
 only the CA goes to the target.
 
-Mint again to replace a certificate. The old CA stays trusted until it runs
-out or helios edge origin-pull forget drops it, so the host keeps working
-while Cloudflare takes the new one.`,
+Mint again to replace a certificate. The old CA stays trusted beside the
+new one, so the host keeps working while Cloudflare switches. Once
+Cloudflare presents the new certificate, run helios edge origin-pull forget
+<host> <old fingerprint>: helios can't see which certificate Cloudflare
+presents, so an old CA left to run out raises a critical alert.`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return a.mintOriginPull(args[0], out, func(caPEM string) (originPullKept, error) {
+			return a.mintOriginPull(args[0], out, func(caPEM string) (originPullKept, edge.OriginPullTrust, error) {
 				store, err := a.openState()
 				if err != nil {
-					return caNotKept, err
+					return caNotKept, nil, err
 				}
 				defer store.Close()
 				sec := a.secretsStore()
 				if err := a.ensureSecretsKey(sec); err != nil {
-					return caNotKept, err
+					return caNotKept, nil, err
 				}
-				if _, err := apps.TrustOriginPull(cmd.Context(), store, sec, args[0], caPEM, time.Now()); err != nil {
-					// The CA may be kept with only the edge's reload failing,
-					// and then the certificate is still worth having.
-					if t, loadErr := apps.LoadOriginPullTrust(sec); loadErr == nil && trustsCA(t, args[0], caPEM) {
-						return caKept, err
-					}
-					return caNotKept, err
+				_, err = apps.TrustOriginPull(cmd.Context(), store, sec, args[0], caPEM, time.Now())
+				t, _ := apps.LoadOriginPullTrust(sec)
+				if err == nil {
+					return caKept, t, nil
 				}
-				return caKept, nil
+				// The CA may be kept with only the edge's reload failing,
+				// and then the certificate is still worth having.
+				if trustsCA(t, args[0], caPEM) {
+					return caKept, t, err
+				}
+				return caNotKept, nil, err
 			})
 		},
 	}
@@ -115,24 +119,25 @@ while Cloudflare takes the new one.`,
 // key are made and written here, and the target is given only the CA.
 func (a *app) mintOriginPullOnTarget(cmd *cobra.Command, t remote.Target, args []string) error {
 	out, _ := cmd.Flags().GetString("out")
-	err := a.mintOriginPull(args[0], out, func(caPEM string) (originPullKept, error) {
+	err := a.mintOriginPull(args[0], out, func(caPEM string) (originPullKept, edge.OriginPullTrust, error) {
 		host := strings.ToLower(args[0])
 		argv := append(a.targetStateArgs(), "edge", "origin-pull", "trust", host)
 		err := targetTransport().Run(cmd.Context(), t, argv, strings.NewReader(caPEM), io.Discard, a.stderr)
-		if err == nil {
-			return caKept, nil
-		}
-		// The target may have kept the CA with only its edge's reload
-		// failing, or the connection may have dropped once it had; the
-		// exit code doesn't say which, so ask it.
+		// What the target trusts now names the older CAs to forget once
+		// Cloudflare takes the new certificate. When trust failed, it also
+		// says whether the target kept the CA anyway, with only its edge's
+		// reload failing or the connection dropping once it had: the exit
+		// code doesn't say which.
 		trust, askErr := a.targetOriginPullTrust(cmd.Context(), t)
 		switch {
+		case err == nil:
+			return caKept, trust, nil
 		case askErr != nil:
-			return caMaybeKept, fmt.Errorf("trust on the target failed, and so did asking it whether it kept the CA: %w", askErr)
+			return caMaybeKept, nil, fmt.Errorf("trust on the target failed, and so did asking it whether it kept the CA: %w", askErr)
 		case trustsCA(trust, host, caPEM):
-			return caKept, fmt.Errorf("trust on the target: %w", err)
+			return caKept, trust, fmt.Errorf("trust on the target: %w", err)
 		}
-		return caNotKept, remoteExit(err)
+		return caNotKept, nil, remoteExit(err)
 	})
 	if err != nil {
 		return err
@@ -177,11 +182,12 @@ const (
 // and only then writes the certificate and its key to out. out is made
 // before anything else, so a file already there stops the mint before
 // any CA is trusted. trust reports whether it kept the CA, which it can
-// have done even when it fails, if only the edge's reload did. The file
+// have done even when it fails, if only the edge's reload did, and the
+// machine's trust once it has, or nil when that isn't known. The file
 // is written unless the CA is known not to be kept: a CA trusted with
 // no certificate anywhere is of no use, and minting again only adds
 // another beside it.
-func (a *app) mintOriginPull(host, out string, trust func(caPEM string) (originPullKept, error)) error {
+func (a *app) mintOriginPull(host, out string, trust func(caPEM string) (originPullKept, edge.OriginPullTrust, error)) error {
 	host = strings.ToLower(host)
 	if !manifest.ValidHost(host) {
 		return fmt.Errorf("%q is not a host name", host)
@@ -211,7 +217,7 @@ func (a *app) mintOriginPull(host, out string, trust func(caPEM string) (originP
 	if err != nil {
 		return err
 	}
-	kept, trustErr := trust(minted.CA.PEM)
+	kept, after, trustErr := trust(minted.CA.PEM)
 	if kept == caNotKept {
 		if trustErr == nil {
 			trustErr = errors.New("the CA wasn't trusted")
@@ -244,8 +250,8 @@ func (a *app) mintOriginPull(host, out string, trust func(caPEM string) (originP
   2. Set the zone's SSL/TLS mode to Full (strict).
   3. Deploy with origin_pull: optional on %s's routes, and check that requests through Cloudflare still succeed.
   4. Then deploy with origin_pull: required.
-Delete %s once it is uploaded: it holds the only copy of the key.
-`, host, host, path)
+%sDelete %s once it is uploaded: it holds the only copy of the key.
+`, host, host, a.originPullForgetStep(host, fingerprint, after), path)
 	switch {
 	case kept == caMaybeKept:
 		return fmt.Errorf("%w; check with %s: if it shows CA %s for %s, upload %s, or forget the CA with %s; if it doesn't, delete the file and mint again", trustErr, a.originPullCommand("list"), fingerprint, host, path, forget)
@@ -253,6 +259,32 @@ Delete %s once it is uploaded: it holds the only copy of the key.
 		return fmt.Errorf("%s trusts the new CA, but the edge didn't reload: %w; it takes the CA when it next reloads", host, trustErr)
 	}
 	return nil
+}
+
+// originPullForgetStep is mint's step for the CAs host trusted before the
+// one with fingerprint, or "" when trust shows none. Cloudflare presents
+// an older CA's certificate until the new one replaces it, and helios
+// can't see when it has, so the watch raises a critical alert for an
+// older CA that runs out still trusted. trust is the machine's trust
+// after the mint, or nil when that isn't known.
+func (a *app) originPullForgetStep(host, fingerprint string, trust edge.OriginPullTrust) string {
+	if trust == nil {
+		return fmt.Sprintf("  5. If %s trusts an older CA, as %s shows, forget it with %s once Cloudflare presents the new certificate; left to run out, it raises a critical alert.\n",
+			host, a.originPullCommand("list"), a.originPullCommand("forget", host, "<old fingerprint>"))
+	}
+	var forget []string
+	for _, ca := range trust[host] {
+		if fp, err := apps.OriginPullFingerprint(ca.PEM); err == nil && fp != fingerprint {
+			forget = append(forget, "       "+a.originPullCommand("forget", host, fp)+"\n")
+		}
+	}
+	switch len(forget) {
+	case 0:
+		return ""
+	case 1:
+		return "  5. Once Cloudflare presents the new certificate, forget the older CA; left to run out, it raises a critical alert:\n" + forget[0]
+	}
+	return "  5. Once Cloudflare presents the new certificate, forget the older CAs; left to run out, each raises a critical alert:\n" + strings.Join(forget, "")
 }
 
 // originPullCommand is helios edge origin-pull with args as a hint names

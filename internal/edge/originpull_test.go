@@ -184,23 +184,6 @@ func TestTrustKeepsEachCAOnceInExpiryOrder(t *testing.T) {
 	}
 }
 
-func TestPruneForgetsWhatRanOutAndHostsLeftWithNothing(t *testing.T) {
-	now := time.Now().UTC().Truncate(time.Second)
-	trust := OriginPullTrust{
-		"keep.example.com": {
-			{PEM: "old", NotAfter: now.Add(-time.Hour)},
-			{PEM: "new", NotAfter: now.Add(time.Hour)},
-		},
-		"gone.example.com": {{PEM: "just now", NotAfter: now}},
-	}
-	if n := trust.Prune(now); n != 2 {
-		t.Fatalf("forgot %d, want 2", n)
-	}
-	if len(trust) != 1 || len(trust["keep.example.com"]) != 1 || trust["keep.example.com"][0].PEM != "new" {
-		t.Fatalf("trust: %+v", trust)
-	}
-}
-
 func TestClientCAsAreOnlyTheOnesTheEdgeCanUseNow(t *testing.T) {
 	now := time.Now().UTC().Truncate(time.Second)
 	current, _ := testCA(t, now.Add(-time.Hour), now.Add(time.Hour))
