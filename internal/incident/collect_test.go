@@ -547,6 +547,8 @@ func TestEachKindOfKeyReadsItsOwnSources(t *testing.T) {
 		{Hour: opened.Add(-time.Hour), App: "web", Metric: "requests", Value: 120, Samples: 60},
 		{Hour: opened.Add(-time.Hour), App: "web", Metric: state.SignalBucketPrefix + "0.25", Value: 100, Samples: 60},
 		{Hour: opened.Add(-time.Hour), App: "api", Metric: "requests", Value: 9, Samples: 60},
+		// An hour after the opening, which a later collection leaves out.
+		{Hour: opened.Add(time.Hour), App: "web", Metric: "requests", Value: 999, Samples: 60},
 	} {
 		if err := store.AddSignal(ctx, sig); err != nil {
 			t.Fatal(err)
@@ -628,6 +630,12 @@ func TestEachKindOfKeyReadsItsOwnSources(t *testing.T) {
 			}
 			if len(e.Errors) != 0 || e.Redaction.Status != RedactionApplied {
 				t.Fatalf("redaction %q, errors %+v", e.Redaction.Status, e.Errors)
+			}
+			since := opened.Add(-10 * time.Minute)
+			for _, w := range engine.windows {
+				if !w.Since.Equal(since) || !w.Until.Equal(opened) || !e.Window.Since.Equal(since) || !e.Window.Until.Equal(opened) {
+					t.Fatalf("the engine was read from %s to %s, the window is %s to %s", w.Since, w.Until, e.Window.Since, e.Window.Until)
+				}
 			}
 		})
 	}
@@ -751,10 +759,13 @@ func (j *recordingJournal) Suppressed(ctx context.Context, since, until time.Tim
 type fakeEngine struct {
 	logs  map[string][]string
 	asked []string
+	// windows are the times each read was bounded to.
+	windows []Window
 }
 
 func (f *fakeEngine) Logs(ctx context.Context, name string, opts docker.LogOptions, w io.Writer) error {
 	f.asked = append(f.asked, name)
+	f.windows = append(f.windows, Window{Since: opts.Since, Until: opts.Until})
 	entries, ok := f.logs[name]
 	if !ok {
 		return errdefs.ErrNotFound
