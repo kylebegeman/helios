@@ -2,9 +2,11 @@ package watch
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -155,6 +157,53 @@ func TestAFailedNoticeIsTriedAgainNextRound(t *testing.T) {
 	open, _ = w.Store.OpenIncidents(ctx)
 	if len(n.sent) != 1 || open[0].NotifyError != "" || open[0].NotifiedAt.IsZero() {
 		t.Fatalf("not retried: sent %d, %+v", len(n.sent), open[0])
+	}
+}
+
+// A round tells every notice before it saves any incident, so one that
+// can't be saved fails the round but leaves the others saved: a recovery
+// told in the same round is told once.
+func TestAnIncidentThatCantBeSavedLeavesTheOthersSaved(t *testing.T) {
+	ctx := context.Background()
+	n := &fakeNotifier{}
+	w, now := newWatcher(t, n)
+	rounds(t, w, now, 3, down("shop"))
+	db, err := sql.Open("sqlite", w.Store.Path())
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = db.Exec(`CREATE TRIGGER hello_unsaved BEFORE UPDATE ON incidents WHEN OLD.key = 'app:hello' BEGIN SELECT RAISE(ABORT, 'disk full'); END`)
+	db.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A round lists the incidents still down before the ones that
+	// recover, so hello's failed save comes before shop's.
+	round := func(conditions ...Condition) {
+		t.Helper()
+		*now = now.Add(time.Minute)
+		if err := w.Round(ctx, conditions); err == nil || !strings.Contains(err.Error(), "disk full") {
+			t.Fatalf("a round that can't save hello: %v", err)
+		}
+	}
+	rounds(t, w, now, 2, down("hello"), down("shop"))
+	for range 6 {
+		round(down("hello"))
+	}
+	told := map[string]int{}
+	for _, sent := range n.sent {
+		told[sent.Key+" "+sent.Transition]++
+	}
+	if told["app:shop open"] != 1 || told["app:shop resolved"] != 1 || told["app:hello open"] != 6 {
+		t.Fatalf("shop should be told once each, and hello every round it isn't saved: %v", told)
+	}
+	all, err := w.Store.Incidents(ctx, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	i := slices.IndexFunc(all, func(inc state.Incident) bool { return inc.Key == "app:shop" })
+	if i < 0 || all[i].Open() || !all[i].NotifiedAt.Equal(all[i].ResolvedAt) || all[i].NotifyError != "" {
+		t.Fatalf("shop's recovery should be saved: %+v", all)
 	}
 }
 
