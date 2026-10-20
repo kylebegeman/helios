@@ -260,7 +260,7 @@ func (j *Jobs) executeOwned(ctx context.Context, e *docker.Engine, spec docker.S
 	guarded := &closingWriter{w: out}
 	defer guarded.close()
 	logs := make(chan error, 1)
-	go func() { logs <- e.Logs(ctx, id, true, "all", guarded) }()
+	go func() { logs <- e.Logs(ctx, id, docker.LogOptions{Follow: true, Tail: "all"}, guarded) }()
 	code, err := e.WaitExit(ctx, id)
 	if errors.Is(err, context.DeadlineExceeded) {
 		return -1, id, errors.New("timed out")

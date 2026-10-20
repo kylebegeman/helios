@@ -1233,8 +1233,10 @@ Usage:
   helios logs <app> [workload] [flags]
 
 Flags:
-  -f, --follow        keep streaming
-      --tail string   how many lines to start with, or all (default "100")
+  -f, --follow            keep streaming
+      --job string        a job run's output, by the ID helios jobs shows
+      --revision string   a revision's output, from the journal once its containers are gone
+      --tail string       how many lines to start with, or all (default "100")
 
 Global Flags:
       --json                  print JSON, one object per line

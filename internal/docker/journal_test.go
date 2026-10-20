@@ -1,0 +1,253 @@
+package docker
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"io"
+	"net/http"
+	"os"
+	"path/filepath"
+	"slices"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/kylebegeman/helios/internal/docker/dockertest"
+)
+
+// fakeJournal is a journal whose journalctl prints out and records what
+// it was asked and whether it was stopped.
+type fakeJournal struct {
+	out     string
+	args    []string
+	stopped bool
+}
+
+func (f *fakeJournal) journal() Journal {
+	return Journal{exec: func(ctx context.Context, args []string) (io.ReadCloser, func() error, error) {
+		f.args = args
+		return io.NopCloser(strings.NewReader(f.out)), func() error {
+			f.stopped = ctx.Err() != nil
+			return nil
+		}, nil
+	}}
+}
+
+// at is a journal timestamp, in microseconds, some seconds into the
+// fixtures' window.
+func at(seconds int) string { return fmt.Sprint(time.Unix(1792487040+int64(seconds), 0).UnixMicro()) }
+
+func TestAJournalQueryAsksForItsContainersInItsWindow(t *testing.T) {
+	q := JournalQuery{
+		Names: []string{"bedrock-hello-web-r1", "bedrock-hello-worker-r1"}, App: "hello", Workload: "web", Revision: "r1",
+		Since: time.Date(2026, 10, 20, 9, 4, 0, 500_000_000, time.UTC), Until: time.Date(2026, 10, 20, 9, 14, 0, 250_000_000, time.UTC),
+		Lines: 40, Follow: true,
+	}
+	head := []string{"--no-pager", "--all", "--output=json",
+		"--output-fields=MESSAGE,PRIORITY,CONTAINER_NAME,CONTAINER_ID_FULL,CONTAINER_PARTIAL_MESSAGE,CONTAINER_PARTIAL_ID,CONTAINER_PARTIAL_LAST,BEDROCK_APP,BEDROCK_WORKLOAD,BEDROCK_REVISION,SYSLOG_IDENTIFIER"}
+	want := append(slices.Clone(head),
+		"--since=@1792487040", "--until=@1792487641", "--lines=40", "--follow",
+		"CONTAINER_NAME=bedrock-hello-web-r1", "CONTAINER_NAME=bedrock-hello-worker-r1",
+		"BEDROCK_APP=hello", "BEDROCK_WORKLOAD=web", "BEDROCK_REVISION=r1")
+	if got := q.Args(); !slices.Equal(got, want) {
+		t.Fatalf("args\n got %q\nwant %q", got, want)
+	}
+	if got, want := (JournalQuery{Names: []string{"bedrock-hello-job-x"}}).Args(), append(slices.Clone(head), "CONTAINER_NAME=bedrock-hello-job-x"); !slices.Equal(got, want) {
+		t.Fatalf("an open query adds %q", got[len(head):])
+	}
+}
+
+func TestAJournalQueryForNothingIsNotRun(t *testing.T) {
+	fake := &fakeJournal{}
+	if _, err := fake.journal().Read(context.Background(), JournalQuery{Lines: 10}); err == nil || fake.args != nil {
+		t.Fatalf("ran journalctl %q for the whole journal (err %v)", fake.args, err)
+	}
+}
+
+// journalctl prints a value as a string, as its bytes when it isn't
+// text, as null when it left it out, and as a list when the field was set
+// more than once.
+func TestJournalLinesReadEveryShapeOfMessage(t *testing.T) {
+	web := `"CONTAINER_NAME":"bedrock-hello-web-r1","CONTAINER_ID_FULL":"aaa","BEDROCK_APP":"hello","BEDROCK_WORKLOAD":"web","BEDROCK_REVISION":"r1"`
+	fake := &fakeJournal{out: strings.Join([]string{
+		`-- No entries --`,
+		`{"__REALTIME_TIMESTAMP":"` + at(1) + `","PRIORITY":"6","MESSAGE":"listening on :8080",` + web + `}`,
+		`{"__REALTIME_TIMESTAMP":"` + at(2) + `","PRIORITY":"3","MESSAGE":[104,105,255],` + web + `}`,
+		`{"__REALTIME_TIMESTAMP":"` + at(3) + `","PRIORITY":"6","MESSAGE":null,` + web + `}`,
+		`{"__REALTIME_TIMESTAMP":"` + at(4) + `","PRIORITY":["3","6"],"MESSAGE":["first","second"],` + web + `}`,
+		`{"__REALTIME_TIMESTAMP":"` + at(5) + `","PRIORITY":"6","MESSAGE":[[111,107],[110,111]],` + web + `}`,
+	}, "\n")}
+	got, err := fake.journal().Read(context.Background(), JournalQuery{Names: []string{"bedrock-hello-web-r1"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("containers %+v", got)
+	}
+	c := got[0]
+	if c.ID != "aaa" || c.Name != "bedrock-hello-web-r1" || c.App != "hello" || c.Workload != "web" || c.Revision != "r1" {
+		t.Fatalf("container %+v", c)
+	}
+	var lines []string
+	for _, l := range c.Lines {
+		lines = append(lines, fmt.Sprintf("%s %s %q", l.At.Format(time.TimeOnly), l.Stream, l.Text))
+	}
+	want := []string{
+		`09:04:01 stdout "listening on :8080"`,
+		`09:04:02 stderr "hi\xff"`,
+		`09:04:03 stdout ""`,
+		`09:04:04 stdout "second"`,
+		`09:04:05 stdout "no"`,
+	}
+	if !slices.Equal(lines, want) {
+		t.Fatalf("lines\n got %q\nwant %q", lines, want)
+	}
+}
+
+// Docker splits a long line into chunks marked partial but the last; the
+// chunks of one stream of one container join with nothing between them,
+// whatever else comes in between.
+func TestJournalLinesSplitByDockerComeBackWhole(t *testing.T) {
+	entry := func(seconds int, container, priority, message, extra string) string {
+		return fmt.Sprintf(`{"__REALTIME_TIMESTAMP":"%s","CONTAINER_ID_FULL":"%s","PRIORITY":"%s","MESSAGE":"%s"%s}`, at(seconds), container, priority, message, extra)
+	}
+	partial := `,"CONTAINER_PARTIAL_MESSAGE":"true"`
+	fake := &fakeJournal{out: strings.Join([]string{
+		entry(1, "aaa", "6", "aaaa", partial),
+		entry(2, "bbb", "6", "worker up", ""),
+		entry(3, "aaa", "3", "oops", ""),
+		entry(4, "aaa", "6", "bbbb", partial),
+		entry(5, "aaa", "6", "cc", `,"CONTAINER_PARTIAL_LAST":"true"`),
+		entry(6, "ccc", "6", "cut off", partial),
+	}, "\n") + "\n"}
+	got, err := fake.journal().Read(context.Background(), JournalQuery{App: "hello"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var lines []string
+	for _, c := range got {
+		for _, l := range c.Lines {
+			lines = append(lines, fmt.Sprintf("%s %s %s %s", c.ID, l.At.Format(time.TimeOnly), l.Stream, l.Text))
+		}
+	}
+	want := []string{
+		"bbb 09:04:02 stdout worker up",
+		"aaa 09:04:03 stderr oops",
+		"aaa 09:04:01 stdout aaaabbbbcc",
+		"ccc 09:04:06 stdout cut off",
+	}
+	if !slices.Equal(lines, want) {
+		t.Fatalf("lines\n got %q\nwant %q", lines, want)
+	}
+}
+
+func TestAJournalReadStopsAt8MiBAndKeepsWhatItRead(t *testing.T) {
+	line := `{"__REALTIME_TIMESTAMP":"` + at(1) + `","CONTAINER_ID_FULL":"aaa","PRIORITY":"6","MESSAGE":"` + strings.Repeat("x", 1000) + `"}` + "\n"
+	fake := &fakeJournal{out: strings.Repeat(line, 9<<20/len(line))}
+	got, err := fake.journal().Read(context.Background(), JournalQuery{App: "hello"})
+	if !errors.Is(err, ErrJournalLimit) {
+		t.Fatalf("err %v", err)
+	}
+	if len(got) != 1 || len(got[0].Lines) == 0 || len(got[0].Lines)*len(line) > JournalReadLimit {
+		t.Fatalf("kept %+v", got)
+	}
+	if !fake.stopped {
+		t.Fatal("journalctl was left running")
+	}
+}
+
+func TestJournaldsDroppedDockerMessagesAreCounted(t *testing.T) {
+	fake := &fakeJournal{out: strings.Join([]string{
+		`{"__REALTIME_TIMESTAMP":"` + at(10) + `","MESSAGE":"Suppressed 1200 messages from docker.service"}`,
+		`{"__REALTIME_TIMESTAMP":"` + at(20) + `","MESSAGE":"Suppressed 3 messages from ssh.service"}`,
+		`{"__REALTIME_TIMESTAMP":"` + at(30) + `","MESSAGE":"Journal started"}`,
+		`{"__REALTIME_TIMESTAMP":"` + at(40) + `","MESSAGE":"Suppressed 7 messages from /system.slice/docker.service"}`,
+	}, "\n")}
+	since, until := time.Unix(1792487040, 0), time.Unix(1792487640, 0)
+	got, err := fake.journal().Suppressed(context.Background(), since, until)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []JournalSuppressed{{At: time.Unix(1792487050, 0).UTC(), Count: 1200}, {At: time.Unix(1792487080, 0).UTC(), Count: 7}}
+	if !slices.Equal(got, want) {
+		t.Fatalf("suppressed %+v", got)
+	}
+	if !slices.Contains(fake.args, "_SYSTEMD_UNIT=systemd-journald.service") || !slices.Contains(fake.args, "--since=@1792487040") || !slices.Contains(fake.args, "--until=@1792487640") {
+		t.Fatalf("asked %q", fake.args)
+	}
+}
+
+// fakeJournalctl puts a journalctl that runs script first on PATH.
+func fakeJournalctl(t *testing.T, script string) {
+	t.Helper()
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "journalctl"), []byte("#!/bin/sh\n"+script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir)
+}
+
+func TestAJournalThatCantBeReadSaysWhatToDo(t *testing.T) {
+	q := JournalQuery{Names: []string{"bedrock-hello-web-r1"}}
+	permission := "journalctl cannot read the system journal; run as root or join systemd-journal"
+	for _, c := range []struct{ name, script, want string }{
+		{"not installed", "", "journalctl is not installed"},
+		{"no journal files", "echo 'No journal files were opened due to insufficient permissions.' >&2\nexit 1\n", permission},
+		{"only the user's own", "echo 'Hint: You are currently not seeing messages from other users and the system.' >&2\n", permission},
+		{"failed", "echo 'Failed to parse timestamp: @x' >&2\nexit 1\n", "journalctl: Failed to parse timestamp: @x"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			if c.script == "" {
+				t.Setenv("PATH", t.TempDir())
+			} else {
+				fakeJournalctl(t, c.script)
+			}
+			_, err := Journal{}.Read(context.Background(), q)
+			if err == nil || err.Error() != c.want {
+				t.Fatalf("err %v, want %q", err, c.want)
+			}
+		})
+	}
+}
+
+// Following the journal ends when the person watching stops it, and that
+// is not a failure.
+func TestFollowingTheJournalEndsQuietlyWhenStopped(t *testing.T) {
+	fakeJournalctl(t, `echo '{"__REALTIME_TIMESTAMP":"`+at(1)+`","CONTAINER_ID_FULL":"aaa","MESSAGE":"up"}'`+"\nexec /bin/sleep 30\n")
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	var got []string
+	err := Journal{}.Stream(ctx, JournalQuery{Names: []string{"bedrock-hello-web-r1"}, Follow: true}, func(l JournalLine) error {
+		got = append(got, l.Text)
+		cancel()
+		return nil
+	})
+	if err != nil || !slices.Equal(got, []string{"up"}) {
+		t.Fatalf("lines %q, err %v", got, err)
+	}
+}
+
+func TestLogsAsksTheEngineForATimeWindow(t *testing.T) {
+	var queries []string
+	e, fake := interceptedEngine(t, func(w http.ResponseWriter, r *http.Request) bool {
+		if strings.HasSuffix(r.URL.Path, "/containers/web/logs") {
+			q := r.URL.Query()
+			queries = append(queries, fmt.Sprintf("since=%s until=%s follow=%s tail=%s", q.Get("since"), q.Get("until"), q.Get("follow"), q.Get("tail")))
+		}
+		return false
+	})
+	fake.Add(dockertest.Container{Name: "web", Logs: "up\n"})
+	since := time.Date(2026, 10, 20, 9, 4, 0, 0, time.UTC)
+	var out strings.Builder
+	if err := e.Logs(context.Background(), "web", LogOptions{Since: since, Until: since.Add(10 * time.Minute)}, &out); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.Logs(context.Background(), "web", LogOptions{Follow: true, Tail: "100"}, &out); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"since=1792487040.000000000 until=1792487640.000000000 follow= tail=", "since= until= follow=1 tail=100"}
+	if !slices.Equal(queries, want) || out.String() != "up\nup\n" {
+		t.Fatalf("asked %q, read %q", queries, out.String())
+	}
+}

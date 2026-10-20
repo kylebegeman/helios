@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -373,8 +374,9 @@ func newPs(a *app) *cobra.Command {
 
 func newLogs(a *app) *cobra.Command {
 	var (
-		follow bool
-		tail   string
+		follow        bool
+		tail          string
+		revision, job string
 	)
 	cmd := &cobra.Command{
 		Use:   "logs <app> [workload]",
@@ -382,6 +384,12 @@ func newLogs(a *app) *cobra.Command {
 		Args:  cobra.RangeArgs(1, 2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
+			if revision != "" && job != "" {
+				return errors.New("use either --revision or --job")
+			}
+			if revision != "" || job != "" {
+				return a.pastLogs(ctx, pastLogs{appName: args[0], workload: optional(args, 1), revision: revision, job: job, follow: follow, tail: tail})
+			}
 			container, err := a.resolveContainer(ctx, args[0], optional(args, 1))
 			if err != nil {
 				return err
@@ -391,11 +399,13 @@ func newLogs(a *app) *cobra.Command {
 				return err
 			}
 			defer engine.Close()
-			return engine.Logs(ctx, container, follow, tail, a.stdout)
+			return engine.Logs(ctx, container, docker.LogOptions{Follow: follow, Tail: tail}, a.stdout)
 		},
 	}
 	cmd.Flags().BoolVarP(&follow, "follow", "f", false, "keep streaming")
 	cmd.Flags().StringVar(&tail, "tail", "100", "how many lines to start with, or all")
+	cmd.Flags().StringVar(&revision, "revision", "", "a revision's output, from the journal once its containers are gone")
+	cmd.Flags().StringVar(&job, "job", "", "a job run's output, by the ID helios jobs shows")
 	return cmd
 }
 

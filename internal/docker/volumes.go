@@ -220,7 +220,7 @@ func (e *Engine) WaitExit(ctx context.Context, name string) (int, error) {
 // LogTail returns the last lines of a container's output.
 func (e *Engine) LogTail(ctx context.Context, name string, lines int) string {
 	var buf bytes.Buffer
-	_ = e.Logs(ctx, name, false, fmt.Sprint(lines), &buf)
+	_ = e.Logs(ctx, name, LogOptions{Tail: fmt.Sprint(lines)}, &buf)
 	return buf.String()
 }
 

@@ -563,9 +563,25 @@ func (e *Engine) Unowned(ctx context.Context) ([]string, error) {
 	return names, nil
 }
 
+// LogOptions picks which of a container's output Logs shows.
+type LogOptions struct {
+	Follow bool
+	// Tail is how many of the newest lines to start with, or "all".
+	Tail string
+	// Since and Until bound the output in time; zero leaves that end open.
+	Since, Until time.Time
+}
+
 // Logs streams a container's output, stdout and stderr together.
-func (e *Engine) Logs(ctx context.Context, name string, follow bool, tail string, w io.Writer) error {
-	r, err := e.cli.ContainerLogs(ctx, name, client.ContainerLogsOptions{ShowStdout: true, ShowStderr: true, Follow: follow, Tail: tail, Timestamps: false})
+func (e *Engine) Logs(ctx context.Context, name string, opts LogOptions, w io.Writer) error {
+	o := client.ContainerLogsOptions{ShowStdout: true, ShowStderr: true, Follow: opts.Follow, Tail: opts.Tail, Timestamps: false}
+	if !opts.Since.IsZero() {
+		o.Since = opts.Since.UTC().Format(time.RFC3339Nano)
+	}
+	if !opts.Until.IsZero() {
+		o.Until = opts.Until.UTC().Format(time.RFC3339Nano)
+	}
+	r, err := e.cli.ContainerLogs(ctx, name, o)
 	if err != nil {
 		return err
 	}
