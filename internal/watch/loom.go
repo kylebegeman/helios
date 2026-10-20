@@ -311,7 +311,13 @@ type loomAnswer struct {
 func (l *LoomNotifier) post(ctx context.Context, body []byte, key string) loomAnswer {
 	var wrote atomic.Bool
 	ctx = httptrace.WithClientTrace(ctx, &httptrace.ClientTrace{
-		WroteRequest: func(httptrace.WroteRequestInfo) { wrote.Store(true) },
+		// A write that failed left part of the body unsent, and a body
+		// cut short can't pass the signature check.
+		WroteRequest: func(info httptrace.WroteRequestInfo) {
+			if info.Err == nil {
+				wrote.Store(true)
+			}
+		},
 	})
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, l.URL, bytes.NewReader(body))
 	if err != nil {

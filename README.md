@@ -653,8 +653,9 @@ and the hex HMAC-SHA256 of the body.
 Each incident is sent at most once. Before the request goes out, Helios
 writes a marker beside the incident, in
 `/var/lib/bedrock/incidents/<id>/loom.json`, and never sends that incident
-again while the marker is there. A request that never went out, or a 429,
-takes the marker back, so it is tried again like any way that failed.
+again while the marker is there. A request that never went out, one cut
+off while it was written, or a 429, takes the marker back, so it is tried
+again like any way that failed.
 Otherwise the marker ends in one of these, which `helios alerts show <id>`
 reads back:
 

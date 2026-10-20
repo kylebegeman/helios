@@ -6,6 +6,7 @@ import (
 	"crypto/hmac"
 	"crypto/sha256"
 	"crypto/subtle"
+	"crypto/tls"
 	"crypto/x509"
 	"encoding/hex"
 	"encoding/json"
@@ -13,6 +14,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -674,6 +676,40 @@ func TestAMarkerThatCantBeWrittenIsTakenBack(t *testing.T) {
 	}
 	if m := r.marker(id); len(r.loom.got()) != 1 || m.State != incident.LoomDelivered {
 		t.Fatalf("Loom should get it once: %d bodies, %+v", len(r.loom.got()), m)
+	}
+}
+
+// A body the connection was reset under while it was written never
+// arrived whole, and a body cut short can't pass the signature check,
+// so it is tried again.
+func TestABodyCutOffWhileItIsWrittenIsTriedAgain(t *testing.T) {
+	loom := newFakeLoom(t)
+	raw, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ln := tls.NewListener(raw, &tls.Config{Certificates: loom.server.TLS.Certificates})
+	t.Cleanup(func() { ln.Close() })
+	go func() {
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			// The relay reads the start of the request and drops the
+			// connection with a reset.
+			_, _ = io.ReadFull(c, make([]byte, 4<<10))
+			c.(*tls.Conn).NetConn().(*net.TCPConn).SetLinger(0)
+			c.Close()
+		}
+	}()
+	l := &LoomNotifier{LoomWebhook: integration.LoomWebhook{URL: "https://" + ln.Addr().String() + loomPath, Secret: loomSecret}}
+	// Far more than the connection holds in flight, so the write is
+	// still going when the reset comes.
+	body := []byte(`{"message":"` + strings.Repeat("waiting ", 1<<20) + `"}`)
+	a := l.post(context.Background(), body, loomSecret)
+	if a.outcome() != "" || a.status != 0 || !strings.Contains(a.notSent().Error(), "the Loom webhook wasn't reached") {
+		t.Fatalf("a body cut off while it is written: wrote %v, outcome %q, %v", a.wrote, a.outcome(), a.err)
 	}
 }
 
