@@ -46,6 +46,11 @@ const (
 // holds the request until the client gives up.
 const loomHang = -1
 
+// loomHeld is the relay's answer while Loom is offline and it holds what
+// it is sent: 202 {"queued":true}, whatever the signature, since only
+// Loom checks it.
+const loomHeld = -2
+
 // loomCodes are the codes the relay and Loom answer each status with.
 var loomCodes = map[int]string{
 	http.StatusBadRequest: "invalid_body", http.StatusUnauthorized: "invalid_signature", http.StatusNotFound: "hook_not_found",
@@ -95,6 +100,9 @@ func newFakeLoom(t *testing.T) *fakeLoom {
 		switch status {
 		case loomHang:
 			<-r.Context().Done()
+		case loomHeld:
+			w.WriteHeader(http.StatusAccepted)
+			fmt.Fprint(w, `{"queued":true}`)
 		case http.StatusAccepted:
 			w.WriteHeader(status)
 			fmt.Fprintf(w, `{"deliveryId":"delivery-%d"}`, n)
@@ -807,4 +815,57 @@ func TestAProbePassesOnlyWhenLoomTurnsItAway(t *testing.T) {
 		t.Fatalf("a probe or a test leaves no marker: %v", err)
 	}
 	r.hidesTheToken()
+}
+
+// While Loom is offline the relay holds what it is sent and answers 202
+// before Loom has checked it. A held probe or test shows neither that the
+// leg works nor that it doesn't, so the last result stands, and a held
+// incident counts as sent but clears no refusal: only Loom's answer does.
+func TestWhatTheRelayHoldsProvesNothing(t *testing.T) {
+	ctx := context.Background()
+	r := newLoomRig(t)
+	p := NewProber(r.w.Store)
+	test := func(only string) LegResult {
+		t.Helper()
+		results, err := SendTestAlerts(ctx, r.sec, r.w.Store, r.w.Hostname, only, r.w.Now())
+		if err != nil {
+			t.Fatal(err)
+		}
+		return legResult(t, results, LoomWebhookLeg)
+	}
+	r.loom.answer(loomHeld)
+	if l := test(""); l.Error != "" || !l.Held || !l.Probe {
+		t.Fatalf("a held probe: %+v", l)
+	}
+	if got := p.alertTest(); got != nil {
+		t.Fatalf("a held probe raises nothing: %+v", got)
+	}
+
+	r.set(integration.LoomWebhookName, map[string]string{"url": r.loom.url(), "secret": "example-wrong-secret-0000"})
+	r.rounds(3, down("hello"))
+	raised := func(what string) {
+		t.Helper()
+		if got := p.alertTest(); len(got) != 1 || !strings.Contains(got[0].Message, loomRefusals[http.StatusUnauthorized]) {
+			t.Fatalf("%s: %+v", what, got)
+		}
+	}
+	raised("the refusal")
+	r.loom.answer(loomHeld)
+	if l := test(LoomWebhookLeg); l.Error != "" || !l.Held || l.Probe {
+		t.Fatalf("a held test: %+v", l)
+	}
+	raised("after a held test")
+	r.loom.answer(loomHeld)
+	r.rounds(3, down("hello"), down("shop"))
+	shop, err := r.w.Store.OpenIncidentByKey(ctx, "app:shop")
+	if err != nil || shop == nil {
+		t.Fatalf("shop: %+v, %v", shop, err)
+	}
+	if m := r.marker(shop.ID); m.State != incident.LoomDelivered || m.Status != http.StatusAccepted || shop.NotifyError != "" {
+		t.Fatalf("a held incident is sent: %+v, %q", m, shop.NotifyError)
+	}
+	raised("after a held incident")
+	if n := len(r.loom.got()); n != 4 {
+		t.Fatalf("Loom got %d requests", n)
+	}
 }

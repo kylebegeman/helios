@@ -663,8 +663,8 @@ reads back:
 - **refused**: a 3xx, 400, 401, 404, 405, 409, 410 or 413. The task turned
   it away, and it isn't sent again. It counts as this way's failed test, so
   `host:alerts` warns through the other ways until
-  `helios alerts test --leg loom_webhook` passes or a later incident is
-  delivered.
+  `helios alerts test --leg loom_webhook` passes or Loom takes a later
+  incident.
 - **ambiguous**: any other answer, or none, once the request went out, such
   as a 504 or a timeout. Loom may have opened the thread or may not. Helios
   won't risk a second one, so it isn't sent again: look for its thread in
@@ -675,7 +675,10 @@ reads back:
 In Loom's connection settings, turn on "Hold webhook requests while this
 computer is offline". The relay then keeps a request for up to 24 hours and
 answers 202. Without it, an incident sent while Loom is offline gets a 503
-or 504, which is ambiguous, and no thread opens.
+or 504, which is ambiguous, and no thread opens. Loom checks a request the
+relay held only once it is back, so a held incident is delivered but clears
+no refusal, and a held probe or test shows nothing: `helios alerts test`
+says the relay held it and keeps the last result.
 
 `helios alerts test`, and the daemon's Monday test, send the task a probe
 signed with a random key. A task that checks the signature turns it away

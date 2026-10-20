@@ -95,6 +95,8 @@ func newAlerts(a *app) *cobra.Command {
 				switch {
 				case r.Error != "":
 					fmt.Fprintf(a.stdout, "%s: FAILED: %s\n", r.Leg, r.Error)
+				case r.Held:
+					fmt.Fprintf(a.stdout, "%s: the relay held it for Loom, which is offline, so it shows nothing; test again once Loom is back\n", r.Leg)
 				case r.Probe:
 					fmt.Fprintf(a.stdout, "%s: probe reached %s, which turned it away as it should\n", r.Leg, r.To)
 				default:

@@ -43,6 +43,10 @@ type LegResult struct {
 	Error string `json:"error,omitempty"`
 	// Probe is set when the leg was probed rather than sent a test.
 	Probe bool `json:"probe,omitempty"`
+	// Held is set when the relay held the test for Loom, which was
+	// offline, so it shows neither that the leg works nor that it
+	// doesn't.
+	Held bool `json:"held,omitempty"`
 }
 
 func alertTestPath(store *state.Store) string {
@@ -73,7 +77,10 @@ func SendTestAlerts(ctx context.Context, sec *secrets.Store, store *state.Store,
 		go func() {
 			defer wg.Done()
 			results[i] = LegResult{Leg: l.name, To: l.to, Probe: notice.Test == TestProbe && l.name == LoomWebhookLeg}
-			if err := deliver(ctx, Leg{Name: l.name, Notifier: l.notifier}, notice); err != nil {
+			switch err := deliver(ctx, Leg{Name: l.name, Notifier: l.notifier}, notice); {
+			case errors.Is(err, errLoomHeld):
+				results[i].Held = true
+			case err != nil:
 				results[i].Error = err.Error()
 			}
 		}()
@@ -86,9 +93,18 @@ func SendTestAlerts(ctx context.Context, sec *secrets.Store, store *state.Store,
 			*record = AlertTest{At: now, Legs: map[string]LegTest{}}
 		}
 		for _, r := range results {
+			was, tested := before[r.Leg]
+			// A test the relay held shows nothing, so the last one that
+			// showed something stands.
+			if r.Held {
+				if tested {
+					record.Legs[r.Leg] = was
+				}
+				continue
+			}
 			// A probe proves less than a test that arrives, so it never
 			// takes the place of the failure of one.
-			if was := before[r.Leg]; r.Probe && was.Error != "" && !was.Probe {
+			if r.Probe && was.Error != "" && !was.Probe {
 				record.Legs[r.Leg] = was
 				continue
 			}

@@ -76,6 +76,11 @@ var loomRefusals = map[int]string{
 // with; anything else they say is left out.
 var loomCode = regexp.MustCompile(`^[a-z_]{1,64}$`)
 
+// errLoomHeld is a probe or a test the relay held for Loom, which was
+// offline. Loom hasn't checked it, so it shows neither that the leg works
+// nor that it doesn't.
+var errLoomHeld = errors.New("the relay held it for Loom, which is offline, so it shows nothing; test again once Loom is back")
+
 // LoomNotifier opens a Loom thread for a critical incident, with the
 // incident's evidence, through the task's webhook on the T3 Connect
 // relay. It sends each incident at most once: a marker is on disk before
@@ -198,6 +203,11 @@ func (l *LoomNotifier) Notify(ctx context.Context, n Notice) error {
 	switch m.State {
 	case incident.LoomDelivered:
 		_ = l.Store.RecordIntegrationUse(ctx, LoomWebhookLeg, "alert: "+n.Subject, time.Now().UTC())
+		// A body the relay held hasn't been checked by Loom yet, so it
+		// shows nothing about a refusal.
+		if a.held {
+			break
+		}
 		if err := clearLoomFailure(l.Store); err != nil {
 			problems = append(problems, "an earlier failure can't be cleared from "+AlertTestFile+": "+err.Error())
 		}
@@ -275,6 +285,8 @@ func (l *LoomNotifier) test(ctx context.Context, n Notice) error {
 	}
 	a := l.post(ctx, body, key)
 	switch {
+	case a.held:
+		return errLoomHeld
 	case probe && a.status == http.StatusUnauthorized:
 		return nil
 	case probe && a.status/100 == 2:
@@ -301,6 +313,9 @@ type loomAnswer struct {
 	// code is the error the relay or Loom named.
 	code       string
 	deliveryID string
+	// held is whether the relay took the body to hold for Loom, which
+	// was offline, so Loom hasn't checked it yet.
+	held bool
 	// err is why there was no answer, with the URL and token hidden.
 	err error
 }
@@ -335,6 +350,7 @@ func (l *LoomNotifier) post(ctx context.Context, body []byte, key string) loomAn
 	data, _ := io.ReadAll(io.LimitReader(resp.Body, loomAnswerMax))
 	var answer struct {
 		DeliveryID string `json:"deliveryId"`
+		Queued     bool   `json:"queued"`
 		Error      string `json:"error"`
 	}
 	if json.Unmarshal(data, &answer) == nil {
@@ -342,6 +358,7 @@ func (l *LoomNotifier) post(ctx context.Context, body []byte, key string) loomAn
 			a.code = answer.Error
 		}
 		a.deliveryID = truncateBytes(l.hide(answer.DeliveryID), 200)
+		a.held = answer.Queued && a.status/100 == 2
 	}
 	return a
 }
