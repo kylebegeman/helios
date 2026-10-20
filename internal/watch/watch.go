@@ -78,8 +78,10 @@ type Watcher struct {
 	failing map[string]int
 	passing map[string]int
 	// graver counts the rounds in a row an open incident's condition has
-	// been graver than the incident.
+	// been graver than the incident, and milder the rounds it has been
+	// milder.
 	graver map[string]int
+	milder map[string]int
 	// owed holds each incident whose latest notice some leg missed.
 	owed map[int64]owedNotice
 }
@@ -96,6 +98,7 @@ func (w *Watcher) init() {
 		w.failing = map[string]int{}
 		w.passing = map[string]int{}
 		w.graver = map[string]int{}
+		w.milder = map[string]int{}
 		w.owed = map[int64]owedNotice{}
 	}
 	if w.Now == nil {
@@ -151,6 +154,7 @@ func (w *Watcher) Round(ctx context.Context, conditions []Condition) error {
 			delete(w.failing, key)
 			delete(w.passing, key)
 			delete(w.graver, key)
+			delete(w.milder, key)
 			continue
 		}
 		w.failing[key]++
@@ -181,13 +185,23 @@ func (w *Watcher) Round(ctx context.Context, conditions []Condition) error {
 		// graver severity has to hold for OpenAfter rounds first, so a
 		// blip to critical never pages; until then the incident stays as
 		// it was. A notice grows graver on the clock, not on a probe, so
-		// it can't blip.
-		escalated := severityRank(c.Severity) > severityRank(inc.Severity)
-		if escalated && inc.Severity != state.SeverityNotice && w.graver[key]+1 < w.OpenAfter {
+		// it can't blip. Easing back, an outage back to a warning, has to
+		// hold for ResolveAfter rounds, as a recovery does, so an outage
+		// that flaps is one outage and told once.
+		rank, was := severityRank(c.Severity), severityRank(inc.Severity)
+		escalated := rank > was
+		switch {
+		case escalated && inc.Severity != state.SeverityNotice && w.graver[key]+1 < w.OpenAfter:
 			w.graver[key]++
+			delete(w.milder, key)
 			c.Severity, c.Message, escalated = inc.Severity, inc.Message, false
-		} else {
+		case rank < was && w.milder[key]+1 < w.ResolveAfter:
+			w.milder[key]++
 			delete(w.graver, key)
+			c.Severity, c.Message = inc.Severity, inc.Message
+		default:
+			delete(w.graver, key)
+			delete(w.milder, key)
 		}
 		inc.Message, inc.Severity = c.Message, c.Severity
 		repeat := escalated || inc.Severity != state.SeverityNotice && !inc.NotifiedAt.IsZero() && now.Sub(inc.NotifiedAt) >= w.Renotify
@@ -213,6 +227,7 @@ func (w *Watcher) Round(ctx context.Context, conditions []Condition) error {
 		w.passing[key]++
 		w.failing[key] = 0
 		delete(w.graver, key)
+		delete(w.milder, key)
 		if w.passing[key] < w.ResolveAfter {
 			continue
 		}
@@ -231,6 +246,7 @@ func (w *Watcher) Round(ctx context.Context, conditions []Condition) error {
 				delete(w.failing, key)
 				delete(w.passing, key)
 				delete(w.graver, key)
+				delete(w.milder, key)
 			}
 		}
 	}
