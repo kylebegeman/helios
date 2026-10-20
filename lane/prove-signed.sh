@@ -75,7 +75,9 @@ put "$here/../bin/bedrock-linux-$LANE_ARCH" /usr/local/bin/bedrock.new
 run 'chmod 755 /usr/local/bin/bedrock.new && mv -f /usr/local/bin/bedrock.new /usr/local/bin/bedrock && bedrock daemon install >/dev/null && bedrock version'
 run 'bedrock host reconcile --yes' | quiet | grep -E "pushes|succeeded|failed"
 run 'git --version; ssh -V 2>&1; stat -c "%a %U:%G %n" /etc/bedrock /etc/bedrock/git; ls -l /etc/bedrock'
-run '[ "$(stat -c "%a %U:%G" /etc/bedrock)" = "710 root:bedrock" ] && [ "$(stat -c "%a %U:%G" /etc/bedrock/git)" = "750 root:bedrock" ] && sudo -u bedrock test -x /etc/bedrock/git && ! sudo -u bedrock ls /etc/bedrock >/dev/null 2>&1' \
+# /etc/bedrock keeps whatever others had (755 on a stock box); only its
+# group becomes bedrock, and the group may pass through and list nothing.
+run '[ "$(stat -c "%U:%G" /etc/bedrock)" = "root:bedrock" ] && [ "$(stat -c "%a" /etc/bedrock | cut -c2)" = 1 ] && [ "$(stat -c "%a %U:%G" /etc/bedrock/git)" = "750 root:bedrock" ] && sudo -u bedrock test -x /etc/bedrock/git && ! sudo -u bedrock ls /etc/bedrock >/dev/null 2>&1' \
   || fail "the push user can't reach /etc/bedrock/git, or can list /etc/bedrock"
 
 echo "== two apps the push key may deploy; hello will require signed commits"
