@@ -93,6 +93,8 @@ type legSpec struct {
 	notifier Notifier
 	// timeout bounds one delivery; zero means LegTimeout.
 	timeout time.Duration
+	// once is set for a leg that hears of an incident once.
+	once bool
 }
 
 // loadLegs reads the integrations set up now, mail servers first in the
@@ -119,10 +121,10 @@ func loadLegs(sec *secrets.Store, store *state.Store) []legSpec {
 		legs = append(legs, legSpec{name: NtfyLeg, least: state.SeverityWarning, notifier: broken{err}})
 	}
 	if w, err := integration.LoadLoomWebhook(sec); err == nil {
-		legs = append(legs, legSpec{name: LoomWebhookLeg, to: "the Loom task", least: state.SeverityCritical, timeout: LoomTimeout,
+		legs = append(legs, legSpec{name: LoomWebhookLeg, to: "the Loom task", least: state.SeverityCritical, timeout: LoomTimeout, once: true,
 			notifier: &LoomNotifier{LoomWebhook: *w, Store: store, Secrets: sec}})
 	} else if !errors.Is(err, integration.ErrNotSet) {
-		legs = append(legs, legSpec{name: LoomWebhookLeg, least: state.SeverityCritical, timeout: LoomTimeout, notifier: broken{err}})
+		legs = append(legs, legSpec{name: LoomWebhookLeg, least: state.SeverityCritical, timeout: LoomTimeout, once: true, notifier: broken{err}})
 	}
 	return legs
 }
@@ -148,7 +150,7 @@ func fanoutOf(legs []legSpec, store *state.Store) (*Fanout, error) {
 			continue
 		}
 		person = person || l.name != LoomWebhookLeg
-		f.Legs = append(f.Legs, Leg{Name: l.name, Notifier: l.notifier, MinSeverity: l.least, Timeout: l.timeout})
+		f.Legs = append(f.Legs, Leg{Name: l.name, Notifier: l.notifier, MinSeverity: l.least, Timeout: l.timeout, Once: l.once})
 	}
 	if len(relays) > 0 {
 		email := Leg{Name: EmailLeg, Notifier: EmailNotifier{Relays: relays, Store: store}, MinSeverity: state.SeverityNotice,

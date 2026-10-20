@@ -944,3 +944,89 @@ func TestAPageNeverWaitsOnALoomLeg(t *testing.T) {
 		}
 	})
 }
+
+// An outage whose body never left reaches Loom once it can, though the
+// outage has recovered or eased to a warning by then: a later notice
+// doesn't take the place of the one Loom missed.
+func TestAnOutageThatEndsBeforeLoomIsReachedStillReachesItOnce(t *testing.T) {
+	ctx := context.Background()
+	// unreached opens hello's outage while the hook can't be reached.
+	unreached := func(t *testing.T) (*loomRig, int64) {
+		t.Helper()
+		r := newLoomRig(t)
+		r.setLoomURL("https://127.0.0.1:" + closedPort(t) + loomPath)
+		r.rounds(3, down("hello"))
+		inc := openIncident(t, r.w)
+		if !strings.Contains(inc.NotifyError, "it is tried again") || r.hasMarker(inc.ID) {
+			t.Fatalf("an unreachable hook: %q, marker %v", inc.NotifyError, r.hasMarker(inc.ID))
+		}
+		return r, inc.ID
+	}
+	// reachedOnce checks that Loom took the outage once, as the open
+	// notice it missed, and that nothing is owed any more.
+	reachedOnce := func(t *testing.T, r *loomRig, id int64) *state.Incident {
+		t.Helper()
+		r.rounds(20)
+		got := r.loom.got()
+		if len(got) != 1 || got[0].status != http.StatusAccepted {
+			t.Fatalf("Loom should take the outage once: %d requests", len(got))
+		}
+		body := got[0].read(t)
+		var evidence incident.Evidence
+		if err := json.Unmarshal(body.Evidence, &evidence); err != nil {
+			t.Fatal(err)
+		}
+		if body.Transition != TransitionOpen || body.Severity != state.SeverityCritical || !evidence.Late || r.marker(id).State != incident.LoomDelivered {
+			t.Fatalf("the body should be the outage, collected late: %+v, late %v", body, evidence.Late)
+		}
+		inc, err := r.w.Store.Incident(ctx, id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if inc.NotifyError != "" {
+			t.Fatalf("nothing should be owed: %q", inc.NotifyError)
+		}
+		return inc
+	}
+
+	t.Run("recovered", func(t *testing.T) {
+		r, id := unreached(t)
+		r.setLoomURL(r.loom.url())
+		r.rounds(2)
+		if inc := reachedOnce(t, r, id); inc.ResolvedAt.IsZero() {
+			t.Fatalf("hello should have recovered: %+v", inc)
+		}
+	})
+
+	t.Run("recovered while Loom is still away", func(t *testing.T) {
+		r, id := unreached(t)
+		r.rounds(1, down("hello"))
+		r.rounds(2)
+		inc, err := r.w.Store.Incident(ctx, id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if inc.ResolvedAt.IsZero() || !strings.Contains(inc.NotifyError, "loom_webhook: ") || len(r.loom.got()) != 0 {
+			t.Fatalf("a recovery should keep Loom owed: %+v", inc)
+		}
+		r.setLoomURL(r.loom.url())
+		reachedOnce(t, r, id)
+		if n := r.ntfy.count(); n != 2 {
+			t.Fatalf("ntfy should have the outage and its recovery once each: %d", n)
+		}
+	})
+
+	t.Run("eased while Loom is still away", func(t *testing.T) {
+		r, id := unreached(t)
+		r.rounds(1, down("hello"))
+		r.rounds(2, stale("hello"))
+		if inc := openIncident(t, r.w); inc.Severity != state.SeverityWarning || !strings.Contains(inc.NotifyError, "loom_webhook: ") {
+			t.Fatalf("easing should keep Loom owed: %+v", inc)
+		}
+		r.setLoomURL(r.loom.url())
+		r.rounds(5, stale("hello"))
+		if inc := reachedOnce(t, r, id); inc.ResolvedAt.IsZero() {
+			t.Fatalf("hello should have recovered: %+v", inc)
+		}
+	})
+}

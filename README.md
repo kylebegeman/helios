@@ -655,7 +655,11 @@ writes a marker beside the incident, in
 `/var/lib/bedrock/incidents/<id>/loom.json`, and never sends that incident
 again while the marker is there. A request that never went out, one cut
 off while it was written, or a 429, takes the marker back, so it is tried
-again like any way that failed.
+again like any way that failed. It is tried until Loom takes it, even after
+the outage has recovered or eased to a warning, and until then
+`helios alerts show <id>` reads NOT DELIVERED. The daemon keeps that retry
+in memory, so a restart drops it for an outage that has already recovered
+or eased.
 Otherwise the marker ends in one of these, which `helios alerts show <id>`
 reads back:
 
