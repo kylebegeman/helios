@@ -487,7 +487,7 @@ func (x *backingUp) appPrepareStep(rev *state.Revision, m *manifest.Manifest) ke
 			}
 			// The volumes mount over these inside the read-only tree, so
 			// the mountpoints have to be there already.
-			for _, v := range m.DataVolumes() {
+			for _, v := range m.BackedUpVolumes() {
 				if err := os.MkdirAll(filepath.Join(x.staging, "volumes", v), 0o700); err != nil {
 					return x.run.fail(err)
 				}
@@ -510,7 +510,7 @@ func (x *backingUp) appPrepareStep(rev *state.Revision, m *manifest.Manifest) ke
 func (x *backingUp) appSnapshotStep(rev *state.Revision, m *manifest.Manifest) kernel.Step {
 	app := x.target
 	return kernel.Step{
-		Name: "snapshot", Change: fmt.Sprintf("pause writers, dump and snapshot consistent data into bucket %s, then resume (30m limit)", x.bucket),
+		Name: "snapshot", Change: fmt.Sprintf("pause writers, dump and snapshot consistent data into bucket %s, then resume (30m limit)", x.bucket) + leftOut(m),
 		Apply: func(ctx context.Context, out io.Writer) error {
 			if err := checkReleaseStoreAccess(ctx, x.b.Store, app); err != nil {
 				return err
@@ -542,10 +542,7 @@ func (x *backingUp) appSnapshotStep(rev *state.Revision, m *manifest.Manifest) k
 			if err := x.ensure(ctx, r, out); err != nil {
 				return x.run.fail(err)
 			}
-			mounts := []string{restic.DirMount(x.staging, true)}
-			for _, v := range m.DataVolumes() {
-				mounts = append(mounts, restic.VolumeMount(docker.VolumeName(app, v), v, true))
-			}
+			mounts := snapshotMounts(x.staging, app, m)
 			err = withQuiescedWriters(ctx, e, x.b.Store.Path(), m, out, func(ctx context.Context) error {
 				if err := checkReleaseStoreAccess(ctx, x.b.Store, app); err != nil {
 					return err
@@ -577,6 +574,30 @@ func (x *backingUp) appSnapshotStep(rev *state.Revision, m *manifest.Manifest) k
 			fmt.Fprintf(out, "snapshot %s: %d files, %s, %s new\n", short(x.summary.SnapshotID), x.summary.TotalFiles, HumanBytes(x.summary.TotalBytes), HumanBytes(x.summary.DataAdded))
 			return nil
 		},
+	}
+}
+
+// snapshotMounts are what an app snapshot reads: the staging tree, read
+// only, with each volume in backups over its mountpoint.
+func snapshotMounts(staging, app string, m *manifest.Manifest) []string {
+	mounts := []string{restic.DirMount(staging, true)}
+	for _, v := range m.BackedUpVolumes() {
+		mounts = append(mounts, restic.VolumeMount(docker.VolumeName(app, v), v, true))
+	}
+	return mounts
+}
+
+// leftOut names the volumes an app snapshot leaves out, for its plan;
+// with none, it is empty and the plan reads as it always has.
+func leftOut(m *manifest.Manifest) string {
+	out := m.VolumesOutOfBackups()
+	switch len(out) {
+	case 0:
+		return ""
+	case 1:
+		return "; volume " + out[0] + " is left out (backup: false)"
+	default:
+		return "; volumes " + strings.Join(out, ", ") + " are left out (backup: false)"
 	}
 }
 

@@ -99,6 +99,15 @@ class ManifestSchemaTests(unittest.TestCase):
         manifest["workloads"]["release"]["kind"] = "worker"
         self.assert_invalid(manifest)
 
+    def test_a_volume_may_be_left_out_of_backups(self) -> None:
+        manifest = {"app": "notes", "workloads": {"worker": {"kind": "worker", "image": "example/notes:1"}},
+                    "data": {"volumes": {"state": {}, "scratch": {"backup": False}}}}
+        self.assert_valid(manifest)
+        manifest["data"]["volumes"]["scratch"]["backup"] = True
+        self.assert_valid(manifest)
+        manifest["data"]["volumes"]["scratch"]["backup"] = "no"
+        self.assert_invalid(manifest)
+
     def test_preview_routes_require_sign_in(self) -> None:
         manifest = {"app": "demo-pr-nav", "preview": {"of": "demo", "branch": "nav", "pinned": True},
                     "workloads": {"web": {"kind": "web", "image": "app", "port": 8080,

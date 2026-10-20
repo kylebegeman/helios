@@ -201,7 +201,14 @@ type Postgres struct {
 // Volume is a named directory an app keeps.
 type Volume struct {
 	Description string `yaml:"description,omitempty" json:"description,omitempty"`
+	// Backup false leaves the volume out of the app's backups, for what the
+	// app rebuilds or fetches again: caches, and copies it keeps of itself.
+	// A restore, drill or move creates it empty. Default true.
+	Backup *bool `yaml:"backup,omitempty" json:"backup,omitempty"`
 }
+
+// InBackups reports whether the volume's files go into the app's backups.
+func (v Volume) InBackups() bool { return v.Backup == nil || *v.Backup }
 
 // Mount puts a volume in a workload.
 type Mount struct {
@@ -913,8 +920,17 @@ func (m *Manifest) validateData(fail func(format string, args ...any)) {
 				fail("data.volumes: %q must be lowercase letters, digits and hyphens", name)
 			}
 			if name == DatabaseVolume || name == ObjectsVolume {
-				fail("data.volumes: %q is helios's own volume for the %s; pick another name", name, map[string]string{DatabaseVolume: "database", ObjectsVolume: "object store"}[name])
+				what := map[string]string{DatabaseVolume: "database", ObjectsVolume: "object store"}[name]
+				fail("data.volumes: %q is helios's own volume for the %s; pick another name", name, what)
+				if !m.Data.Volumes[name].InBackups() {
+					fail("data.volumes.%s.backup: helios always backs up the app's %s; it can't be left out", name, what)
+				}
 			}
+		}
+		// The database's dump goes into every backup, so an app with one
+		// keeps something in backups even with every volume left out.
+		if out := m.VolumesOutOfBackups(); len(out) > 0 && len(m.BackedUpVolumes()) == 0 && m.Data.Postgres == nil && (m.Backup == nil || !m.Backup.Off) {
+			fail("data.volumes.%s.backup: false leaves no data in the app's backups; to back up none of it, set backup.off: true instead", out[0])
 		}
 		if pg := m.Data.Postgres; pg != nil {
 			switch pg.Version {
@@ -1262,6 +1278,31 @@ func (m *Manifest) DataVolumes() []string {
 		names = append(names, ObjectsVolume)
 	}
 	sort.Strings(names)
+	return names
+}
+
+// BackedUpVolumes are the DataVolumes whose files go into the app's
+// backups: all but those marked backup: false. The object store's volume
+// always does.
+func (m *Manifest) BackedUpVolumes() []string {
+	var names []string
+	for _, name := range m.DataVolumes() {
+		if v, declared := m.Data.Volumes[name]; !declared || v.InBackups() {
+			names = append(names, name)
+		}
+	}
+	return names
+}
+
+// VolumesOutOfBackups are the DataVolumes marked backup: false, which a
+// restore, drill or move creates empty.
+func (m *Manifest) VolumesOutOfBackups() []string {
+	var names []string
+	for _, name := range m.DataVolumes() {
+		if v, declared := m.Data.Volumes[name]; declared && !v.InBackups() {
+			names = append(names, name)
+		}
+	}
 	return names
 }
 
