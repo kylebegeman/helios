@@ -752,8 +752,9 @@ it again from nothing, and a resumed snapshot snapshots the copy it kept, or
 fails and removes it if the stopped one had begun its upload. A failure after
 the upload began first stops any restic helper still reading the copy, such as
 one a killed daemon left running, and keeps the copy, saying so, while it
-can't. The next backup of that app or the machine replaces anything else left
-there. A stopped backup's run shows as running in `helios backups` until the
+can't. The next backup of that app or the machine replaces anything left there
+once it has stopped any such helper, and refuses the same way while it can't.
+A stopped backup's run shows as running in `helios backups` until the
 resumed attempt closes it with its own result. When its operation ends without
 resuming instead, because the plan changed or can't be rebuilt in the
 meantime, the run is closed as failed with that reason, as is one a killed

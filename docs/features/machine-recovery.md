@@ -34,7 +34,8 @@ removes it if the stopped one had begun its upload. A failure after the upload
 began first stops any restic helper still reading the copy, such as one a
 killed daemon left running, since restic saves what it read of a vanishing
 tree as a snapshot. While it can't stop one, it keeps the copy and says so. The
-next machine backup replaces anything else left there.
+next machine backup replaces anything left there once it has stopped any such
+helper, and refuses the same way while it can't.
 
 A machine that goes 36 hours without a successful machine backup raises a
 warning about machine backups in `helios alerts`, as does one whose machine

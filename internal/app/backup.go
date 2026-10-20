@@ -547,6 +547,24 @@ func (x *backingUp) dropStaging(ctx context.Context) error {
 	return removeStaging(x.staging)
 }
 
+// clearStaging empties the staging for a prepare to fill. A staging
+// already there may still have a restic helper reading it: a failed
+// capture leaves its staging to a helper Docker stopped answering about,
+// and that helper reads on. restic saves what it read of a vanishing tree
+// as a snapshot, so the helper goes first, and while one may still read
+// the staging the prepare refuses, leaving it as it is.
+func (x *backingUp) clearStaging(ctx context.Context) error {
+	if _, err := os.Lstat(x.staging); !errors.Is(err, os.ErrNotExist) {
+		if err := x.stopSnapshotHelpers(ctx); err != nil {
+			return fmt.Errorf("a restic helper may still read it: %w", err)
+		}
+	}
+	if err := removeStaging(x.staging); err != nil {
+		return err
+	}
+	return os.MkdirAll(x.staging, 0o700)
+}
+
 // stopSnapshotHelpers stops and removes the restic helpers still reading
 // the staging.
 func (x *backingUp) stopSnapshotHelpers(ctx context.Context) error {
@@ -638,7 +656,7 @@ func (x *backingUp) appPrepareStep(rev *state.Revision, m *manifest.Manifest) ke
 			if err := x.beginBackup(ctx); err != nil {
 				return err
 			}
-			if err := resetDir(x.staging); err != nil {
+			if err := x.clearStaging(ctx); err != nil {
 				return x.failStaged(ctx, err)
 			}
 			if x.receiptDir != "" {
@@ -794,7 +812,7 @@ func (x *backingUp) machinePrepareStep(hostname string) kernel.Step {
 			if err := x.beginBackup(ctx); err != nil {
 				return err
 			}
-			if err := resetDir(x.staging); err != nil {
+			if err := x.clearStaging(ctx); err != nil {
 				return x.failStaged(ctx, err)
 			}
 			if x.receiptDir != "" {

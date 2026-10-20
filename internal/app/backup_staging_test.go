@@ -1,6 +1,7 @@
 package app
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -193,6 +194,9 @@ func TestAnInterruptedMachineBackupPrepareLeavesItsStagingToTheResumedPrepare(t 
 		t.Fatal(err)
 	}
 	recoveryImageSizes = func(context.Context, func() (*docker.Engine, error), []string) (int64, error) { return 0, nil }
+	// Before it starts again from nothing, the resumed prepare asks Docker
+	// for a restic helper still reading what it staged. None is.
+	dockertest.New(t)
 	if err := prepare.Apply(context.Background(), io.Discard); err != nil {
 		t.Fatal(err)
 	}
@@ -750,6 +754,105 @@ func TestAFailedSnapshotKeepsItsStagingWhileItCantStopTheHelperThatReadsIt(t *te
 			}
 			lastRunFailed(t, b.Store, map[bool]string{false: "hello", true: manifest.ReservedApp}[machine], why)
 		})
+	}
+}
+
+// That helper reads on after its backup fails, so the next backup's
+// prepare stops it before emptying the staging for itself: restic saves
+// what it read of a vanishing tree as a snapshot, and that one would be
+// the latest. A prepare that still can't stop it refuses the same way,
+// leaving the staging as it is.
+func TestTheNextBackupStopsTheHelperAFailedSnapshotLeftBeforeEmptyingItsStaging(t *testing.T) {
+	for _, dockerd := range []string{"answers again", "still forgets"} {
+		for _, machine := range []bool{false, true} {
+			t.Run(dockerd+"/"+map[bool]string{false: "app", true: "machine"}[machine], func(t *testing.T) {
+				b, raw := backupIdentityFixture(t, machine)
+				owner := map[bool]string{false: "hello", true: manifest.ReservedApp}[machine]
+				saved := recoveryImageSizes
+				recoveryImageSizes = func(context.Context, func() (*docker.Engine, error), []string) (int64, error) { return 0, nil }
+				t.Cleanup(func() { recoveryImageSizes = saved })
+				at := time.Now().UTC().Truncate(time.Second)
+				summary, _ := json.Marshal(struct {
+					Type string `json:"message_type"`
+					restic.Summary
+				}{"summary", restic.Summary{SnapshotID: strings.Repeat("d", 64), BackupStart: at, BackupEnd: at.Add(time.Second), TotalFiles: 2, TotalBytes: 20}})
+				fake := dockertest.New(t)
+				front := &dockerForgets{fake: fake}
+				var next atomic.Bool
+				fake.OnCreate = func(c dockertest.Container) {
+					fake.Update(c.Name, func(c *dockertest.Container) {
+						c.ExitAfter = 1
+						switch c.Cmd[0] {
+						case "init":
+							c.ExitCode, c.Logs = 1, `{"message_type":"exit_error","code":1,"message":"Fatal: config file already exists"}`
+						case "backup":
+							if next.Load() {
+								c.Logs = string(summary)
+								return
+							}
+							c.ExitAfter, c.Logs = 0, `{"message_type":"status"}`
+							front.name.Store(c.Name)
+							front.id.Store(c.ID)
+						}
+					})
+				}
+				srv := httptest.NewServer(front)
+				t.Cleanup(srv.Close)
+				t.Setenv("DOCKER_HOST", "tcp"+strings.TrimPrefix(srv.URL, "http"))
+				// The real definition, whose machine prepare is the one
+				// that empties the staging.
+				reg := kernel.Registry{}
+				reg.Add(b.Backup)
+				engine := kernel.New(b.Store, reg, "daemon")
+				const why = "a restic helper may still read it"
+				if receipt, err := engine.Run(context.Background(), BackupKind, raw, func(kernel.Event) {}); err != nil || receipt.Status != state.Failed || !strings.Contains(receipt.Error, why) {
+					t.Fatalf("the first backup must fail, leaving its staging to its helper: %+v %v", receipt, err)
+				}
+				helper, _ := front.name.Load().(string)
+				if c, ok := fake.Container(helper); !ok || !c.Running {
+					t.Fatal("the helper stopped, so this doesn't test what it means to")
+				}
+				staging := backupStaging(b, machine)
+				read := filepath.Join(staging, "being-read")
+				if err := os.WriteFile(read, []byte("what the helper reads"), 0o600); err != nil {
+					t.Fatal(err)
+				}
+				owned, err := os.ReadFile(staging + ".operation.json")
+				if err != nil {
+					t.Fatal(err)
+				}
+				removeStaging = func(path string) error {
+					if c, ok := fake.Container(helper); ok && c.Running {
+						t.Errorf("%s was removed while the failed snapshot's helper still read it", path)
+					}
+					return os.RemoveAll(path)
+				}
+				t.Cleanup(func() { removeStaging = os.RemoveAll })
+
+				next.Store(true)
+				front.forgot.Store(dockerd == "still forgets")
+				receipt, err := engine.Run(context.Background(), BackupKind, raw, func(kernel.Event) {})
+				if dockerd == "answers again" {
+					if err != nil || receipt.Status != state.Succeeded {
+						t.Fatalf("the next backup must succeed once Docker answers: %+v %v", receipt, err)
+					}
+					if _, ok := fake.Container(helper); ok {
+						t.Error("the failed snapshot's helper outlived the next backup")
+					}
+					return
+				}
+				if err != nil || receipt.Status != state.Failed || !strings.Contains(receipt.Error, why) {
+					t.Fatalf("the next backup must refuse while the helper may read its staging: %+v %v", receipt, err)
+				}
+				if c, ok := fake.Container(helper); !ok || !c.Running {
+					t.Error("the helper stopped, so this doesn't test what it means to")
+				}
+				if now, err := os.ReadFile(staging + ".operation.json"); err != nil || !bytes.Equal(now, owned) || !onDisk(t, read) {
+					t.Errorf("the refusing backup changed the staging the helper reads: %v", err)
+				}
+				lastRunFailed(t, b.Store, owner, why)
+			})
+		}
 	}
 }
 
