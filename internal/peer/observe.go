@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
-	"sync"
 )
 
 // Observation is what a machine that only watches found of one server in
@@ -45,11 +44,11 @@ func (s *Source) ObserveOnly(ctx context.Context) ([]Observation, error) {
 	}
 	rctx, cancel := context.WithTimeout(ctx, s.roundDeadline())
 	looks := make([]look, len(c.Peers))
-	var wg sync.WaitGroup
+	var g group
 	for i, p := range c.Peers {
-		wg.Go(func() { looks[i] = s.look(rctx, p, c.Token) })
+		g.Go(func() { looks[i] = s.look(rctx, p, c.Token) })
 	}
-	wg.Wait()
+	g.Wait()
 	cancel()
 
 	// A machine that only watches never sends a page, so no server ever
@@ -66,11 +65,11 @@ func (s *Source) ObserveOnly(ctx context.Context) ([]Observation, error) {
 		return nil, err
 	}
 	for i, p := range c.Peers {
-		wg.Go(func() {
-			observed[i].View = word(attempt(ctx, func(ctx context.Context) error { return s.pushView(ctx, p.Mesh, c.Token, body) }))
+		g.Go(func() {
+			observed[i].View = word(attempt(ctx, s.log, func(ctx context.Context) error { return s.pushView(ctx, p.Mesh, c.Token, body) }))
 		})
 	}
-	wg.Wait()
+	g.Wait()
 	return observed, nil
 }
 

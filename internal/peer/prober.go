@@ -5,6 +5,7 @@ import (
 	"crypto/tls"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"maps"
 	"math"
@@ -13,6 +14,7 @@ import (
 	"net/netip"
 	"net/url"
 	"regexp"
+	"runtime/debug"
 	"slices"
 	"sort"
 	"strconv"
@@ -86,7 +88,8 @@ type Source struct {
 	Store   *state.Store
 	// Now is the clock; time.Now when nil.
 	Now func() time.Time
-	// Log reports what the watch can't keep; nothing when nil.
+	// Log reports what the watch can't keep, and a path that panicked
+	// once nothing waited for it; nothing when nil.
 	Log func(format string, args ...any)
 
 	// The paths, replaced in tests; nil means the real ones. fetch reads
@@ -207,6 +210,7 @@ func (s *Source) Save() error {
 // hold. Where peer watch isn't set up it finds nothing. Where its
 // configuration can't be read it holds every open peer incident as it
 // is, so nothing about a peer pages or recovers on a look never taken.
+// A path that panics panics again here, on the caller's goroutine.
 func (s *Source) Observe(ctx context.Context) []watch.Condition {
 	s.rounds.Lock()
 	defer s.rounds.Unlock()
@@ -229,12 +233,12 @@ func (s *Source) Observe(ctx context.Context) []watch.Condition {
 	defer cancel()
 	var selfCheck bool
 	looks := make([]look, len(c.Peers))
-	var wg sync.WaitGroup
-	wg.Go(func() { selfCheck = s.public(rctx, c.Self.Public) == WordOK })
+	var g group
+	g.Go(func() { selfCheck = s.public(rctx, c.Self.Public) == WordOK })
 	for i, p := range c.Peers {
-		wg.Go(func() { looks[i] = s.look(rctx, p, c.Token) })
+		g.Go(func() { looks[i] = s.look(rctx, p, c.Token) })
 	}
-	wg.Wait()
+	g.Wait()
 	return s.judge(ctx, c, selfCheck, looks)
 }
 
@@ -382,15 +386,15 @@ func (s *Source) look(ctx context.Context, p Peer, token string) look {
 		handshake = s.shake
 	}
 	var l look
-	var wg sync.WaitGroup
-	wg.Go(func() { l.paths.Summary, l.summary = s.summaryPath(ctx, p, token) })
-	wg.Go(func() {
-		l.paths.TLS = word(attempt(ctx, func(ctx context.Context) error {
+	var g group
+	g.Go(func() { l.paths.Summary, l.summary = s.summaryPath(ctx, p, token) })
+	g.Go(func() {
+		l.paths.TLS = word(attempt(ctx, s.log, func(ctx context.Context) error {
 			return handshake(ctx, hostname(p.Public[0]), net.JoinHostPort(host, "443"))
 		}))
 	})
-	wg.Go(func() { l.paths.Public = s.public(ctx, p.Public) })
-	wg.Wait()
+	g.Go(func() { l.paths.Public = s.public(ctx, p.Public) })
+	g.Wait()
 	return l
 }
 
@@ -401,7 +405,7 @@ func (s *Source) summaryPath(ctx context.Context, p Peer, token string) (string,
 	if fetch == nil {
 		fetch = s.fetchSummary
 	}
-	summary, err := within(ctx, func(ctx context.Context) (Summary, error) { return fetch(ctx, p.Mesh, token) })
+	summary, err := within(ctx, s.log, func(ctx context.Context) (Summary, error) { return fetch(ctx, p.Mesh, token) })
 	switch {
 	case err != nil:
 		return word(err), nil
@@ -424,11 +428,11 @@ func (s *Source) public(ctx context.Context, urls []string) string {
 		check = func(ctx context.Context, u string) error { return app.RunCheck(ctx, manifest.Check{URL: u}) }
 	}
 	failures := make([]error, len(urls))
-	var wg sync.WaitGroup
+	var g group
 	for i, u := range urls {
-		wg.Go(func() { failures[i] = attempt(ctx, func(ctx context.Context) error { return check(ctx, u) }) })
+		g.Go(func() { failures[i] = attempt(ctx, s.log, func(ctx context.Context) error { return check(ctx, u) }) })
 	}
-	wg.Wait()
+	g.Wait()
 	for _, err := range failures {
 		if err == nil {
 			return WordOK
@@ -513,32 +517,119 @@ func meshOnly(_, address string, _ syscall.RawConn) error {
 }
 
 // within runs one path under PathTimeout and calls it a timeout when it
-// hasn't finished in time, even if it never returns.
-func within[T any](ctx context.Context, path func(context.Context) (T, error)) (T, error) {
+// hasn't finished in time, even if it never returns. A path that panics
+// in time panics again here, on the goroutine that asked. One that
+// panics once its time is up has nobody waiting for it, and is logged
+// with log instead.
+func within[T any](ctx context.Context, log func(string, ...any), path func(context.Context) (T, error)) (T, error) {
 	ctx, cancel := context.WithTimeout(ctx, PathTimeout)
 	defer cancel()
 	type result struct {
 		value T
 		err   error
+		panic *pathPanic
 	}
 	done := make(chan result, 1)
+	// gone is set once within stops waiting, under mu, so a panic is
+	// either raised here or logged, and never lost between the two.
+	var mu sync.Mutex
+	gone := false
 	go func() {
+		defer func() {
+			if p := recover(); p != nil {
+				kept := caught(p)
+				mu.Lock()
+				defer mu.Unlock()
+				if gone {
+					log("peer watch: panic once its path had timed out: %v", kept)
+					return
+				}
+				done <- result{panic: &kept}
+			}
+		}()
 		value, err := path(ctx)
-		done <- result{value, err}
+		done <- result{value: value, err: err}
 	}()
+	var r result
 	select {
-	case r := <-done:
-		return r.value, r.err
+	case r = <-done:
 	case <-ctx.Done():
-		var none T
-		return none, ctx.Err()
+		mu.Lock()
+		gone = true
+		mu.Unlock()
+		select {
+		case r = <-done:
+		default:
+			r.err = ctx.Err()
+		}
 	}
+	if r.panic != nil {
+		panic(*r.panic)
+	}
+	return r.value, r.err
 }
 
 // attempt is within, for a path that finds nothing but whether it failed.
-func attempt(ctx context.Context, path func(context.Context) error) error {
-	_, err := within(ctx, func(ctx context.Context) (struct{}, error) { return struct{}{}, path(ctx) })
+func attempt(ctx context.Context, log func(string, ...any), path func(context.Context) error) error {
+	_, err := within(ctx, log, func(ctx context.Context) (struct{}, error) { return struct{}{}, path(ctx) })
 	return err
+}
+
+// group runs a round's paths on goroutines of their own, and waits for
+// them. A panic on one of those goroutines would stop the daemon, as
+// nothing on another goroutine can recover it, so the group keeps the
+// first with the stack it was raised on, and Wait panics with it on the
+// goroutine that waits. In the daemon that is the watch's own, where its
+// guard holds the round's incidents.
+type group struct {
+	wg     sync.WaitGroup
+	mu     sync.Mutex
+	caught *pathPanic
+}
+
+// Go runs fn on a goroutine of the group's.
+func (g *group) Go(fn func()) {
+	g.wg.Go(func() {
+		defer func() {
+			if p := recover(); p != nil {
+				kept := caught(p)
+				g.mu.Lock()
+				defer g.mu.Unlock()
+				if g.caught == nil {
+					g.caught = &kept
+				}
+			}
+		}()
+		fn()
+	})
+}
+
+// Wait waits for the group's goroutines, and panics with the first panic
+// on any of them.
+func (g *group) Wait() {
+	g.wg.Wait()
+	if g.caught != nil {
+		panic(*g.caught)
+	}
+}
+
+// pathPanic is a panic on one of a round's goroutines, with the stack it
+// was raised on, to be raised again where the round waits for it.
+type pathPanic struct {
+	value any
+	stack []byte
+}
+
+func (p pathPanic) Error() string { return fmt.Sprintf("%v\n%s", p.value, p.stack) }
+
+// caught keeps a panic just recovered with the stack it was raised on,
+// which the deferred function that recovered it still runs on. A panic
+// raised again from a goroutine further down goes on as it was kept.
+func caught(p any) pathPanic {
+	if kept, ok := p.(pathPanic); ok {
+		return kept
+	}
+	return pathPanic{value: p, stack: debug.Stack()}
 }
 
 // word is what a path's error comes to: one of a fixed few words, so

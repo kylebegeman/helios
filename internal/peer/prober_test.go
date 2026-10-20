@@ -401,6 +401,98 @@ func TestProbesEndAtTheRoundDeadline(t *testing.T) {
 	}
 }
 
+// A path that panics, on any goroutine a round looks on, panics again on
+// the goroutine that asked for the round, with the stack it was raised
+// on, where the daemon's guard holds the round's incidents. On any other
+// goroutine nothing could recover it, and the daemon would stop. The
+// watch is left as it was, and its next round looks as usual.
+func TestAPathThatPanicsPanicsWhereTheRoundWasAsked(t *testing.T) {
+	panicking := func(path string) { panic("a defect in the " + path + " path") }
+	for _, path := range []struct {
+		name   string
+		breaks func(w *watcher)
+	}{
+		{"summary", func(w *watcher) {
+			w.src.fetch = func(context.Context, string, string) (Summary, error) { panicking("summary"); return Summary{}, nil }
+		}},
+		{"edge", func(w *watcher) {
+			w.src.handshake = func(context.Context, string, string) error { panicking("edge"); return nil }
+		}},
+		{"public", func(w *watcher) {
+			w.src.check = func(_ context.Context, u string) error {
+				if u == "https://web2.example.test" {
+					panicking("public")
+				}
+				return nil
+			}
+		}},
+		{"self-check", func(w *watcher) {
+			w.src.check = func(_ context.Context, u string) error {
+				if u == "https://web1.example.test" {
+					panicking("self-check")
+				}
+				return nil
+			}
+		}},
+	} {
+		t.Run(path.name, func(t *testing.T) {
+			w := watching(t, peerNamed("web2"))
+			fetch, handshake, check := w.src.fetch, w.src.handshake, w.src.check
+			path.breaks(w)
+			raised := func() (p any) {
+				defer func() { p = recover() }()
+				w.src.Observe(context.Background())
+				return nil
+			}()
+			if got := fmt.Sprint(raised); !strings.Contains(got, "a defect in the "+path.name+" path") || !strings.Contains(got, "prober_test.go") {
+				t.Fatalf("raised %q, want the panic and the stack it was raised on", got)
+			}
+
+			w.src.fetch, w.src.handshake, w.src.check = fetch, handshake, check
+			done := make(chan Paths, 1)
+			go func() {
+				w.src.Observe(context.Background())
+				done <- w.src.Last().Paths["web2"]
+			}()
+			select {
+			case got := <-done:
+				if want := (Paths{Summary: WordOK, TLS: WordOK, Public: WordOK}); got != want {
+					t.Fatalf("the next round found %+v, want %+v", got, want)
+				}
+			case <-time.After(5 * time.Second):
+				t.Fatal("the next round never finished")
+			}
+		})
+	}
+}
+
+// A path that panics once its time is up has nobody waiting for it: the
+// path is a timeout, and the panic is logged with the stack it was
+// raised on.
+func TestAPathThatPanicsOnceItTimedOutIsLogged(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	late := make(chan struct{})
+	logged := make(chan string, 1)
+	log := func(format string, args ...any) { logged <- fmt.Sprintf(format, args...) }
+	err := attempt(ctx, log, func(context.Context) error {
+		<-late
+		panic("a defect in a late path")
+	})
+	if word(err) != WordTimeout {
+		t.Fatalf("the path ended in %v", err)
+	}
+	close(late)
+	select {
+	case line := <-logged:
+		if !strings.HasPrefix(line, "peer watch: panic once its path had timed out: a defect in a late path") || !strings.Contains(line, "prober_test.go") {
+			t.Fatalf("logged %q", line)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the late panic was never logged")
+	}
+}
+
 // failureWord is any word a path can end in: one of a fixed few, or a
 // status code, never anything an error held.
 var failureWord = regexp.MustCompile(`^(ok|stale|untrusted|mismatch|timeout|refused|reset|dns|tls|unreachable|failed|status [1-5][0-9]{2})$`)

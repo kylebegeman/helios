@@ -393,7 +393,10 @@ func newPeerObserve(a *app) *cobra.Command {
 // observe is one run of helios peer observe: a line per server, as text
 // or JSON, or why there is none, and where the lines go.
 func (a *app) observe(ctx context.Context) (io.Writer, []string, error) {
-	observed, err := (&peer.Source{Secrets: a.secretsStore()}).ObserveOnly(ctx)
+	src := &peer.Source{Secrets: a.secretsStore(), Log: func(format string, args ...any) {
+		fmt.Fprintln(a.stderr, "helios: "+fmt.Sprintf(format, args...))
+	}}
+	observed, err := src.ObserveOnly(ctx)
 	switch {
 	case err != nil:
 		return nil, nil, err
