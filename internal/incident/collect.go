@@ -30,9 +30,10 @@ type Secrets interface {
 	Load(app string, version int) (map[string]string, error)
 }
 
-// Engine reads a container's output from Docker; *docker.Engine is one.
+// Engine reads a container's stdout and stderr from Docker;
+// *docker.Engine is one.
 type Engine interface {
-	Logs(ctx context.Context, name string, opts docker.LogOptions, w io.Writer) error
+	LogStreams(ctx context.Context, name string, opts docker.LogOptions, stdout, stderr io.Writer) error
 }
 
 // Journal reads containers' output from the system journal;
@@ -382,7 +383,9 @@ func (c *collection) suppressed(ctx context.Context) {
 }
 
 // engineLogs reads the active revision's containers the journal didn't
-// have. The engine gives no times or streams.
+// have. The engine gives no times, and its lines keep no stream: stdout
+// and stderr are read apart only to tell a line's chunks from the other
+// stream's lines.
 func (c *collection) engineLogs(ctx context.Context, seen map[string]bool) []Log {
 	if c.src.Engine == nil {
 		return nil
@@ -403,9 +406,9 @@ func (c *collection) engineLogs(ctx context.Context, seen map[string]bool) []Log
 		if seen[name] {
 			continue
 		}
-		out := &capped{max: docker.JournalReadLimit}
+		out := newEngineOutput(docker.JournalReadLimit)
 		opts := docker.LogOptions{Tail: strconv.Itoa(engineTail), Since: c.e.Window.Since, Until: c.e.Window.Until}
-		err := c.src.Engine.Logs(ctx, name, opts, out)
+		err := c.src.Engine.LogStreams(ctx, name, opts, &out.stdout, &out.stderr)
 		if docker.IsNotFound(err) {
 			continue
 		}
@@ -413,16 +416,10 @@ func (c *collection) engineLogs(ctx context.Context, seen map[string]bool) []Log
 			c.fail(sourceEngine, fmt.Errorf("%s: %w", name, err))
 			continue
 		}
-		text := out.String()
 		if out.cut {
-			text = text[:strings.LastIndexByte(text, '\n')+1]
 			c.e.Truncated = append(c.e.Truncated, "logs: the engine read of "+c.redact.String(name)+" stopped at 8 MiB")
 		}
-		text = strings.TrimSuffix(text, "\n")
-		if text == "" {
-			continue
-		}
-		lines := wholeLines(strings.Split(text, "\n"))
+		lines := out.wholeLines()
 		if len(lines) == 0 {
 			continue
 		}
@@ -444,44 +441,102 @@ const (
 	engineTail  = linesPerContainer + 1
 )
 
-// wholeLines leaves out the engine's lines that could start partway
-// through another, where a secret could be cut. The first line can be
-// the end of one whose first chunks the tail left behind, unless there
-// are too few chunks for the tail to have cut anything. And stdout and
-// stderr share the output with nothing between a chunk and what comes
-// after it, so a line that follows one holding a whole chunk can be the
-// rest of that.
-func wholeLines(lines []string) []string {
+// engineOutput splits a container's stdout and stderr into lines, in the
+// order each ends, keeping the first max bytes of the two.
+type engineOutput struct {
+	stdout, stderr engineStream
+	max, size      int
+	// cut is whether there were more than max bytes.
+	cut   bool
+	lines []engineLine
+}
+
+// engineStream is one of the streams an engineOutput reads. Docker logs
+// each in chunks of its own, so a line's chunks follow one another in
+// it, but the other stream can write any number of lines between them.
+type engineStream struct {
+	out   *engineOutput
+	other *engineStream
+	// line is the line it is writing, up to its last chunk.
+	line []byte
+	// ended is whether it has ended a line, and broken whether the other
+	// stream wrote between two chunks of this one.
+	ended, broken bool
+}
+
+// engineLine is a line an engineStream wrote.
+type engineLine struct {
+	text string
+	// first is its stream's first line, which can be the rest of one
+	// whose first chunks the tail left behind.
+	first bool
+	// broken is whether the other stream wrote between its chunks, or the
+	// read stopped inside it.
+	broken bool
+}
+
+func newEngineOutput(max int) *engineOutput {
+	o := &engineOutput{max: max}
+	o.stdout = engineStream{out: o, other: &o.stderr}
+	o.stderr = engineStream{out: o, other: &o.stdout}
+	return o
+}
+
+func (s *engineStream) Write(p []byte) (int, error) {
+	n, o := len(p), s.out
+	room := max(o.max-o.size, 0)
+	o.cut = o.cut || n > room
+	p = p[:min(n, room)]
+	o.size += len(p)
+	if len(p) > 0 && len(s.other.line) > 0 {
+		s.other.broken = true
+	}
+	for {
+		i := bytes.IndexByte(p, '\n')
+		if i < 0 {
+			s.line = append(s.line, p...)
+			return n, nil
+		}
+		s.line = append(s.line, p[:i]...)
+		o.lines = append(o.lines, s.current())
+		s.line, s.ended, s.broken = s.line[:0], true, false
+		p = p[i+1:]
+	}
+}
+
+// current is the line s is writing as it stands.
+func (s *engineStream) current() engineLine {
+	return engineLine{text: string(s.line), first: !s.ended, broken: s.broken}
+}
+
+// wholeLines is the output's lines less those that could start or end
+// partway through another, where a secret could be cut: the first of
+// each stream, unless there are too few chunks for the tail to have cut
+// anything, and one the read stopped inside. A line the other stream
+// wrote between the chunks of is left out too, however many lines that
+// was, rather than trusted to have been put back together whole.
+func (o *engineOutput) wholeLines() []string {
+	all := slices.Clone(o.lines)
+	for _, s := range []*engineStream{&o.stdout, &o.stderr} {
+		if len(s.line) > 0 {
+			l := s.current()
+			l.broken = l.broken || o.cut
+			all = append(all, l)
+		}
+	}
 	chunks := 0
-	for _, l := range lines {
-		chunks += len(l)/dockerChunk + 1
+	for _, l := range all {
+		chunks += len(l.text)/dockerChunk + 1
 	}
 	var out []string
-	for i, l := range lines {
-		if i == 0 && chunks >= engineTail || i > 0 && len(lines[i-1]) >= dockerChunk {
+	for _, l := range all {
+		if l.broken || l.first && chunks >= engineTail {
 			continue
 		}
-		out = append(out, l)
+		out = append(out, l.text)
 	}
 	return out
 }
-
-// capped keeps the first max bytes written to it, and whether there were
-// more.
-type capped struct {
-	buf bytes.Buffer
-	max int
-	cut bool
-}
-
-func (b *capped) Write(p []byte) (int, error) {
-	room := max(b.max-b.buf.Len(), 0)
-	b.buf.Write(p[:min(len(p), room)])
-	b.cut = b.cut || len(p) > room
-	return len(p), nil
-}
-
-func (b *capped) String() string { return b.buf.String() }
 
 // history is the key's earlier incidents, newest first.
 func (c *collection) history(ctx context.Context, key string) {

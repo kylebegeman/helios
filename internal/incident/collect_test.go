@@ -226,7 +226,7 @@ func TestAnEnvValueThatIsOneOfHeliosOwnWordsIsNoLeak(t *testing.T) {
 			logs = append(logs, l.Container+": "+line.Text)
 		}
 	}
-	want := []string{"[redacted WORKER_HOST]: working", "bedrock-web-web-r7: lookup through [redacted DNS_PROVIDER] timed out"}
+	want := []string{"[redacted WORKER_HOST]: short", "[redacted WORKER_HOST]: working", "bedrock-web-web-r7: lookup through [redacted DNS_PROVIDER] timed out"}
 	if !slices.Equal(logs, want) {
 		t.Fatalf("logs %q", logs)
 	}
@@ -443,9 +443,9 @@ func TestALogLineThatLostItsFirstChunkIsLeftOut(t *testing.T) {
 }
 
 // The engine's tail counts Docker's 16 KiB chunks rather than lines,
-// stdout and stderr share its output, and its read stops at 8 MiB, so a
-// line can start or end partway through a secret; such lines are left
-// out.
+// either stream can write between two chunks of the other's line, and its
+// read stops at 8 MiB, so a line can start or end partway through a
+// secret; such lines are left out.
 func TestEngineLinesThatMayBePartOfAnotherAreLeftOut(t *testing.T) {
 	store := openStore(t)
 	saveRevision(t, store, "web", "r7", nil, map[string]string{"web": "bedrock-web-web-r7"})
@@ -476,23 +476,31 @@ func TestEngineLinesThatMayBePartOfAnotherAreLeftOut(t *testing.T) {
 			total:  400, first: "GET /items/0 200",
 		},
 		{
-			// The line after the long one goes too: from the other
-			// stream it could have been the long one's rest.
 			name:   "the tail starts inside a line",
 			output: append([]string{chunk("", "x", cut), chunk(tokenTail, "y", cut), tokenTail + " and the rest\n"}, gets(399)...),
-			total:  398, first: "GET /items/1 200",
+			total:  399, first: "GET /items/0 200",
+		},
+		{
+			name:   "the tail starts inside a stderr line",
+			output: append([]string{onStderr(chunk("", "x", cut)), "GET /health 200\n", onStderr(tokenTail + " and the rest\n")}, gets(399)...),
+			total:  399, first: "GET /items/0 200",
 		},
 		{
 			name:   "a stderr line comes between a stdout line's chunks",
-			output: []string{"starting\n", chunk("", "x", cut), "oops\n", tokenTail + " and the rest\n", "done\n"},
+			output: []string{"starting\n", chunk("", "x", cut), onStderr("oops\n"), tokenTail + " and the rest\n", "done\n"},
 			total:  3, first: "starting",
+		},
+		{
+			name:   "stderr lines come between a stdout line's chunks",
+			output: []string{"starting\n", chunk("", "x", cut), onStderr("Traceback (most recent call last):\n"), onStderr("  File \"app.py\", line 3\n"), tokenTail + " and the rest\n", "done\n"},
+			total:  4, first: "starting",
 		},
 		{
 			// Only a driver whose chunks are larger than the usual
 			// 16 KiB fills 8 MiB within the tail.
 			name:   "the read stops at 8 MiB inside a line",
 			output: []string{strings.Repeat("c", docker.JournalReadLimit-25) + "\n", "short\n", "kept\n", apiToken + "\n", "later\n"},
-			total:  1, first: "kept", truncated: "logs: the engine read of bedrock-web-web-r7 stopped at 8 MiB",
+			total:  2, first: "short", truncated: "logs: the engine read of bedrock-web-web-r7 stopped at 8 MiB",
 		},
 	} {
 		t.Run(c.name, func(t *testing.T) {
@@ -763,7 +771,7 @@ type fakeEngine struct {
 	windows []Window
 }
 
-func (f *fakeEngine) Logs(ctx context.Context, name string, opts docker.LogOptions, w io.Writer) error {
+func (f *fakeEngine) LogStreams(ctx context.Context, name string, opts docker.LogOptions, stdout, stderr io.Writer) error {
 	f.asked = append(f.asked, name)
 	f.windows = append(f.windows, Window{Since: opts.Since, Until: opts.Until})
 	entries, ok := f.logs[name]
@@ -773,9 +781,23 @@ func (f *fakeEngine) Logs(ctx context.Context, name string, opts docker.LogOptio
 	if n, err := strconv.Atoi(opts.Tail); err == nil {
 		entries = entries[max(0, len(entries)-n):]
 	}
-	_, err := io.WriteString(w, strings.Join(entries, ""))
-	return err
+	for _, entry := range entries {
+		w := stdout
+		if text, ok := strings.CutPrefix(entry, toStderr); ok {
+			w, entry = stderr, text
+		}
+		if _, err := io.WriteString(w, entry); err != nil {
+			return err
+		}
+	}
+	return nil
 }
+
+// toStderr starts a fakeEngine entry the container wrote to stderr; other
+// entries it wrote to stdout.
+const toStderr = "\x00stderr\x00"
+
+func onStderr(entry string) string { return toStderr + entry }
 
 func openStore(t *testing.T) *state.Store {
 	t.Helper()

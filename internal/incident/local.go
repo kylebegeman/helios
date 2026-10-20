@@ -24,12 +24,12 @@ type lazyEngine struct {
 	err    error
 }
 
-func (l *lazyEngine) Logs(ctx context.Context, name string, opts docker.LogOptions, w io.Writer) error {
+func (l *lazyEngine) LogStreams(ctx context.Context, name string, opts docker.LogOptions, stdout, stderr io.Writer) error {
 	l.once.Do(func() { l.engine, l.err = docker.Connect(ctx) })
 	if l.err != nil {
 		return l.err
 	}
-	return l.engine.Logs(ctx, name, opts, w)
+	return l.engine.LogStreams(ctx, name, opts, stdout, stderr)
 }
 
 func (l *lazyEngine) close() {

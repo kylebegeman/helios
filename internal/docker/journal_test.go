@@ -2,6 +2,7 @@ package docker
 
 import (
 	"context"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"io"
@@ -308,6 +309,37 @@ func TestFollowingTheJournalEndsQuietlyWhenStopped(t *testing.T) {
 	})
 	if err != nil || !slices.Equal(got, []string{"up"}) {
 		t.Fatalf("lines %q, err %v", got, err)
+	}
+}
+
+// Docker logs a long line in chunks, and the other stream can write
+// between two of them.
+func TestLogStreamsKeepsStdoutAndStderrApart(t *testing.T) {
+	e, _ := interceptedEngine(t, func(w http.ResponseWriter, r *http.Request) bool {
+		if !strings.HasSuffix(r.URL.Path, "/containers/web/logs") {
+			return false
+		}
+		w.Header().Set("Content-Type", "application/vnd.docker.multiplexed-stream")
+		for _, f := range []struct {
+			stream byte
+			text   string
+		}{{1, "a long line's first chunk, "}, {2, "oops\n"}, {1, "and its rest\n"}} {
+			frame := make([]byte, 8)
+			frame[0] = f.stream
+			binary.BigEndian.PutUint32(frame[4:], uint32(len(f.text)))
+			_, _ = w.Write(append(frame, f.text...))
+		}
+		return true
+	})
+	var stdout, stderr, both strings.Builder
+	if err := e.LogStreams(context.Background(), "web", LogOptions{}, &stdout, &stderr); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.Logs(context.Background(), "web", LogOptions{}, &both); err != nil {
+		t.Fatal(err)
+	}
+	if stdout.String() != "a long line's first chunk, and its rest\n" || stderr.String() != "oops\n" || both.String() != "a long line's first chunk, oops\nand its rest\n" {
+		t.Fatalf("stdout %q, stderr %q, both %q", stdout.String(), stderr.String(), both.String())
 	}
 }
 

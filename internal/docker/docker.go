@@ -574,6 +574,12 @@ type LogOptions struct {
 
 // Logs streams a container's output, stdout and stderr together.
 func (e *Engine) Logs(ctx context.Context, name string, opts LogOptions, w io.Writer) error {
+	return e.LogStreams(ctx, name, opts, w, w)
+}
+
+// LogStreams streams a container's output as Logs does, its stdout to
+// stdout and its stderr to stderr.
+func (e *Engine) LogStreams(ctx context.Context, name string, opts LogOptions, stdout, stderr io.Writer) error {
 	o := client.ContainerLogsOptions{ShowStdout: true, ShowStderr: true, Follow: opts.Follow, Tail: opts.Tail, Timestamps: false}
 	if !opts.Since.IsZero() {
 		o.Since = opts.Since.UTC().Format(time.RFC3339Nano)
@@ -586,7 +592,7 @@ func (e *Engine) Logs(ctx context.Context, name string, opts LogOptions, w io.Wr
 		return err
 	}
 	defer r.Close()
-	_, err = stdcopy.StdCopy(w, w, r)
+	_, err = stdcopy.StdCopy(stdout, stderr, r)
 	if errors.Is(err, context.Canceled) {
 		return nil
 	}
