@@ -446,3 +446,95 @@ func TestAMachineWithoutAGoodBackupForADayAndAHalfIsAWarning(t *testing.T) {
 		t.Fatalf("a failed machine backup must stay a warning while the next one runs: %+v", found)
 	}
 }
+
+func TestARecoveredMachineCountsADayAndAHalfFromItsRecovery(t *testing.T) {
+	ctx := context.Background()
+	const refused = "copy the pinned app data into the machine backup: restoring needs 54.2 GB plus a 15.0 GB reserve; free space and back up the machine again"
+	// recovered imports a machine backup taken two hours ago into a new
+	// machine. Its state store holds that backup's own run still open, as
+	// every machine backup's does. With good, the source's backup before
+	// it succeeded three days earlier.
+	recovered := func(t *testing.T, good bool) (*state.Store, time.Time) {
+		t.Helper()
+		taken := time.Now().UTC().Add(-2 * time.Hour)
+		path := filepath.Join(t.TempDir(), "source.db")
+		source, err := state.Open(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if good {
+			id, err := source.StartBackupRun(ctx, manifest.ReservedApp, state.BackupRunBackup, taken.Add(-72*time.Hour))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := source.FinishBackupRun(ctx, id, state.BackupRun{FinishedAt: taken.Add(-71 * time.Hour), OK: true}); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if _, err := source.StartBackupRun(ctx, manifest.ReservedApp, state.BackupRunBackup, taken); err != nil {
+			t.Fatal(err)
+		}
+		if err := source.Close(); err != nil {
+			t.Fatal(err)
+		}
+		w, _ := newWatcher(t, &fakeNotifier{})
+		if err := w.Store.ImportMachineRecovery(ctx, path, "recovery-1", nil, nil); err != nil {
+			t.Fatal(err)
+		}
+		imported, err := w.Store.LastMachineRecoveryImportedAt(ctx)
+		if err != nil || imported.IsZero() {
+			t.Fatalf("the recovery's import time is %v: %v", imported, err)
+		}
+		return w.Store, imported
+	}
+	warning := func(t *testing.T, store *state.Store, now time.Time) string {
+		t.Helper()
+		p := NewProber(store)
+		p.Root = t.TempDir()
+		p.Now = func() time.Time { return now }
+		p.Connect = func(context.Context) (*docker.Engine, error) { return nil, errors.New("Docker unavailable") }
+		for _, c := range p.Observe(ctx) {
+			if c.Key == "host:machine-backup" {
+				return c.Message
+			}
+		}
+		return ""
+	}
+	for _, tc := range []struct {
+		name string
+		good bool
+	}{
+		{"after a good backup on the source", true},
+		{"from the source's first machine backup", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			store, imported := recovered(t, tc.good)
+			// The backup that captured the machine is recorded as
+			// interrupted on the source, which is no failure here.
+			if found := warning(t, store, imported.Add(time.Hour)); found != "" {
+				t.Fatalf("a machine recovered an hour ago is warned about the backup it was recovered from: %q", found)
+			}
+			if found := warning(t, store, imported.Add(BackupStale)); found != "" {
+				t.Fatalf("a machine recovered a day and a half ago is warned: %q", found)
+			}
+			if found := warning(t, store, imported.Add(BackupStale+time.Minute)); found == "" {
+				t.Fatal("a machine without a backup for over a day and a half since its recovery isn't warned")
+			}
+			id, err := store.StartBackupRun(ctx, manifest.ReservedApp, state.BackupRunBackup, imported.Add(time.Hour))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if found := warning(t, store, imported.Add(2*time.Hour)); found != "" {
+				t.Fatalf("a recovered machine whose first backup is still running is warned: %q", found)
+			}
+			// A backup that fails here is this machine's own failure, and
+			// it is told at once rather than after the grace.
+			if err := store.FinishBackupRun(ctx, id, state.BackupRun{FinishedAt: imported.Add(2 * time.Hour), Error: refused}); err != nil {
+				t.Fatal(err)
+			}
+			if found := warning(t, store, imported.Add(3*time.Hour)); !strings.HasSuffix(found, "failed: "+refused) {
+				t.Fatalf("a recovered machine whose first backup failed must be warned with why: %q", found)
+			}
+		})
+	}
+}

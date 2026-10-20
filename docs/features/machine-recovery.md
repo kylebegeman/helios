@@ -37,7 +37,10 @@ A machine that goes 36 hours without a successful machine backup raises a
 warning about machine backups in `helios alerts`, as does one whose machine
 backups have only ever failed. When the last machine backup to finish failed,
 the warning quotes the first line of its error, so a backup refused for space
-is told even when no operation is stuck.
+is told even when no operation is stuck. A recovered machine counts the 36
+hours from its recovery until a machine backup finishes on it, since the
+backup it was recovered from is recorded as interrupted on the source. One that
+fails on it is told at once.
 
 The backup omits the machine's private identity. Keep the source recovery
 identity and storage backup password separately. Workload images are archived

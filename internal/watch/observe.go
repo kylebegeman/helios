@@ -553,6 +553,20 @@ func (p *Prober) machineBackupProblem(ctx context.Context, now time.Time) string
 			break
 		}
 	}
+	// A recovery imports the source's runs, with the one that captured the
+	// machine closed as interrupted there, though it never failed here. So
+	// until a backup finishes here, a recovered machine gets BackupStale
+	// from its import, as a new app gets it from its first deploy. One that
+	// fails here ends that at once: what it says is this machine's own.
+	if last != nil {
+		imported, err := p.Store.LastMachineRecoveryImportedAt(ctx)
+		if err != nil {
+			return ""
+		}
+		if !last.FinishedAt.After(imported) && now.Sub(imported) <= BackupStale {
+			return ""
+		}
+	}
 	failed := last != nil && !last.OK
 	var why string
 	switch {
