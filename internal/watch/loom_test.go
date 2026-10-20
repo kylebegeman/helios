@@ -637,6 +637,46 @@ func TestAStaleMarkerIsReplacedAndALeftoverOneHoldsTheSend(t *testing.T) {
 	}
 }
 
+// A marker that fails partway through being written was the claim on a
+// send that never went out, so it is taken back and the send tried
+// again: Loom gets the incident once the fault clears, and only once.
+func TestAMarkerThatCantBeWrittenIsTakenBack(t *testing.T) {
+	ctx := context.Background()
+	r := newLoomRig(t)
+	l := &LoomNotifier{LoomWebhook: integration.LoomWebhook{URL: r.loom.url(), Secret: loomSecret}, Store: r.w.Store, Secrets: r.sec}
+	inc := state.Incident{Key: "app:hello", Subject: "hello", Severity: state.SeverityCritical, Message: "web isn't running", OpenedAt: r.w.Now().Truncate(time.Millisecond)}
+	id, err := r.w.Store.OpenIncident(ctx, inc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	n := Notice{IncidentID: id, Key: inc.Key, Transition: TransitionOpen, Severity: inc.Severity, Host: r.w.Hostname, Message: inc.Message, OpenedAt: inc.OpenedAt}
+	// A directory that can't be read takes the marker but fails the sync
+	// that puts it on disk, as a full disk or an I/O error would.
+	dir := incident.Dir(r.stateDir, id)
+	if err := os.MkdirAll(filepath.Dir(dir), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(dir, 0o300); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chmod(dir, 0o700) })
+	err = l.Notify(ctx, n)
+	if err == nil || !strings.Contains(err.Error(), "it is tried again") || r.hasMarker(id) || len(r.loom.got()) != 0 {
+		t.Fatalf("a marker that can't be written: %v, marker %v, %d bodies", err, r.hasMarker(id), len(r.loom.got()))
+	}
+	if err := os.Chmod(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	for range 2 {
+		if err := l.Notify(ctx, n); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if m := r.marker(id); len(r.loom.got()) != 1 || m.State != incident.LoomDelivered {
+		t.Fatalf("Loom should get it once: %d bodies, %+v", len(r.loom.got()), m)
+	}
+}
+
 // The signature is the HMAC-SHA256 of the exact body, as openssl gives
 // it, and Loom's check takes it, in any case and with space around it,
 // only for that body and that secret.

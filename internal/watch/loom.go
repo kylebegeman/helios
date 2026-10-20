@@ -17,6 +17,7 @@ import (
 	"net/http"
 	"net/http/httptrace"
 	"net/url"
+	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -148,7 +149,15 @@ func (l *LoomNotifier) Notify(ctx context.Context, n Notice) error {
 		if errors.Is(err, fs.ErrExist) {
 			return nil
 		}
-		return fmt.Errorf("mark incident %d as sending to Loom: %w", n.IncidentID, err)
+		// Nothing went out, so what the failed write left is taken back
+		// and the send tried again. A crash before the take-back reaches
+		// the disk leaves the marker holding the send, as a crash mid-send
+		// does.
+		err = fmt.Errorf("mark incident %d as sending to Loom: %w", n.IncidentID, err)
+		if rmErr := os.Remove(markerPath); rmErr != nil && !errors.Is(rmErr, fs.ErrNotExist) {
+			return fmt.Errorf("%w, and the marker can't be removed, so it won't be sent: %v", err, rmErr)
+		}
+		return fmt.Errorf("%w; it is tried again", err)
 	}
 
 	body, notes, err := l.body(ctx, n, m.EventID, openedAt, stateDir)
