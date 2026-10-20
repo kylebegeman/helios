@@ -130,6 +130,9 @@ func Registry(store *state.Store, sec *secrets.Store, socket, stateDir string) k
 	reg.Add(app.RecoverAbandon{Recovery: recovery})
 	reg.Add(app.RecoverCutover{Recovery: recovery, Addresses: addresses, CloudflareOnly: cloudflareOnly})
 	reg.Add(app.Drill{Store: store, Secrets: sec, StateDir: stateDir})
+	reg.Add(app.DrillSkip{Store: store})
+	reg.Add(app.CronHold{Store: store})
+	reg.Add(app.CronRelease{Store: store})
 	reg.Add(app.Rehearse{Store: store, Secrets: sec, StateDir: stateDir})
 	reg.Add(app.RestoreDef{Store: store, Secrets: sec, StateDir: stateDir})
 	for kind, definition := range reg {

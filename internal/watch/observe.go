@@ -53,6 +53,12 @@ const (
 	// RetentionDeferredStale is how long every backup of a repository may
 	// defer its retention before the growing repository is a problem.
 	RetentionDeferredStale = 72 * time.Hour
+	// SkippedDrillStale is how old the last good drill may be when the
+	// drill after a skipped one runs, before the skip is a problem.
+	SkippedDrillStale = 14 * 24 * time.Hour
+	// HoldEndingSoon is how near its end a cron hold warns, so whoever
+	// placed it can extend it before the workload runs again.
+	HoldEndingSoon = 24 * time.Hour
 )
 
 // Prober looks at the machine and its apps and reports what is wrong.
@@ -104,6 +110,7 @@ func (p *Prober) Observe(ctx context.Context) []Condition {
 	var conditions []Condition
 	conditions = append(conditions, p.host()...)
 	conditions = append(conditions, p.operationLock(ctx)...)
+	conditions = append(conditions, p.operatorHolds(ctx)...)
 	if why := p.retentionProblem(ctx, manifest.ReservedApp, p.Now()); why != "" {
 		conditions = append(conditions, Condition{Key: "host:backup-retention", Subject: "machine backups", Severity: state.SeverityWarning, Message: why})
 	}
@@ -176,6 +183,105 @@ func (p *Prober) unobservedIncidents(ctx context.Context) []Condition {
 		}
 	}
 	return conditions
+}
+
+// Operator holds are their own subjects, so a skipped drill or a held cron
+// workload never reads as the app's health.
+func drillSkipKey(appName string) string          { return "skip:" + appName }
+func cronHoldKey(appName, workload string) string { return "hold:" + appName + "/" + workload }
+
+func operatorKey(key string) bool {
+	return strings.HasPrefix(key, "skip:") || strings.HasPrefix(key, "hold:")
+}
+
+// operatorHolds reports each skipped drill and each held cron workload as a
+// notice naming the operator's reason and when it ends. A skip warns when
+// the drill after it would find the last good drill too old, and a hold
+// warns when it is about to end.
+func (p *Prober) operatorHolds(ctx context.Context) []Condition {
+	now := p.Now()
+	unknown := func(prefix string) []Condition {
+		incidents, err := p.Store.OpenIncidents(ctx)
+		if err != nil {
+			return nil
+		}
+		var out []Condition
+		for _, incident := range incidents {
+			if strings.HasPrefix(incident.Key, prefix) {
+				out = append(out, Condition{Key: incident.Key, Unknown: true})
+			}
+		}
+		return out
+	}
+	active, err := p.Store.ActiveRevisions(ctx)
+	if err != nil {
+		return append(unknown("skip:"), unknown("hold:")...)
+	}
+	var conditions []Condition
+	for _, rev := range active {
+		var m manifest.Manifest
+		if err := json.Unmarshal(rev.Manifest, &m); err != nil {
+			continue
+		}
+		if m.BackedUp() {
+			if c, ok := p.drillSkip(ctx, rev.App, m.DrillSchedule()); ok {
+				conditions = append(conditions, c)
+			}
+		}
+		for _, name := range m.WorkloadNames() {
+			if m.Workloads[name].Kind != manifest.Cron {
+				continue
+			}
+			key := cronHoldKey(rev.App, name)
+			hold, err := app.ActiveCronHold(ctx, p.Store, rev.App, name, now)
+			if err != nil {
+				conditions = append(conditions, Condition{Key: key, Unknown: true})
+				continue
+			}
+			if hold == nil {
+				continue
+			}
+			c := Condition{Key: key, Subject: rev.App + "/" + name + " cron", Severity: state.SeverityNotice,
+				Message: fmt.Sprintf("held until %s: %s", app.OperatorTime(hold.FinishedAt), hold.Output)}
+			if left := hold.FinishedAt.Sub(now); left <= HoldEndingSoon {
+				c.Severity = state.SeverityWarning
+				c.Message += fmt.Sprintf("; the hold ends in %s and the workload runs again on its schedule", ago(now, hold.FinishedAt))
+			}
+			conditions = append(conditions, c)
+		}
+	}
+	return conditions
+}
+
+// drillSkip is the condition of an app whose drill an operator skipped.
+func (p *Prober) drillSkip(ctx context.Context, appName, schedule string) (Condition, bool) {
+	key := drillSkipKey(appName)
+	skip, err := app.ActiveDrillSkip(ctx, p.Store, appName)
+	if err != nil {
+		return Condition{Key: key, Unknown: true}, true
+	}
+	if skip == nil {
+		return Condition{}, false
+	}
+	next, err := app.NextDrill(ctx, p.Store, appName, schedule)
+	if err != nil {
+		return Condition{Key: key, Unknown: true}, true
+	}
+	good, err := p.Store.LastGoodBackupRun(ctx, appName, state.BackupRunDrill)
+	if err != nil {
+		return Condition{Key: key, Unknown: true}, true
+	}
+	c := Condition{Key: key, Subject: appName + " restore drill", Severity: state.SeverityNotice,
+		Message: fmt.Sprintf("the drill due %s is skipped by operator: %s; the next drill is due %s", app.OperatorTime(skip.StartedAt), skip.Detail, app.OperatorTime(next))}
+	switch {
+	case good == nil:
+		c.Severity = state.SeverityWarning
+		c.Message += "; no drill has passed yet, so no restore of its backups is proven"
+	case next.Sub(good.StartedAt) > SkippedDrillStale:
+		c.Severity = state.SeverityWarning
+		c.Message += fmt.Sprintf("; by then the last good drill will be %s old", ago(good.StartedAt, next))
+	}
+	return c, true
 }
 
 // app looks at one app's containers, health, checks, certificates and

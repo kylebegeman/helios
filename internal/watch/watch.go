@@ -141,8 +141,10 @@ func (w *Watcher) Round(ctx context.Context, conditions []Condition) error {
 			continue
 		}
 		inc.Observations++
+		// A notice is told once; it is repeated only once it needs attention.
+		escalated := inc.Severity == state.SeverityNotice && c.Severity != state.SeverityNotice
 		inc.Message, inc.Severity = c.Message, c.Severity
-		if inc.NotifiedAt.IsZero() || now.Sub(inc.NotifiedAt) >= w.Renotify {
+		if inc.NotifiedAt.IsZero() || escalated || inc.Severity != state.SeverityNotice && now.Sub(inc.NotifiedAt) >= w.Renotify {
 			w.notify(ctx, &inc, w.openNotice(inc), now)
 		}
 		if err := w.Store.UpdateIncident(ctx, inc); err != nil {
@@ -197,21 +199,28 @@ func (w *Watcher) notify(ctx context.Context, inc *state.Incident, n Notice, now
 }
 
 func (w *Watcher) openNotice(inc state.Incident) Notice {
-	word := "has a problem"
-	if inc.Severity == state.SeverityCritical {
+	word, again := "has a problem", fmt.Sprintf("You'll hear again when it recovers, or in %s if it doesn't.", w.Renotify)
+	switch inc.Severity {
+	case state.SeverityCritical:
 		word = "is down"
+	case state.SeverityNotice:
+		word, again = "is held by an operator", "You'll hear again if it needs attention, and when it ends."
 	}
 	subject := fmt.Sprintf("%s: %s %s", w.Hostname, inc.Subject, word)
 	var b strings.Builder
 	fmt.Fprintf(&b, "%s\n\n", inc.Message)
 	fmt.Fprintf(&b, "Since %s (%s), seen in %d rounds.\n", inc.OpenedAt.Format("2006-01-02 15:04 UTC"), ago(inc.OpenedAt, w.Now()), inc.Observations)
-	fmt.Fprintf(&b, "Machine: %s\n\nhelios status and helios alerts on the machine show more. You'll hear again when it recovers, or in %s if it doesn't.\n", w.Hostname, w.Renotify)
+	fmt.Fprintf(&b, "Machine: %s\n\nhelios status and helios alerts on the machine show more. %s\n", w.Hostname, again)
 	return Notice{Subject: subject, Body: b.String()}
 }
 
 func (w *Watcher) resolvedNotice(inc state.Incident) Notice {
-	subject := fmt.Sprintf("%s: %s recovered", w.Hostname, inc.Subject)
-	body := fmt.Sprintf("Recovered after %s.\n\nIt was: %s\n\nMachine: %s\n", ago(inc.OpenedAt, inc.ResolvedAt), inc.Message, w.Hostname)
+	word, verb := "recovered", "Recovered"
+	if operatorKey(inc.Key) {
+		word, verb = "is no longer held", "Ended"
+	}
+	subject := fmt.Sprintf("%s: %s %s", w.Hostname, inc.Subject, word)
+	body := fmt.Sprintf("%s after %s.\n\nIt was: %s\n\nMachine: %s\n", verb, ago(inc.OpenedAt, inc.ResolvedAt), inc.Message, w.Hostname)
 	return Notice{Subject: subject, Body: body}
 }
 

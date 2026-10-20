@@ -379,16 +379,50 @@ func (s *Store) FinishJobRun(ctx context.Context, id int64, exitCode int, runErr
 	return err
 }
 
-// LastJobRun returns the newest run of a workload, or nil.
+// JobHold is the kind of the job_runs row that holds a cron workload. It
+// starts when an operator placed it and finishes when it ends; its output
+// is the operator's reason. It is never a run.
+const JobHold = "hold"
+
+// LastJobRun returns the newest run of a workload, or nil. Holds are not
+// runs.
 func (s *Store) LastJobRun(ctx context.Context, app, workload string) (*JobRun, error) {
-	rows, err := s.JobRuns(ctx, app, workload, 1)
+	rows, err := s.queryJobRuns(ctx, selectJobRun+` WHERE app = ? AND workload = ? AND kind <> ? ORDER BY started_at DESC, id DESC LIMIT 1`, app, workload, JobHold)
 	if err != nil || len(rows) == 0 {
 		return nil, err
 	}
 	return &rows[0], nil
 }
 
-// JobRuns lists runs, newest first. An empty workload means every workload.
+// HoldJob records an operator's hold on a cron workload from placed until
+// until, and why.
+func (s *Store) HoldJob(ctx context.Context, app, workload, revision string, placed, until time.Time, reason string) (int64, error) {
+	res, err := s.db.ExecContext(ctx, `INSERT INTO job_runs (app, workload, revision, kind, started_at, finished_at, exit_code, output) VALUES (?, ?, ?, ?, ?, ?, 0, ?)`,
+		app, workload, revision, JobHold, unix(placed), unix(until), reason)
+	if err != nil {
+		return 0, err
+	}
+	return res.LastInsertId()
+}
+
+// LastJobHold returns the newest hold placed on a workload, ended or not,
+// or nil.
+func (s *Store) LastJobHold(ctx context.Context, app, workload string) (*JobRun, error) {
+	rows, err := s.queryJobRuns(ctx, selectJobRun+` WHERE app = ? AND workload = ? AND kind = ? ORDER BY started_at DESC, id DESC LIMIT 1`, app, workload, JobHold)
+	if err != nil || len(rows) == 0 {
+		return nil, err
+	}
+	return &rows[0], nil
+}
+
+// EndJobHold ends a hold early, at at.
+func (s *Store) EndJobHold(ctx context.Context, id int64, at time.Time) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE job_runs SET finished_at = ? WHERE id = ? AND kind = ?`, unix(at), id, JobHold)
+	return err
+}
+
+// JobRuns lists runs and holds, newest first. An empty workload means
+// every workload.
 func (s *Store) JobRuns(ctx context.Context, app, workload string, limit int) ([]JobRun, error) {
 	if limit <= 0 {
 		limit = 20

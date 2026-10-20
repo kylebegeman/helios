@@ -42,6 +42,11 @@ type DrillInput struct {
 // Kind implements kernel.Definition.
 func (Drill) Kind() string { return DrillKind }
 
+// drillAdvice is what to do about a drill without room for its restore.
+func drillAdvice(app string) string {
+	return "free space, or skip it: helios drill " + app + " --skip-next --reason <text>"
+}
+
 // drillNames are the scratch things a drill makes.
 type drillNames struct {
 	dir, network, postgres, postgresVolume, objects string
@@ -147,7 +152,7 @@ func (dr Drill) Plan(ctx context.Context, raw json.RawMessage) (*kernel.Plan, er
 	}
 	d := &drillState{dr: dr, app: in.App, snapshot: in.Snapshot, rev: rev, m: m,
 		run: &backupRun{store: dr.Store, app: in.App, kind: state.BackupRunDrill}, names: newDrillNames(dr.StateDir, &m),
-		advice: "free space or skip this drill"}
+		advice: drillAdvice(in.App)}
 	plan := &kernel.Plan{Target: in.App, Recovery: kernel.Resume}
 	plan.Steps = append(plan.Steps, d.restoreStep())
 	if len(d.names.volumes) > 0 {

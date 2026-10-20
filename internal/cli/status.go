@@ -39,6 +39,10 @@ type appRow struct {
 	LastBackup *state.BackupRun `json:"last_backup,omitempty"`
 	GoodBackup *state.BackupRun `json:"good_backup,omitempty"`
 	LastDrill  *state.BackupRun `json:"last_drill,omitempty"`
+	// DrillSkip is the scheduled drill an operator skipped, until a drill runs.
+	DrillSkip *state.BackupRun `json:"drill_skip,omitempty"`
+	// CronHolds are the cron workloads an operator holds now.
+	CronHolds  []state.JobRun `json:"cron_holds,omitempty"`
 	manifest   manifest.Manifest
 	containers map[string]string
 }
@@ -50,6 +54,7 @@ func appRows(ctx context.Context, store *state.Store) ([]appRow, error) {
 		return nil, err
 	}
 	var rows []appRow
+	now := time.Now()
 	for _, rev := range active {
 		var m manifest.Manifest
 		if err := json.Unmarshal(rev.Manifest, &m); err != nil {
@@ -59,6 +64,17 @@ func appRows(ctx context.Context, store *state.Store) ([]appRow, error) {
 		row.LastBackup, _ = store.LastBackupRun(ctx, rev.App, state.BackupRunBackup)
 		row.GoodBackup, _ = store.LastGoodBackupRun(ctx, rev.App, state.BackupRunBackup)
 		row.LastDrill, _ = store.LastBackupRun(ctx, rev.App, state.BackupRunDrill)
+		if row.BackedUp {
+			row.DrillSkip, _ = apps.ActiveDrillSkip(ctx, store, rev.App)
+		}
+		for _, name := range m.WorkloadNames() {
+			if m.Workloads[name].Kind != manifest.Cron {
+				continue
+			}
+			if hold, _ := apps.ActiveCronHold(ctx, store, rev.App, name, now); hold != nil {
+				row.CronHolds = append(row.CronHolds, *hold)
+			}
+		}
 		rows = append(rows, row)
 	}
 	return rows, nil
@@ -85,8 +101,16 @@ func backupWord(r appRow, now time.Time) string {
 	return word
 }
 
-// drillWord sums up an app's last drill.
+// drillWord sums up an app's last drill, and says when the next is skipped.
 func drillWord(r appRow, now time.Time) string {
+	word := lastDrillWord(r, now)
+	if word != "" && r.DrillSkip != nil {
+		word += ", next skipped"
+	}
+	return word
+}
+
+func lastDrillWord(r appRow, now time.Time) string {
 	switch {
 	case !r.BackedUp:
 		return ""
@@ -193,8 +217,33 @@ func orDash(s string) string {
 	return s
 }
 
+// alerts are the open incidents that need attention. A notice is an
+// operator's own hold or skip, so it is shown but never counted as an alert.
+func alerts(open []state.Incident) []state.Incident {
+	var out []state.Incident
+	for _, inc := range open {
+		if inc.Severity != state.SeverityNotice {
+			out = append(out, inc)
+		}
+	}
+	return out
+}
+
+// holdLines are an app's operator holds and skips, one per line.
+func holdLines(r appRow) []string {
+	var out []string
+	if r.DrillSkip != nil {
+		out = append(out, fmt.Sprintf("%s drill due %s: skipped by operator: %s", r.Name, apps.OperatorTime(r.DrillSkip.StartedAt), r.DrillSkip.Detail))
+	}
+	for _, hold := range r.CronHolds {
+		out = append(out, fmt.Sprintf("%s/%s cron held until %s: %s", r.Name, hold.Workload, apps.OperatorTime(hold.FinishedAt), hold.Output))
+	}
+	return out
+}
+
 // machineLine says how the machine is doing, in one line.
 func machineLine(ctx context.Context, hostname string, open []state.Incident) string {
+	open = alerts(open)
 	parts := []string{"helios " + version.Current().Version}
 	if engine, err := docker.Connect(ctx); err != nil {
 		parts = append(parts, "DOCKER NOT ANSWERING")
@@ -300,7 +349,12 @@ func newStatus(a *app) *cobra.Command {
 				fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", r.Name, health, count(s.Requests), count(s.Errors), latency(s.P95MS, s.Requests), percent(s.CPUPercent, s.Hours), bytesWord(s.MemoryBytes), bytesWord(s.DiskBytes), backupWord(r, now), orDash(drillWord(r, now)))
 			}
 			w.Flush()
-			for _, inc := range open {
+			for _, r := range rows {
+				for _, line := range holdLines(r) {
+					fmt.Fprintln(a.stdout, "HOLD "+line)
+				}
+			}
+			for _, inc := range alerts(open) {
 				fmt.Fprintf(a.stdout, "ALERT %s since %s: %s\n", inc.Subject, inc.OpenedAt.Local().Format("15:04"), inc.Message)
 			}
 			return nil
@@ -367,8 +421,14 @@ func (a *app) appStatus(ctx context.Context, store *state.Store, r appRow, sums 
 		if r.LastDrill != nil && r.LastDrill.Finished() {
 			fmt.Fprintf(a.stdout, "    last drill: %s\n", orDash(firstNonEmpty(r.LastDrill.Detail, r.LastDrill.Error)))
 		}
+		if r.DrillSkip != nil {
+			fmt.Fprintf(a.stdout, "    drill due %s: skipped by operator: %s\n", apps.OperatorTime(r.DrillSkip.StartedAt), r.DrillSkip.Detail)
+		}
 	} else if r.manifest.HasData() {
 		fmt.Fprintln(a.stdout, "  backups: off in helios.yaml")
+	}
+	for _, hold := range r.CronHolds {
+		fmt.Fprintf(a.stdout, "  cron %s: held until %s: %s\n", hold.Workload, apps.OperatorTime(hold.FinishedAt), hold.Output)
 	}
 	return nil
 }

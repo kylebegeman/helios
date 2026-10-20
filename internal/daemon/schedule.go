@@ -85,10 +85,8 @@ func (s *Scheduler) Tick(ctx context.Context, now time.Time) {
 		if s.due(ctx, rev.App, state.BackupRunBackup, m.BackupSchedule(), s.firstDeploy(ctx, rev.App), now) {
 			s.run(ctx, app.BackupKind, app.BackupInput{App: rev.App}, "backup "+rev.App)
 		}
-		if good, _ := s.Store.LastGoodBackupRun(ctx, rev.App, state.BackupRunBackup); good != nil {
-			if s.due(ctx, rev.App, state.BackupRunDrill, m.DrillSchedule(), good.StartedAt, now) {
-				s.run(ctx, app.DrillKind, app.DrillInput{App: rev.App}, "drill "+rev.App)
-			}
+		if s.drillDue(ctx, rev.App, m.DrillSchedule(), now) {
+			s.run(ctx, app.DrillKind, app.DrillInput{App: rev.App}, "drill "+rev.App)
 		}
 	}
 	if s.due(ctx, manifest.ReservedApp, state.BackupRunBackup, MachineBackupSchedule, s.Started, now) {
@@ -127,6 +125,14 @@ func (s *Scheduler) due(ctx context.Context, appName, kind, schedule string, sin
 	}
 	next := sched.Next(since)
 	return !next.After(now)
+}
+
+// drillDue says whether an app's restore drill has come round. A drill
+// waits for a good backup, and a skipped drill counts as one run at the
+// occurrence it skipped.
+func (s *Scheduler) drillDue(ctx context.Context, appName, schedule string, now time.Time) bool {
+	next, err := app.NextDrill(ctx, s.Store, appName, schedule)
+	return err == nil && !next.IsZero() && !next.After(now)
 }
 
 // firstDeploy is when an app first arrived, so a new app's first backup
