@@ -25,17 +25,19 @@ compressed content, often a quarter of the size `docker image ls` shows. A
 graph driver store first copies the whole archive into Docker's own data
 directory, so there it is twice the images' size. Layers that images share
 count once for each. It refuses unless the total fits with the reserve
-`helios watch` keeps: 5 GB or a tenth of the disk, whichever is larger. It also refuses, before copying,
-a pin whose backup finished before the app's active revision. A machine backup
-that fails removes everything it staged there. One that is stopped keeps it for
-its operation to resume, which stages it again or snapshots the copy it kept.
-Otherwise the next machine backup replaces it.
+`helios watch` keeps: 5 GB or a tenth of the disk, whichever is larger. It also
+refuses, before copying, a pin whose backup finished before the app's active
+revision. A machine backup that fails while it prepares or snapshots removes
+everything it staged there. One that is stopped keeps it for its operation to
+resume, which stages it again or snapshots the copy it kept, or fails and
+removes it if the stopped one had begun its upload. The next machine backup
+replaces anything else left there.
 
 A machine that goes 36 hours without a successful machine backup raises a
 warning about machine backups in `helios alerts`, as does one whose machine
-backups have only ever failed. The warning quotes the first line of the last
-failure, so a backup refused for space is told even when no operation is
-stuck.
+backups have only ever failed. When the last machine backup to finish failed,
+the warning quotes the first line of its error, so a backup refused for space
+is told even when no operation is stuck.
 
 The backup omits the machine's private identity. Keep the source recovery
 identity and storage backup password separately. Workload images are archived
