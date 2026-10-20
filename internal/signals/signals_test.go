@@ -439,8 +439,9 @@ func TestSampleKeepsTheHoursLargestRootDiskUse(t *testing.T) {
 		now = now.Add(time.Minute)
 	}
 	// An unreadable disk, or one that reads more free than it holds,
-	// keeps nothing.
-	readable = false
+	// keeps nothing. The unreadable read says the disk is full, so keeping
+	// it would raise the hour's 60.
+	free, readable = 0, false
 	if err := s.Sample(ctx); err != nil {
 		t.Fatal(err)
 	}
