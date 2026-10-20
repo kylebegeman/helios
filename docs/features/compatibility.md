@@ -30,6 +30,17 @@ running the upgrade is the build being replaced, so an upgrade run by a build
 before 0.7.16 still ends with `context canceled`, even when it succeeded;
 `helios history` shows how it ended.
 
+From 0.7.16, `helios exec` hands the command standard input only at a
+terminal or with `-i`. Piping or redirecting input into it now needs `-i`
+before the `--`, as in
+`helios exec site -i -- sh -c 'cat > /data/import.csv' < import.csv`; without
+`-i` the command reads nothing. SSH gives a target's `exec` no terminal, so
+through `--target` the client decides, and passes `--interactive` to a target
+that reports `exec.interactive.v1`. A client before 0.7.16 never does, so its
+`exec` through `--target` gets no standard input on a 0.7.16 target, even
+typed at a terminal; typing into or piping to the command needs the client
+upgraded too.
+
 When an app's active revision sets `origin_pull` for a host, the candidate
 must also report `edge.origin-pull.v1`: an older build reads the stored
 `origin_pull` as nothing, and its edge would stop checking Cloudflare's
