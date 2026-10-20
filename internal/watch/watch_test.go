@@ -160,6 +160,30 @@ func TestAFailedNoticeIsTriedAgainNextRound(t *testing.T) {
 	}
 }
 
+// A notice is told away from the round, where nothing else would catch a
+// notifier that panics, so the round catches it: the notice has failed and
+// is tried again next round, and the daemon carries on.
+func TestANotifierThatPanicsFailsItsNotice(t *testing.T) {
+	var told []Notice
+	panics := true
+	w, now := newWatcher(t, notifierFunc(func(_ context.Context, n Notice) error {
+		if panics {
+			panic("index out of range")
+		}
+		told = append(told, n)
+		return nil
+	}))
+	rounds(t, w, now, 3, down("hello"))
+	if inc := openIncident(t, w); inc.NotifyError != "failed unexpectedly: index out of range" || !inc.NotifiedAt.IsZero() {
+		t.Fatalf("the notice should have failed: %+v", inc)
+	}
+	panics = false
+	rounds(t, w, now, 1, down("hello"))
+	if inc := openIncident(t, w); len(told) != 1 || inc.NotifyError != "" || inc.NotifiedAt.IsZero() {
+		t.Fatalf("the notice should be told next round: %d told, %+v", len(told), inc)
+	}
+}
+
 // A round tells every notice before it saves any incident, so one that
 // can't be saved fails the round but leaves the others saved: a recovery
 // told in the same round is told once.
