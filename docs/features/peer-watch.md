@@ -76,8 +76,8 @@ in front of it lets private networks, the mesh among them, through.
 
 `helios peer key --rotate` replaces this machine's key and prints the new
 fingerprint. Register it on every peer with `helios peer add <name> --key
-sha256:<new>`; until then they refuse this machine and report it as not
-trusted.
+sha256:<new>`; until then they refuse this machine's requests, and this
+machine reports each of them as not trusted.
 
 A machine recovered from a backup or set up again starts without peer watch.
 Run `helios peer init` there, add its peers again, and register its new key
