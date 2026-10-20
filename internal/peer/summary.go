@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"maps"
+	"slices"
 	"sort"
 	"time"
 
@@ -41,6 +43,11 @@ type Summary struct {
 	Disk     *SummaryDisk  `json:"disk,omitempty"`
 	Findings []Finding     `json:"findings"`
 	Views    []SummaryView `json:"views"`
+	// Recovered are the peer notices' keys it last sent a recovery of
+	// itself, and when, so an observer that told an outage and was out
+	// of sight for its recovery sends no second one. Left out when there
+	// are none.
+	Recovered []SummaryRecovery `json:"recovered,omitempty"`
 }
 
 // SummaryIncident is one of a machine's open incidents.
@@ -59,6 +66,13 @@ type SummaryIncident struct {
 	// another observer is to send it. Why is never said: a mail server's
 	// error can name hosts.
 	Owed bool `json:"owed"`
+}
+
+// SummaryRecovery is the last recovery of one key a machine sent, and
+// how long ago.
+type SummaryRecovery struct {
+	Key  string `json:"key"`
+	AgeS int64  `json:"age_s"`
 }
 
 // SummaryBackup is how one app stands on backups and restore drills. An
@@ -125,6 +139,22 @@ func (l Last) told(i state.Incident) time.Time {
 	return at
 }
 
+// recovered is the last recovery of each key this machine sent itself,
+// as of now, in key order.
+func (l Last) recovered(now time.Time) []SummaryRecovery {
+	at := map[string]time.Time{}
+	for _, t := range l.Sent {
+		if t.Transition == watch.TransitionResolved {
+			at[t.Key] = later(at[t.Key], t.At)
+		}
+	}
+	var out []SummaryRecovery
+	for _, key := range slices.Sorted(maps.Keys(at)) {
+		out = append(out, SummaryRecovery{Key: key, AgeS: age(now, at[key])})
+	}
+	return out
+}
+
 // Deps is what a summary is built from.
 type Deps struct {
 	Store   *state.Store
@@ -155,7 +185,8 @@ func Build(ctx context.Context, d Deps, name string) (Summary, error) {
 		last = d.Last()
 	}
 	s := Summary{Name: name, Version: version.Current().Version, LastRoundAgeS: age(now, last.Round), SelfCheck: last.SelfCheck,
-		Incidents: []SummaryIncident{}, Sending: append([]string{}, last.Sending...), Backups: []SummaryBackup{}, Findings: []Finding{}, Views: []SummaryView{}}
+		Incidents: []SummaryIncident{}, Sending: append([]string{}, last.Sending...), Backups: []SummaryBackup{}, Findings: []Finding{}, Views: []SummaryView{},
+		Recovered: last.recovered(now)}
 
 	open, err := d.Store.OpenIncidents(ctx)
 	if err != nil {

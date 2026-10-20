@@ -145,6 +145,12 @@ func (g *Gate) page(ctx context.Context, self string, n watch.Notice) error {
 // stood down leaves that recovery to this one. A second recovery carries
 // the same Pushover tag as the first; a lost one leaves an emergency
 // ringing.
+//
+// A recovery this machine is to send goes nowhere once another
+// observer's summary shows it sent a recovery of the key since this
+// machine last told the incident. That observer sent it for this one
+// while it was out of sight, down or isolated with its incident held
+// open.
 func (g *Gate) recovered(ctx context.Context, self string, n watch.Notice) error {
 	s := g.Source
 	now := s.now()
@@ -152,17 +158,26 @@ func (g *Gate) recovered(ctx context.Context, self string, n watch.Notice) error
 	finishing := s.decide(self, n)
 	teller, told := s.teller(n.IncidentID)
 	switch {
-	case finishing, told && teller.By == self:
+	case finishing:
 		s.forget(n.IncidentID)
 		s.mu.Unlock()
-		return g.send(ctx, n, finishing)
+		return g.send(ctx, n, true)
 	case !told && n.NotifiedAt.IsZero():
 		s.forget(n.IncidentID)
 		s.mu.Unlock()
 		return nil
-	case !told:
+	case !told || teller.By == self:
+		since := n.NotifiedAt
+		if last, ok := s.latest(n.IncidentID); ok {
+			since = last.At
+		}
+		if s.recoveredElsewhere(n.Key, since) {
+			s.forget(n.IncidentID)
+			s.mu.Unlock()
+			return nil
+		}
 		// A try that missed every leg is retried without a word more.
-		if _, tried := s.missed[n.IncidentID]; !tried {
+		if _, tried := s.missed[n.IncidentID]; !told && !tried {
 			s.log("peer state: no record of who told %s; its recovery goes from here", n.Key)
 		}
 		s.forget(n.IncidentID)
@@ -244,17 +259,21 @@ type miss struct {
 // toldElsewhere finds the observer whose summary this round shows it
 // told the notice's incident at the notice's severity or graver: since
 // this machine's last record of it, or at any time when there is none.
-// It is the earliest to tell, and the lowest named of those that told at
-// once. The caller holds mu.
+// A tell no later than a recovery of the same key this machine sent is
+// never this notice's: that recovery told the outage it paged over, and
+// an observer out of sight for it can come back with its incident still
+// open and told. It is the earliest to tell, and the lowest named of
+// those that told at once. The caller holds mu.
 func (s *Source) toldElsewhere(n watch.Notice) (by string, at time.Time, ok bool) {
 	last, recorded := s.latest(n.IncidentID)
+	closed, recovered := s.recovery(n.Key)
 	for name, summary := range s.seen {
 		for _, i := range summary.Incidents {
 			if i.Key != n.Key || i.ToldAgeS == nil || rank(i.Severity) < rank(n.Severity) {
 				continue
 			}
 			told := s.last.Looked.Add(-elapsed(*i.ToldAgeS))
-			if recorded && !told.After(last.At.Add(sameTell)) {
+			if recorded && !told.After(last.At.Add(sameTell)) || recovered && !told.After(closed.At.Add(sameTell)) {
 				continue
 			}
 			if !ok || told.Before(at) || told.Equal(at) && name < by {
@@ -275,6 +294,33 @@ func (s *Source) latest(incident int64) (Told, bool) {
 		}
 	}
 	return found, ok
+}
+
+// recovery is the latest recovery of key this machine sent, from any of
+// its incidents. Only a send records a recovery. The caller holds mu.
+func (s *Source) recovery(key string) (Told, bool) {
+	var found Told
+	ok := false
+	for _, t := range s.told {
+		if t.Key == key && t.Transition == watch.TransitionResolved && (!ok || !t.At.Before(found.At)) {
+			found, ok = t, true
+		}
+	}
+	return found, ok
+}
+
+// recoveredElsewhere reports whether another observer's summary this
+// round shows it sent a recovery of key after since. The caller holds
+// mu.
+func (s *Source) recoveredElsewhere(key string, since time.Time) bool {
+	for _, summary := range s.seen {
+		for _, r := range summary.Recovered {
+			if r.Key == key && s.last.Looked.Add(-elapsed(r.AgeS)).After(since.Add(sameTell)) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // teller is the incident's told record its recovery goes by: the first

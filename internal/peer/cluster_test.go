@@ -3,6 +3,7 @@ package peer
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/netip"
 	"slices"
 	"sync"
@@ -197,6 +198,49 @@ func (c *cluster) mend(from, to string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	delete(c.cut, from+" "+to)
+}
+
+// isolate cuts every path between the machine named and each machine,
+// its own public URL too, so it is isolated and holds its peer incidents
+// as they are; rejoin mends them.
+func (c *cluster) isolate(name string) {
+	for _, m := range c.machines {
+		c.cutOff(name, m.name)
+		c.cutOff(m.name, name)
+	}
+}
+
+func (c *cluster) rejoin(name string) {
+	for _, m := range c.machines {
+		c.mend(name, m.name)
+		c.mend(m.name, name)
+	}
+}
+
+// mark is how many notices each machine had told, to read what was told
+// after it.
+type mark map[string]int
+
+func (c *cluster) mark() mark {
+	mk := mark{}
+	for _, m := range c.machines {
+		mk[m.name] = len(m.fanout.sent)
+	}
+	return mk
+}
+
+// toldSince is what every machine told about key after mk, as each
+// notice's transition and severity, in name order.
+func (c *cluster) toldSince(mk mark, key string) []string {
+	var told []string
+	for _, m := range c.machines {
+		for _, n := range m.fanout.sent[mk[m.name]:] {
+			if n.Key == key {
+				told = append(told, n.Transition+" "+n.Severity)
+			}
+		}
+	}
+	return told
 }
 
 // leg is a machine's fan-out made one leg with a ledger, as the daemon's
@@ -416,6 +460,70 @@ func TestAnOutageToldInTwoStepsRecoversOnce(t *testing.T) {
 		pending, err := m.store.PendingResolvedIncidentNotices(context.Background())
 		if open := openIncidentKeys(t, m.store); len(open) != 0 || err != nil || len(pending) != 0 {
 			t.Fatalf("%s has open %v and owes %+v (%v)", m.name, open, pending, err)
+		}
+	}
+}
+
+// A recovery sent for an observer out of sight never lets that observer's
+// page silence the next outage. web1 pages web3's outage, then goes down
+// or is isolated while web3 recovers, so web2 sends the recovery for it.
+// web3 fails again about when web1 comes back with its incident still
+// open and told. web2 never stands down on a page told before the
+// recovery it sent, and web1 sends no second recovery once web2's
+// summary shows one sent after its page: each outage is paged once and
+// recovered once.
+func TestARecoverySentForAnAbsentTellerLeavesTheNextOutagePaged(t *testing.T) {
+	for _, away := range []string{"down", "isolated"} {
+		// fails is how many rounds after web1 is back web3 fails again,
+		// or before it when negative.
+		for fails := -1; fails <= 2; fails++ {
+			t.Run(fmt.Sprintf("%s, web3 fails %d rounds after web1 is back", away, fails), func(t *testing.T) {
+				c := formCluster(t, "web1", "web2", "web3")
+				web1, web2 := c.byName["web1"], c.byName["web2"]
+				leave, back := func() { c.takeDown("web1") }, func() { c.bringBack(t, "web1") }
+				if away == "isolated" {
+					leave, back = func() { c.isolate("web1") }, func() { c.rejoin("web1") }
+				}
+				c.rounds(t, 1)
+				c.takeDown("web3")
+				c.rounds(t, watch.DefaultOpenAfter+2)
+				leave()
+				c.bringBack(t, "web3")
+				c.rounds(t, watch.DefaultResolveAfter+handoff+2)
+				if got, want := web1.told("peer:web3"), []string{"open critical"}; !slices.Equal(got, want) {
+					t.Fatalf("web1 told %q, want %q", got, want)
+				}
+				if got, want := web2.told("peer:web3"), []string{"resolved critical"}; !slices.Equal(got, want) {
+					t.Fatalf("web2 told %q, want %q", got, want)
+				}
+
+				mk := c.mark()
+				if fails < 0 {
+					c.takeDown("web3")
+					c.rounds(t, -fails)
+					back()
+				} else {
+					back()
+					c.rounds(t, fails)
+					c.takeDown("web3")
+				}
+				c.rounds(t, watch.DefaultOpenAfter+handoff+3)
+				if got := c.toldSince(mk, "peer:web3"); len(got) != 1 || got[0] != "open critical" && got[0] != "repeat critical" {
+					t.Fatalf("once web1 was back, web3's next outage was told %q, want it paged once", got)
+				}
+				mk = c.mark()
+				c.bringBack(t, "web3")
+				c.rounds(t, watch.DefaultResolveAfter+handoff+2)
+				if got, want := c.toldSince(mk, "peer:web3"), []string{"resolved critical"}; !slices.Equal(got, want) {
+					t.Fatalf("its recovery was told %q, want %q", got, want)
+				}
+				for _, m := range c.machines {
+					pending, err := m.store.PendingResolvedIncidentNotices(context.Background())
+					if open := openIncidentKeys(t, m.store); len(open) != 0 || err != nil || len(pending) != 0 {
+						t.Fatalf("%s has open %v and owes %+v (%v)", m.name, open, pending, err)
+					}
+				}
+			})
 		}
 	}
 }

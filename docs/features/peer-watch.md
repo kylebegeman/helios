@@ -191,7 +191,10 @@ wait once, as `alert held: web2: web1 is to send this`. A server that has lost
 its record of who sent an alert, because its peer state file was lost or it
 stopped before keeping it, sends the recovery itself and logs `peer state: no
 record of who told peer:web2; its recovery goes from here`. That recovery may
-then arrive twice.
+then arrive twice. A machine that sent an alert and was down or cut off while
+another server sent its recovery sends no second recovery when it comes back,
+and the alert it sent before that recovery never stands in for the page of the
+next outage.
 
 On the server that sent it, `helios alerts` says when it told you, as for any
 alert. Another server says who it waits for, then who sent it. With three
