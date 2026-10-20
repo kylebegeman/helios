@@ -470,7 +470,9 @@ func Climbing(points []Point, floor float64, recent time.Duration) (Climb, bool)
 	}
 
 	// Each episode ends at progress more than pause before the next, and
-	// ends holds those larger than floor.
+	// ends holds those larger than floor. An episode whose last progress
+	// is within pause of the newest sample may still be written, so it is
+	// no end yet: counting half a burst as one would undercount the rate.
 	pause := ClimbEpisodeGap
 	first, latest := made[0], made[len(made)-1]
 	if climbed := latest.total - first.total; climbed > 0 {
@@ -481,6 +483,9 @@ func Climbing(points []Point, floor float64, recent time.Duration) (Climb, bool)
 	before := 0.0
 	for k, p := range made {
 		if k+1 < len(made) && points[made[k+1].i].At.Sub(points[p.i].At) <= pause {
+			continue
+		}
+		if k+1 == len(made) && newest.Sub(points[p.i].At) <= pause {
 			continue
 		}
 		if p.total-before > floor {
