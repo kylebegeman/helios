@@ -345,10 +345,10 @@ func (s *Source) Last() Last {
 		last.Round = s.started
 	}
 	last.Sending = slices.Sorted(maps.Keys(s.sending))
-	last.Sent = map[int64]time.Time{}
+	last.Sent = nil
 	for _, t := range s.told {
 		if t.By == s.self {
-			last.Sent[t.IncidentID] = later(last.Sent[t.IncidentID], t.At)
+			last.Sent = append(last.Sent, t)
 		}
 	}
 	return last

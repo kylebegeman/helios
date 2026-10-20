@@ -2,6 +2,7 @@ package peer
 
 import (
 	"context"
+	"errors"
 	"net/netip"
 	"slices"
 	"sync"
@@ -191,6 +192,28 @@ func (c *cluster) cutOff(from, to string) {
 	c.cut[from+" "+to] = true
 }
 
+// leg is a machine's fan-out made one leg with a ledger, as the daemon's
+// is, that fails every notice while failing is set. What it delivers is
+// what the machine told.
+type leg struct {
+	failing bool
+	to      *fakeNotifier
+}
+
+func (l *leg) Notify(ctx context.Context, n watch.Notice) error {
+	if l.failing {
+		return errors.New("refused")
+	}
+	return l.to.Notify(ctx, n)
+}
+
+// oneLeg makes the machine's fan-out one leg, and returns it.
+func (m *machine) oneLeg() *leg {
+	l := &leg{to: m.fanout}
+	m.wt.Notifier.(*Gate).Next = &watch.Fanout{Legs: []watch.Leg{{Name: "pushover", Notifier: l}}, Ledger: &watch.Ledger{}, Now: m.src.Now}
+	return l
+}
+
 // told is what the machine's fan-out sent about key, as each notice's
 // transition and severity.
 func (m *machine) told(key string) []string {
@@ -297,5 +320,41 @@ func TestThreeObserversNeedAMajority(t *testing.T) {
 		if len(m.fanout.sent) != 0 {
 			t.Fatalf("%s paged too: %+v", m.name, m.fanout.sent)
 		}
+	}
+}
+
+// A warning one observer told is no page of the outage that follows it.
+// web1, cut off from web3, tells web3's warning; web3 then goes down for
+// everyone while every leg of web1's fan-out fails. web1's summary lists
+// web3 as critical but shows only the warning told, so web2 doesn't stand
+// down on it and covers web1's failed page with its own. Once web1's legs
+// work again it stands down on web2's page, so each step is paged once.
+func TestAWarningToldIsNoPageOfTheOutage(t *testing.T) {
+	c := formCluster(t, "web1", "web2", "web3")
+	web1, web2 := c.byName["web1"], c.byName["web2"]
+	leg := web1.oneLeg()
+	c.rounds(t, 1)
+	c.cutOff("web1", "web3")
+	c.rounds(t, watch.DefaultOpenAfter+2)
+	if got, want := web1.told("peer:web3"), []string{"open warning"}; !slices.Equal(got, want) {
+		t.Fatalf("web1 told %q, want %q", got, want)
+	}
+
+	leg.failing = true
+	c.takeDown("web3")
+	c.rounds(t, watch.DefaultOpenAfter+2*handoff)
+	if got, want := web2.told("peer:web3"), []string{"open critical"}; !slices.Equal(got, want) {
+		t.Fatalf("web2 told %q, want %q", got, want)
+	}
+	leg.failing = false
+	c.rounds(t, 2*handoff)
+	if got, want := web1.told("peer:web3"), []string{"open warning"}; !slices.Equal(got, want) {
+		t.Fatalf("web1 told %q once its legs worked, want %q", got, want)
+	}
+	if got := web2.told("peer:web3"); len(got) != 1 {
+		t.Fatalf("web2 told %q", got)
+	}
+	if inc := web1.open(t, "peer:web3"); inc.NotifyError != "" || inc.NotifiedAt.IsZero() {
+		t.Fatalf("web1 never stood down on web2's page: %+v", inc)
 	}
 }

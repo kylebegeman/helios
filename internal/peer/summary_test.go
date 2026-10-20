@@ -112,7 +112,7 @@ func TestSummaryReports(t *testing.T) {
 			Findings: []Finding{{Key: "peer:web2", Severity: state.SeverityWarning}},
 			Paths:    map[string]Paths{"web2": {WordOK, WordOK, "timeout"}},
 			Sending:  []string{"peer:web2"},
-			Sent:     map[int64]time.Time{web2: now.Add(-19 * time.Minute)}}
+			Sent:     []Told{{IncidentID: web2, Key: "peer:web2", Severity: state.SeverityCritical, By: "web1", At: now.Add(-19 * time.Minute)}}}
 	}
 	rec := asked(s, at(in("100.64.0.0/10"), 7700), http.MethodGet, SummaryPath, w.keys["web2"], "")
 	if rec.Code != http.StatusOK || rec.Header().Get("Content-Type") != "application/json" {

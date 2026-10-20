@@ -52,7 +52,8 @@ type SummaryIncident struct {
 	// ToldAgeS is how long ago it was last told, absent when it never
 	// was. A peer incident counts as told only when this machine sent
 	// the notice itself, so one observer standing down for another never
-	// reads as a page to a third.
+	// reads as a page to a third, and only at its severity or graver, so
+	// a warning told never reads as the page of an outage.
 	ToldAgeS *int64 `json:"told_age_s,omitempty"`
 	// Owed is a notice that failed to go out, and never one held while
 	// another observer is to send it. Why is never said: a mail server's
@@ -106,10 +107,22 @@ type Last struct {
 	Findings  []Finding
 	Paths     map[string]Paths
 	// Sending are the keys of the peer notices its gate is passing to its
-	// own fan-out right now, and Sent when it last sent a notice about
-	// each of its peer incidents itself, by incident.
+	// own fan-out right now, and Sent the notices about its peer
+	// incidents it sent itself.
 	Sending []string
-	Sent    map[int64]time.Time
+	Sent    []Told
+}
+
+// told is when this machine last sent a notice about the incident itself
+// at the incident's severity or graver, zero when it never has.
+func (l Last) told(i state.Incident) time.Time {
+	var at time.Time
+	for _, t := range l.Sent {
+		if t.IncidentID == i.ID && rank(t.Severity) >= rank(i.Severity) {
+			at = later(at, t.At)
+		}
+	}
+	return at
 }
 
 // Deps is what a summary is built from.
@@ -152,7 +165,7 @@ func Build(ctx context.Context, d Deps, name string) (Summary, error) {
 		told, owed := i.NotifiedAt, i.NotifyError != ""
 		if gated(i.Key) {
 			_, held := deferredTo(i.NotifyError)
-			told, owed = last.Sent[i.ID], owed && !held
+			told, owed = last.told(i), owed && !held
 		}
 		s.Incidents = append(s.Incidents, SummaryIncident{Key: i.Key, Subject: i.Subject, Severity: i.Severity,
 			OpenedAgeS: age(now, i.OpenedAt), ToldAgeS: ageIf(now, told), Owed: owed})
