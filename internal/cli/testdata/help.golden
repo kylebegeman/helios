@@ -534,9 +534,19 @@ Global Flags:
       --targets-file string   the local named-target configuration (default "~/.bedrock/targets.json")
 == helios exec (hidden false)
 Run a command inside a workload's container.
+Run a command inside a workload's container.
 
+At a terminal, the command reads what is typed there. Anywhere else, as in
+a script piped to bash -s, the command's standard input is empty, so the
+script keeps its next lines. -i hands the command this standard input.
+
+  helios exec site -- sh
+  helios exec -i site -- sh -c 'cat > /data/import.csv' < import.csv
 Usage:
   helios exec <app> [workload] -- <command...> [flags]
+
+Flags:
+  -i, --interactive   keep standard input open for the command, as docker exec -i does
 
 Global Flags:
       --json                  print JSON, one object per line

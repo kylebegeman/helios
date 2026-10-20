@@ -70,7 +70,7 @@ func TestCapabilitiesNameEachFeatureOnce(t *testing.T) {
 		}
 		seen[name] = true
 	}
-	for _, want := range []string{"remote.source.v1", "git.signed.v1", "edge.origin-pull.v1"} {
+	for _, want := range []string{"remote.source.v1", "git.signed.v1", "edge.origin-pull.v1", "exec.interactive.v1"} {
 		if !seen[want] {
 			t.Fatalf("capabilities lack %s: %v", want, capabilities)
 		}

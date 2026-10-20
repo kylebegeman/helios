@@ -250,7 +250,7 @@ func newPsql(a *app) *cobra.Command {
 			}
 			argv = append(argv, apps.PostgresContainer(appName), "psql", "-h", "127.0.0.1", "-U", user, "-d", database)
 			argv = append(argv, args[1:]...)
-			return a.runDataCommand(cmd.Context(), appName, dockerBin, argv[1:], append(os.Environ(), "PGPASSWORD="+password))
+			return a.runDataCommand(cmd.Context(), appName, dockerBin, argv[1:], append(os.Environ(), "PGPASSWORD="+password), os.Stdin)
 		},
 	}
 }

@@ -229,7 +229,9 @@ backup holds the database, every volume, the object store's files and the
 first-run scripts, so a restore on a new machine rebuilds the same roles
 before it loads the dump. `helios run --secret NAME` gives a one-off command
 one more secret, and `helios run --stdin` hands it this terminal's input
-without recording it anywhere.
+without recording it anywhere. `helios exec` reads standard input at a
+terminal, or with `-i`; in a script piped to `bash -s` it leaves the
+script's next lines alone.
 
 One source can hold several apps, such as a product and a worker that runs
 other people's code apart from its data: `helios deploy <dir> --manifest
