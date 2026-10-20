@@ -12,6 +12,8 @@ import (
 	"strings"
 	"testing"
 
+	"golang.org/x/sys/unix"
+
 	"github.com/kylebegeman/helios/internal/docker"
 	"github.com/kylebegeman/helios/internal/docker/dockertest"
 	"github.com/kylebegeman/helios/internal/kernel"
@@ -126,6 +128,20 @@ func TestARestoreKeepsATenthOfABigDiskFree(t *testing.T) {
 	if err := checkRestoreSpace([]string{path}, 3<<30, 5<<30); err != nil {
 		t.Fatalf("a restore that leaves 5 GB of a small disk was refused: %v", err)
 	}
+
+	// Each disk keeps a tenth of itself: a small disk checked first
+	// doesn't set the reserve for a big one after it.
+	const volume = "/var/lib/docker/volumes/x/_data"
+	onDisks(t, func(p string) (disk, error) {
+		if p == path {
+			return disk{dev: 1, free: 40 << 30, total: 50 << 30}, nil
+		}
+		return disk{dev: 2, free: 30 << 30, total: 200 << 30}, nil
+	})
+	err = checkRestoreSpace([]string{path, volume}, 11<<30, 5<<30)
+	if !errors.As(err, &space) || space.Path != volume || space.Reserve != 200<<30/100*10+10 || space.Free != 30<<30 {
+		t.Fatalf("the big disk didn't keep its own tenth: %#v", err)
+	}
 }
 
 func TestTheFreeSpaceOfARealDirectoryIsReadFromItsFilesystem(t *testing.T) {
@@ -140,6 +156,15 @@ func TestTheFreeSpaceOfARealDirectoryIsReadFromItsFilesystem(t *testing.T) {
 	}
 	if a.free <= 0 || a.total <= 0 || a.total < a.free || a.dev != b.dev {
 		t.Fatalf("a temporary directory and its parent: %+v, %+v", a, b)
+	}
+	// The size is the whole filesystem's, not what is free on it: the
+	// reserve is a tenth of it.
+	var fs unix.Statfs_t
+	if err := unix.Statfs(dir, &fs); err != nil {
+		t.Fatal(err)
+	}
+	if want := int64(uint64(fs.Blocks) * uint64(fs.Bsize)); a.total != want {
+		t.Fatalf("the disk's size is %d, its filesystem says %d", a.total, want)
 	}
 	if _, err := statDisk(filepath.Join(dir, "missing")); err == nil {
 		t.Fatal("a missing path has no disk")
