@@ -18,6 +18,18 @@ writes a private consistent SQLite checkpoint before staging the binary.
 Checkpoint metadata is bound to the kernel operation ID so an interrupted
 upgrade cannot adopt a checkpoint from a different attempt.
 
+The daemon restarts itself partway through an upgrade, which ends the
+command's event stream before the outcome. The command then follows the
+journaled operation: it says so, reads the receipt until the operation ends,
+shows it and exits as it says. It waits up to three minutes for a daemon that
+doesn't answer, long enough for systemd to stop the old daemon, try the new
+build and put the previous one back; past that, or on Ctrl-C, it names
+`helios history <id> --output` and leaves the operation to the daemon. Any
+operation a daemon restart cuts off is followed the same way. The command
+running the upgrade is the build being replaced, so an upgrade run by a build
+before 0.7.16 still ends with `context canceled`, even when it succeeded;
+`helios history` shows how it ended.
+
 When an app's active revision sets `origin_pull` for a host, the candidate
 must also report `edge.origin-pull.v1`: an older build reads the stored
 `origin_pull` as nothing, and its edge would stop checking Cloudflare's
