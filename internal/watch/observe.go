@@ -45,6 +45,11 @@ const (
 	DiskFullWarn     = 14 * 24 * time.Hour
 	DiskFullCritical = 48 * time.Hour
 	DiskFullFast     = 6 * time.Hour
+	// DiskShiftPercentMin is the smallest share of the filesystem a step
+	// in usage must move, between two samples, before the trends may set
+	// it aside as a one-off, such as a cleanup or a large download. It
+	// keeps quiet noise on an otherwise flat disk from reading as steps.
+	DiskShiftPercentMin = 1.0
 	// MemoryAvailableMin is the smallest share of memory that may be
 	// available.
 	MemoryAvailableMin = 5.0
@@ -115,9 +120,15 @@ type Prober struct {
 	dataMu sync.Mutex
 	data   map[string]dataScan
 	// minutes holds the bytes in use on Root at each round of the last
-	// ForecastShortWindow. A restart starts it empty.
+	// ForecastShortWindow, at most minutesKept of them. A restart starts
+	// it empty.
 	minutes []Point
 }
+
+// minutesKept bounds the minute ring, whose fit takes time and memory
+// that grow with the square of its length. Rounds come once a minute, so
+// twice the window's minutes leaves room for extra rounds.
+const minutesKept = 2 * int(ForecastShortWindow/time.Minute)
 
 // dataScan is one walk of one volume a container mounts.
 type dataScan struct {
@@ -710,8 +721,13 @@ func (p *Prober) host(ctx context.Context) []Condition {
 	}
 	if free, total, ok := read(p.Root); ok && total > 0 && free <= total {
 		now := p.Now()
+		// Samples after now come from before the wall clock stepped
+		// back. They would never age out of the window, so they go.
+		for len(p.minutes) > 0 && p.minutes[len(p.minutes)-1].At.After(now) {
+			p.minutes = p.minutes[:len(p.minutes)-1]
+		}
 		p.minutes = append(p.minutes, Point{At: now, Used: float64(total - free)})
-		kept := 0
+		kept := max(0, len(p.minutes)-minutesKept)
 		for kept < len(p.minutes) && !p.minutes[kept].At.After(now.Add(-ForecastShortWindow)) {
 			kept++
 		}
@@ -742,8 +758,11 @@ func (p *Prober) host(ctx context.Context) []Condition {
 // filling: then it is a warning. The forecast is a problem of its own,
 // for how soon either trend fills the disk.
 func diskConditions(root string, free, total uint64, hourly, minutes []Point) (disk, forecast *Condition) {
-	long, longOK := Forecast(hourly, ForecastLongPoints, free)
-	short, shortOK := Forecast(minutes, ForecastShortPoints, free)
+	// A lone cleanup or download moves every sample after it; set aside,
+	// only the steady growth around it counts.
+	floor := float64(total) * DiskShiftPercentMin / 100
+	long, longOK := Forecast(WithoutShifts(hourly, floor), ForecastLongPoints, free)
+	short, shortOK := Forecast(WithoutShifts(minutes, floor), ForecastShortPoints, free)
 	longDays := fmt.Sprintf("%d day", int(ForecastLongWindow/(24*time.Hour)))
 	shortHours := fmt.Sprintf("%d hour", int(ForecastShortWindow/time.Hour))
 
@@ -765,11 +784,11 @@ func diskConditions(root string, free, total uint64, hourly, minutes []Point) (d
 		if long.Full <= DiskFullCritical {
 			severity = state.SeverityCritical
 		}
-		forecast = &Condition{Key: "host:disk-forecast", Subject: "disk forecast", Severity: severity,
+		forecast = &Condition{Key: "host:disk-forecast", Subject: "free disk space", Severity: severity,
 			Message: fmt.Sprintf("fills in %s at %s a day (%s trend), %s free", lasting(long.Full), app.HumanBytes(int64(long.PerSecond*86400)), longDays, app.HumanBytes(int64(free)))}
 	}
 	if shortOK && short.Full <= DiskFullFast && (forecast == nil || forecast.Severity != state.SeverityCritical || short.Full < long.Full) {
-		forecast = &Condition{Key: "host:disk-forecast", Subject: "disk forecast", Severity: state.SeverityCritical,
+		forecast = &Condition{Key: "host:disk-forecast", Subject: "free disk space", Severity: state.SeverityCritical,
 			Message: fmt.Sprintf("fills in %s at %s an hour (%s trend), %s free", lasting(short.Full), app.HumanBytes(int64(short.PerSecond*3600)), shortHours, app.HumanBytes(int64(free)))}
 	}
 	return disk, forecast
@@ -847,7 +866,7 @@ func (p *Prober) fastestGrowing(ctx context.Context, now time.Time) string {
 	if best == "" {
 		return ""
 	}
-	return fmt.Sprintf("; of the apps, %s grew most, by %s in %s", best, app.HumanBytes(int64(grew)), ago(first[best].Hour, last[best].Hour))
+	return fmt.Sprintf("; of the apps, %s grew most, by %s in %s", best, app.HumanBytes(int64(grew)), lasting(last[best].Hour.Sub(first[best].Hour)))
 }
 
 // operationLock reports the machine's operation lock when one operation has
