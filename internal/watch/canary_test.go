@@ -3,11 +3,13 @@ package watch
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -92,6 +94,38 @@ func TestAFailedAlertTestRaisesAWarning(t *testing.T) {
 	}
 	if got := p.alertTest(); got != nil {
 		t.Fatalf("a full test replaces the record: %+v", got)
+	}
+}
+
+// Tests of different legs, and a leg recording a refusal, change the record
+// at the same time; none of them loses another's line, and a probe's
+// result stays marked as one.
+func TestChangesToTheAlertTestRecordNeverLoseEachOther(t *testing.T) {
+	w, _ := newWatcher(t, nil)
+	at := time.Date(2026, 10, 19, 9, 15, 0, 0, time.UTC)
+	const legs = 40
+	var wg sync.WaitGroup
+	for i := range legs {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			err := updateAlertTest(w.Store, func(record *AlertTest) {
+				record.Legs[fmt.Sprintf("leg%02d", i)] = LegTest{At: at, Error: "refused", Probe: i%2 == 0}
+			})
+			if err != nil {
+				t.Error(err)
+			}
+		}()
+	}
+	wg.Wait()
+	record, err := ReadAlertTest(w.Store)
+	if err != nil || record == nil || len(record.Legs) != legs {
+		t.Fatalf("lines were lost: %+v, %v", record, err)
+	}
+	for i := range legs {
+		if got := record.Legs[fmt.Sprintf("leg%02d", i)]; got.Error != "refused" || got.Probe != (i%2 == 0) {
+			t.Fatalf("leg%02d: %+v", i, got)
+		}
 	}
 }
 

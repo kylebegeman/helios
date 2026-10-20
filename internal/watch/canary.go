@@ -31,6 +31,9 @@ type AlertTest struct {
 type LegTest struct {
 	At    time.Time `json:"at"`
 	Error string    `json:"error,omitempty"`
+	// Probe marks a result from a probe, which proves less than a test
+	// that arrives: a passing probe clears only a failed probe.
+	Probe bool `json:"probe,omitempty"`
 }
 
 // LegResult is how one leg did in a test.
@@ -70,20 +73,15 @@ func SendTestAlerts(ctx context.Context, sec *secrets.Store, store *state.Store,
 	}
 	wg.Wait()
 
-	record, err := ReadAlertTest(store)
-	if only == "" || err != nil || record == nil {
-		record = &AlertTest{}
-	}
-	if only == "" {
-		record.At = now
-	}
-	if record.Legs == nil {
-		record.Legs = map[string]LegTest{}
-	}
-	for _, r := range results {
-		record.Legs[r.Leg] = LegTest{At: now, Error: r.Error}
-	}
-	if err := writeAlertTest(store, record); err != nil {
+	err := updateAlertTest(store, func(record *AlertTest) {
+		if only == "" {
+			*record = AlertTest{At: now, Legs: map[string]LegTest{}}
+		}
+		for _, r := range results {
+			record.Legs[r.Leg] = LegTest{At: now, Error: r.Error}
+		}
+	})
+	if err != nil {
 		return results, fmt.Errorf("record the test: %w", err)
 	}
 	if len(legs) == 0 {
@@ -120,6 +118,28 @@ func ReadAlertTest(store *state.Store) (*AlertTest, error) {
 	return &record, nil
 }
 
+// alertTestMu keeps changes to the record one at a time, so a test of one
+// leg and a leg recording a refusal never write over each other.
+var alertTestMu sync.Mutex
+
+// updateAlertTest reads the record, changes it and writes it back. A
+// record that can't be read starts again empty, as a full test would.
+func updateAlertTest(store *state.Store, change func(*AlertTest)) error {
+	alertTestMu.Lock()
+	defer alertTestMu.Unlock()
+	record, err := ReadAlertTest(store)
+	if err != nil || record == nil {
+		record = &AlertTest{}
+	}
+	if record.Legs == nil {
+		record.Legs = map[string]LegTest{}
+	}
+	change(record)
+	return writeAlertTest(store, record)
+}
+
+// writeAlertTest replaces the record whole, and only once the new one is
+// on disk, so a crash leaves the old record or the new, never a torn one.
 func writeAlertTest(store *state.Store, record *AlertTest) error {
 	data, err := json.MarshalIndent(record, "", "  ")
 	if err != nil {
@@ -131,14 +151,24 @@ func writeAlertTest(store *state.Store, record *AlertTest) error {
 		return err
 	}
 	defer os.Remove(f.Name())
-	_, err = f.Write(append(data, '\n'))
+	if _, err = f.Write(append(data, '\n')); err == nil {
+		err = f.Sync()
+	}
 	if closeErr := f.Close(); err == nil {
 		err = closeErr
 	}
 	if err != nil {
 		return err
 	}
-	return os.Rename(f.Name(), path)
+	if err := os.Rename(f.Name(), path); err != nil {
+		return err
+	}
+	dir, err := os.Open(filepath.Dir(path))
+	if err != nil {
+		return err
+	}
+	defer dir.Close()
+	return dir.Sync()
 }
 
 // alertTest is the condition of the alerts themselves: a leg that failed

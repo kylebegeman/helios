@@ -41,9 +41,27 @@ type Notice struct {
 	Transition string
 	Severity   string
 	Host       string
+	// Message and OpenedAt are the incident's as of this notice. The
+	// incident is saved only after its notice goes, so a leg that needs
+	// them reads them here: a warning that became an outage is still the
+	// warning in the store while the outage is told.
+	Message  string
+	OpenedAt time.Time
+	// Test is empty for a real notice, and TestProbe or TestSend for a
+	// test of the alerts.
+	Test string
 	// Retry asks for the notice again only where it hasn't arrived.
 	Retry bool
 }
+
+// What kind of test a notice is.
+const (
+	// TestProbe checks the way to a leg without having it arrive: the Loom
+	// leg signs it with a key Loom must refuse.
+	TestProbe = "probe"
+	// TestSend is a test meant to arrive, as a real notice would.
+	TestSend = "send"
+)
 
 // Notifier delivers notices.
 type Notifier interface {
@@ -299,7 +317,8 @@ func (w *Watcher) openNotice(inc state.Incident) Notice {
 	fmt.Fprintf(&b, "%s\n\n", inc.Message)
 	fmt.Fprintf(&b, "Since %s (%s), seen in %d rounds.\n", inc.OpenedAt.Format("2006-01-02 15:04 UTC"), ago(inc.OpenedAt, w.Now()), inc.Observations)
 	fmt.Fprintf(&b, "Machine: %s\n\nhelios status and helios alerts on the machine show more. %s\n", w.Hostname, again)
-	return Notice{Subject: subject, Body: b.String(), IncidentID: inc.ID, Key: inc.Key, Transition: transition, Severity: inc.Severity, Host: w.Hostname}
+	return Notice{Subject: subject, Body: b.String(), IncidentID: inc.ID, Key: inc.Key, Transition: transition, Severity: inc.Severity, Host: w.Hostname,
+		Message: inc.Message, OpenedAt: inc.OpenedAt}
 }
 
 func (w *Watcher) resolvedNotice(inc state.Incident) Notice {
@@ -309,7 +328,8 @@ func (w *Watcher) resolvedNotice(inc state.Incident) Notice {
 	}
 	subject := fmt.Sprintf("%s: %s %s", w.Hostname, inc.Subject, word)
 	body := fmt.Sprintf("%s after %s.\n\nIt was: %s\n\nMachine: %s\n", verb, ago(inc.OpenedAt, inc.ResolvedAt), inc.Message, w.Hostname)
-	return Notice{Subject: subject, Body: body, IncidentID: inc.ID, Key: inc.Key, Transition: TransitionResolved, Severity: inc.Severity, Host: w.Hostname}
+	return Notice{Subject: subject, Body: body, IncidentID: inc.ID, Key: inc.Key, Transition: TransitionResolved, Severity: inc.Severity, Host: w.Hostname,
+		Message: inc.Message, OpenedAt: inc.OpenedAt}
 }
 
 // ago says how long before now a time was, roughly.

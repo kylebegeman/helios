@@ -274,6 +274,39 @@ func TestAnOutageThatEasesForAsLongAsARecoveryIsAWarningAgain(t *testing.T) {
 	}
 }
 
+// A notice carries its incident's message and opening time, so a leg never
+// has to read them from the store, where an escalation is saved only after
+// it is told. The outage's notice carries the outage's message, and every
+// notice the time the warning opened.
+func TestANoticeCarriesItsIncidentsMessageAndOpeningTime(t *testing.T) {
+	n := &fakeNotifier{}
+	w, now := newWatcher(t, n)
+	round := shopRound(t, w, now)
+	for range DefaultOpenAfter {
+		round(stale("shop"))
+	}
+	opened := *now
+	for range DefaultOpenAfter {
+		round(down("shop"))
+	}
+	for range DefaultResolveAfter {
+		round()
+	}
+	want := []struct{ transition, message string }{
+		{TransitionOpen, stale("shop").Message},
+		{TransitionRepeat, down("shop").Message},
+		{TransitionResolved, down("shop").Message},
+	}
+	if len(n.sent) != len(want) {
+		t.Fatalf("sent %+v", n.sent)
+	}
+	for i, sent := range n.sent {
+		if sent.Transition != want[i].transition || sent.Message != want[i].message || !sent.OpenedAt.Equal(opened) || sent.Test != "" {
+			t.Errorf("notice %d: %+v, want %s %q opened at %s", i, sent, want[i].transition, want[i].message, opened)
+		}
+	}
+}
+
 func TestWithoutANotifierIncidentsAreStillRecorded(t *testing.T) {
 	ctx := context.Background()
 	w, now := newWatcher(t, nil)

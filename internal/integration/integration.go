@@ -49,13 +49,14 @@ type Definition struct {
 
 // Names of the integrations.
 const (
-	StorageName    = "storage"
-	EmailName      = "email"
-	Email2Name     = "email2"
-	PushoverName   = "pushover"
-	NtfyName       = "ntfy"
-	CloudflareName = "cloudflare"
-	LoomName       = "loom"
+	StorageName     = "storage"
+	EmailName       = "email"
+	Email2Name      = "email2"
+	PushoverName    = "pushover"
+	NtfyName        = "ntfy"
+	CloudflareName  = "cloudflare"
+	LoomName        = "loom"
+	LoomWebhookName = "loom_webhook"
 )
 
 // emailFields are what a mail server for alerts needs; email and email2
@@ -124,6 +125,14 @@ var Definitions = []Definition{
 			{Name: "verify_url", Prompt: "the Core's verify endpoint, such as https://loom.example.com/api/cloud/auth/verify"},
 		},
 	},
+	{
+		Name:    LoomWebhookName,
+		Purpose: "a Loom thread for each critical incident, through a scheduled task's webhook",
+		Fields: []Field{
+			{Name: "url", Prompt: "the task's webhook URL on the T3 Connect relay, https://<relay>/v1/hooks/<endpoint>/<task>/<token>", Secret: true},
+			{Name: "secret", Prompt: "the secret the task checks the x-helios-signature header with, 16 to 512 characters", Secret: true},
+		},
+	},
 }
 
 // Lookup finds an integration by name.
@@ -176,6 +185,9 @@ var (
 	// ntfy topics are 1 to 64 letters, digits, hyphens and underscores.
 	ntfyTopicPattern = regexp.MustCompile(`^[-_A-Za-z0-9]{1,64}$`)
 	ntfyTokenPattern = regexp.MustCompile(`^[!-~]+$`)
+	// The relay names an environment's endpoint by 16 lowercase hex digits.
+	loomEndpointPattern = regexp.MustCompile(`^[0-9a-f]{16}$`)
+	loomSecretPattern   = regexp.MustCompile(`^[ -~]{16,512}$`)
 )
 
 // Set stores an integration's values in one new version of helios's
@@ -318,6 +330,14 @@ func validate(name string, v map[string]string) error {
 		// answers nothing at all.
 		if _, err := ParseVerifyURL(v["verify_url"]); err != nil {
 			return fmt.Errorf("loom.verify_url: %w", err)
+		}
+	case LoomWebhookName:
+		// Neither value is echoed: the URL carries the task's token.
+		if err := checkLoomWebhookURL(v["url"]); err != nil {
+			return fmt.Errorf("loom_webhook.url: %w", err)
+		}
+		if !loomSecretPattern.MatchString(v["secret"]) {
+			return errors.New("loom_webhook.secret must be 16 to 512 printable ASCII characters")
 		}
 	}
 	return nil
@@ -500,6 +520,56 @@ func LoadLoom(store *secrets.Store) (*Loom, error) {
 		return nil, nil
 	}
 	return &Loom{VerifyURL: v["verify_url"]}, nil
+}
+
+// LoomWebhook is the Loom scheduled task a critical incident opens a thread
+// through.
+type LoomWebhook struct {
+	// URL is the task's webhook URL on the T3 Connect relay. Its last
+	// segment is the task's token, so it is a credential.
+	URL string
+	// Secret signs each body, as the task's signature check expects.
+	Secret string
+}
+
+// LoadLoomWebhook reads the loom_webhook integration. ErrNotSet when it
+// isn't set up.
+func LoadLoomWebhook(store *secrets.Store) (*LoomWebhook, error) {
+	v, err := Get(store, LoomWebhookName)
+	if err != nil {
+		return nil, err
+	}
+	// Checked again here, so nothing but the relay's shape is ever sent to.
+	if err := validate(LoomWebhookName, v); err != nil {
+		return nil, err
+	}
+	return &LoomWebhook{URL: v["url"], Secret: v["secret"]}, nil
+}
+
+// checkLoomWebhookURL accepts only a task's webhook URL on the T3 Connect
+// relay: https://<relay>/v1/hooks/<endpoint>/<task>/<token>. Loom's direct
+// /api/hooks route is refused, because the answers the leg reads, such as
+// a 202 for a request held while Loom is offline, are the relay's.
+// The token is a credential, so errors never echo it.
+func checkLoomWebhookURL(raw string) error {
+	u, err := parseEndpointURL(raw)
+	if err != nil {
+		return err
+	}
+	if u.Scheme != "https" {
+		return errors.New("URL must start with https://")
+	}
+	if strings.ContainsAny(raw, "?#") {
+		return errors.New("URL must not have a query or a fragment")
+	}
+	// The path is read as written, so an escaped slash stays in its segment,
+	// as the relay reads it.
+	parts := strings.Split(u.EscapedPath(), "/")
+	if len(parts) != 6 || parts[0] != "" || parts[1] != "v1" || parts[2] != "hooks" ||
+		!loomEndpointPattern.MatchString(parts[3]) || parts[4] == "" || parts[5] == "" {
+		return errors.New("URL must be the task's relay webhook URL, https://<relay>/v1/hooks/<endpoint>/<task>/<token>, with a 16 hex digit endpoint")
+	}
+	return nil
 }
 
 // LoadStorage reads the storage integration.

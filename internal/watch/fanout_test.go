@@ -311,6 +311,32 @@ type notifierFunc func(context.Context, Notice) error
 
 func (f notifierFunc) Notify(ctx context.Context, n Notice) error { return f(ctx, n) }
 
+// Loom tells an agent, not a person, so a fan-out whose only leg is Loom
+// is refused rather than counting an incident as told. Beside email or a
+// phone, the Loom leg keeps its own severity and timeout.
+func TestTheLoomLegNeverGoesAlone(t *testing.T) {
+	quiet := notifierFunc(func(context.Context, Notice) error { return nil })
+	loom := legSpec{name: LoomWebhookLeg, least: state.SeverityCritical, timeout: 45 * time.Second, notifier: quiet}
+	if f, err := fanoutOf([]legSpec{loom}, nil); err == nil || err.Error() != NoPersonLeg {
+		t.Fatalf("Loom alone: %+v, %v", f, err)
+	}
+	if _, err := fanoutOf(nil, nil); err == nil || err.Error() != NoAlertsSetUp {
+		t.Fatalf("nothing set up: %v", err)
+	}
+	for _, person := range []legSpec{
+		{name: "email", least: state.SeverityNotice, notifier: EmailNotifier{Relays: relays("email")}},
+		{name: PushoverLeg, least: state.SeverityWarning, notifier: quiet},
+	} {
+		f, err := fanoutOf([]legSpec{person, loom}, nil)
+		if err != nil || len(f.Legs) != 2 {
+			t.Fatalf("Loom beside %s: %+v, %v", person.name, f, err)
+		}
+		if l := f.Legs[1]; l.Name != LoomWebhookLeg || l.MinSeverity != state.SeverityCritical || l.Timeout != 45*time.Second {
+			t.Fatalf("the Loom leg lost its own severity or timeout: %+v", f.Legs)
+		}
+	}
+}
+
 // A notice no leg delivered is tried again by every leg, even when it
 // was a repeat, and the person counts as told only once one delivers.
 func TestANoticeNoLegDeliveredIsTriedAgain(t *testing.T) {

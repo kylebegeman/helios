@@ -1121,7 +1121,7 @@ Global Flags:
       --targets-file string   the local named-target configuration (default "~/.bedrock/targets.json")
 == helios integration set (hidden false)
 Type an integration's values in, or pipe field=value lines. Values are sealed and never shown.
-Integrations: storage, email, email2, pushover, ntfy, cloudflare, loom. In a terminal each field is asked for; otherwise stdin holds one field=value per line.
+Integrations: storage, email, email2, pushover, ntfy, cloudflare, loom, loom_webhook. In a terminal each field is asked for; otherwise stdin holds one field=value per line.
 Usage:
   helios integration set <name> [flags]
 
