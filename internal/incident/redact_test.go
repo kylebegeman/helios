@@ -71,3 +71,24 @@ func TestAValueIsFoundHoweverItsEncoderEscapedIt(t *testing.T) {
 		t.Fatalf("leaked %q", leaked)
 	}
 }
+
+// A resolver names an address backwards to look it up, a URL escapes an
+// IPv6 address's colons, and an address can follow other dotted numbers.
+func TestAMeshAddressIsFoundBackwardsEscapedOrRunIntoNumbers(t *testing.T) {
+	var r redactor
+	for _, c := range []struct{ in, want string }{
+		{"lookup 4.3.64.100.in-addr.arpa. on 127.0.0.53:53: no such host", "lookup [mesh].in-addr.arpa. on 127.0.0.53:53: no such host"},
+		{"lookup 1.0.0.10.in-addr.arpa.", "lookup [private].in-addr.arpa."},
+		{"lookup 8.8.8.8.in-addr.arpa.", "lookup 8.8.8.8.in-addr.arpa."},
+		{"lookup 1.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.e.1.a.c.5.1.1.a.7.d.f.ip6.arpa.", "lookup [mesh].ip6.arpa."},
+		{"lookup 1.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.8.b.d.0.1.0.0.2.ip6.arpa.", "lookup 1.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.8.b.d.0.1.0.0.2.ip6.arpa."},
+		{"GET /cb?next=fd7a%3A115c%3Aa1e0%3A%3A1 200", "GET /cb?next=[mesh] 200"},
+		{"GET /cb?to=http%3A%2F%2F%5Bfd7a%3a115c%3aa1e0%3a%3a1%5D%3A8080%2F 302", "GET /cb?to=http%3A%2F%2F%5B[mesh]%5D%3A8080%2F 302"},
+		{"build 1.100.64.0.1", "build 1.[mesh]"},
+		{"route 10.10.10.10.10", "route [private]"},
+	} {
+		if got := r.String(c.in); got != c.want {
+			t.Errorf("%q became %q, want %q", c.in, got, c.want)
+		}
+	}
+}

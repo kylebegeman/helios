@@ -193,11 +193,15 @@ var (
 	// credentialJSONPattern is the same name with a string value in JSON.
 	credentialJSONPattern = regexp.MustCompile(`(?i)("[a-z0-9_.\-]*(?:token|secret|key|password|signature|sig|auth)"\s*:\s*)"(?:[^"\\]|\\.)*"`)
 	tailnetNamePattern    = regexp.MustCompile(`(?i)\b(?:[a-z0-9](?:[a-z0-9\-]*[a-z0-9])?\.)+ts\.net\b`)
-	// ulaPattern is an IPv6 address in fc00::/7, as Tailscale gives out.
-	ulaPattern = regexp.MustCompile(`(?i)\bf[cd][0-9a-f]{2}(?::[0-9a-f]{0,4}){2,7}`)
-	// ipv4Pattern has no word boundaries, so an address run into other
-	// text is still found.
-	ipv4Pattern = regexp.MustCompile(`\d{1,3}(?:\.\d{1,3}){3}`)
+	// ulaPattern is an IPv6 address in fc00::/7, as Tailscale gives out,
+	// with its colons as they are or URL escaped.
+	ulaPattern = regexp.MustCompile(`(?i)(^|[^0-9a-z_]|%[0-9a-f]{2})f[cd][0-9a-f]{2}(?:(?::|%3a)[0-9a-f]{0,4}){2,7}`)
+	// reverseIPv4Pattern is a name a resolver looks an IPv4 address or
+	// network up by, its numbers backwards.
+	reverseIPv4Pattern = regexp.MustCompile(`(?i)\b(?:\d{1,3}\.){1,4}in-addr\.arpa\b`)
+	// reverseULAPattern is the same for an address in fc00::/7, one hex
+	// digit at a time.
+	reverseULAPattern = regexp.MustCompile(`(?i)\b(?:[0-9a-f]\.){0,30}[cd]\.f\.ip6\.arpa\b`)
 
 	// meshPrefix is CGNAT space, where Tailscale gives out IPv4 addresses.
 	meshPrefix      = netip.MustParsePrefix("100.64.0.0/10")
@@ -243,24 +247,106 @@ func (r *redactor) String(s string) string {
 	if strings.Contains(lower, "ts.net") {
 		s = tailnetNamePattern.ReplaceAllString(s, "[mesh]")
 	}
-	if strings.Contains(s, ":") && (strings.Contains(lower, "fc") || strings.Contains(lower, "fd")) {
-		s = ulaPattern.ReplaceAllString(s, "[mesh]")
+	if strings.Contains(lower, "ip6.arpa") {
+		s = reverseULAPattern.ReplaceAllString(s, "[mesh].ip6.arpa")
 	}
-	if strings.Contains(s, ".") {
-		s = ipv4Pattern.ReplaceAllStringFunc(s, func(m string) string {
-			addr, err := netip.ParseAddr(m)
-			switch {
-			case err != nil:
-				return m
-			case meshPrefix.Contains(addr):
-				return "[mesh]"
-			case slices.ContainsFunc(privatePrefixes, func(p netip.Prefix) bool { return p.Contains(addr) }):
-				return "[private]"
+	if (strings.Contains(s, ":") || strings.Contains(lower, "%3a")) && (strings.Contains(lower, "fc") || strings.Contains(lower, "fd")) {
+		s = ulaPattern.ReplaceAllString(s, "${1}[mesh]")
+	}
+	if strings.Contains(lower, "in-addr.arpa") {
+		s = reverseIPv4Pattern.ReplaceAllStringFunc(s, func(m string) string {
+			numbers := strings.Split(strings.TrimSuffix(m[:len(m)-len("in-addr.arpa")], "."), ".")
+			slices.Reverse(numbers)
+			for len(numbers) < 4 {
+				numbers = append(numbers, "0")
+			}
+			if label := addressLabel(strings.Join(numbers, ".")); label != "" {
+				return label + m[len(m)-len(".in-addr.arpa"):]
 			}
 			return m
 		})
 	}
+	if strings.Contains(s, ".") {
+		s = replaceIPv4(s)
+	}
 	return s
+}
+
+// replaceIPv4 replaces each mesh or private IPv4 address in s. It reads
+// one at every digit, without word boundaries, so an address run into
+// other text or numbers, as in 1.100.64.0.1, is still found. Addresses
+// that overlap are replaced as one.
+func replaceIPv4(s string) string {
+	var b strings.Builder
+	done, start, end, label := 0, 0, 0, ""
+	flush := func() {
+		if label != "" {
+			b.WriteString(s[done:start])
+			b.WriteString(label)
+			done, label = end, ""
+		}
+	}
+	for i := range len(s) {
+		n := quadAt(s[i:])
+		if n == 0 {
+			continue
+		}
+		found := addressLabel(s[i : i+n])
+		switch {
+		case found == "":
+		case label != "" && i < end:
+			end = max(end, i+n)
+			if found == "[mesh]" {
+				label = found
+			}
+		default:
+			flush()
+			start, end, label = i, i+n, found
+		}
+	}
+	flush()
+	if done == 0 {
+		return s
+	}
+	b.WriteString(s[done:])
+	return b.String()
+}
+
+// quadAt is the length of the dotted quad s starts with, each number up
+// to three digits, or 0.
+func quadAt(s string) int {
+	n := 0
+	for part := range 4 {
+		if part > 0 {
+			if n == len(s) || s[n] != '.' {
+				return 0
+			}
+			n++
+		}
+		digits := n
+		for n < len(s) && n-digits < 3 && '0' <= s[n] && s[n] <= '9' {
+			n++
+		}
+		if n == digits {
+			return 0
+		}
+	}
+	return n
+}
+
+// addressLabel is [mesh] or [private] for an IPv4 address in mesh or
+// RFC 1918 space, and empty for any other.
+func addressLabel(text string) string {
+	addr, err := netip.ParseAddr(text)
+	switch {
+	case err != nil:
+		return ""
+	case meshPrefix.Contains(addr):
+		return "[mesh]"
+	case slices.ContainsFunc(privatePrefixes, func(p netip.Prefix) bool { return p.Contains(addr) }):
+		return "[private]"
+	}
+	return ""
 }
 
 // replaceFolded replaces with repl the bytes of s that each form in f,
