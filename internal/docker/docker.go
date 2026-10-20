@@ -415,6 +415,9 @@ type Info struct {
 	User string
 	// Volumes are the named volumes it mounts.
 	Volumes []VolumeMount
+	// Binds are its mounts as it was created with them, such as
+	// "/host/path:/path:ro".
+	Binds []string
 }
 
 // VolumeMount is a named volume mounted into a container, with where it
@@ -436,6 +439,9 @@ func (e *Engine) Inspect(ctx context.Context, name string) (*Info, error) {
 	info := &Info{ID: c.ID, Name: strings.TrimPrefix(c.Name, "/"), IPs: map[string]string{}, Restarts: c.RestartCount}
 	if c.Config != nil {
 		info.Image, info.Labels, info.User = c.Config.Image, c.Config.Labels, c.Config.User
+	}
+	if c.HostConfig != nil {
+		info.Binds = c.HostConfig.Binds
 	}
 	for _, m := range c.Mounts {
 		if m.Type == "volume" {

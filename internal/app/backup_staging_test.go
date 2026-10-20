@@ -355,6 +355,153 @@ func TestABackupInterruptedMidSnapshotKeepsItsStagingUntilItResumes(t *testing.T
 	}
 }
 
+// A daemon killed mid-snapshot never stops its restic helper, which reads
+// on. The resumed snapshot refuses, and stops that helper before it
+// removes the staging: restic saves what it read of a vanishing tree as a
+// snapshot, and that one would be the latest. A helper reading something
+// else is left alone.
+func TestAResumedSnapshotStopsTheHelperAKilledDaemonLeftBeforeRemovingItsStaging(t *testing.T) {
+	for _, machine := range []bool{false, true} {
+		t.Run(map[bool]string{false: "app", true: "machine"}[machine], func(t *testing.T) {
+			b, raw := backupIdentityFixture(t, machine)
+			owner := map[bool]string{false: "hello", true: manifest.ReservedApp}[machine]
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			var helper atomic.Pointer[dockertest.Container]
+			fake := dockertest.New(t)
+			fake.OnCreate = func(c dockertest.Container) {
+				fake.Update(c.Name, func(c *dockertest.Container) {
+					c.ExitAfter = 1
+					switch c.Cmd[0] {
+					case "init":
+						c.ExitCode, c.Logs = 1, `{"message_type":"exit_error","code":1,"message":"Fatal: config file already exists"}`
+					case "backup":
+						c.ExitAfter, c.Logs = 0, `{"message_type":"status"}`
+						started := *c
+						helper.Store(&started)
+						cancel()
+					}
+				})
+			}
+			reg := kernel.Registry{}
+			reg.Add(b)
+			at := time.Now().UTC()
+			var operation string
+			_, err := kernel.New(b.Store, reg, "old-daemon", kernel.WithClock(func() time.Time { return at })).Run(ctx, BackupKind, raw, func(ev kernel.Event) {
+				if ev.Type == kernel.EventPlanned {
+					operation = ev.Operation
+				}
+			})
+			left := helper.Load()
+			if err == nil || operation == "" || left == nil {
+				t.Fatalf("the backup was not interrupted mid-snapshot: %v", err)
+			}
+			// The killed daemon's helper is still there, reading.
+			left.Running = true
+			fake.Add(*left)
+			other := dockertest.Container{Name: "bedrock-" + owner + "-restic-elsewhere", Labels: left.Labels, Running: true,
+				HostConfig: dockertest.HostConfig{Binds: []string{restic.DirMount(filepath.Join(b.StateDir, "restores", owner), false)}}}
+			fake.Add(other)
+			removeStaging = func(path string) error {
+				if c, ok := fake.Container(left.Name); ok && c.Running {
+					t.Error("the staging was removed while the killed daemon's helper still read it")
+				}
+				return os.RemoveAll(path)
+			}
+			t.Cleanup(func() { removeStaging = os.RemoveAll })
+
+			recovered := kernel.New(b.Store, reg, "new-daemon", kernel.WithClock(func() time.Time { return at.Add(time.Minute) }))
+			if n, err := recovered.Recover(context.Background(), func(kernel.Event) {}); err != nil || n != 1 {
+				t.Fatalf("recovered %d operation(s): %v", n, err)
+			}
+			receipt, err := recovered.ReceiptOf(context.Background(), operation)
+			if err != nil || receipt.Status != state.Failed || !strings.Contains(receipt.Error, "interrupted without an exact snapshot receipt") {
+				t.Fatalf("the resumed snapshot must refuse an uncertain capture: %+v %v", receipt, err)
+			}
+			if _, ok := fake.Container(left.Name); ok {
+				t.Error("the killed daemon's helper outlived the refusal")
+			}
+			if c, ok := fake.Container(other.Name); !ok || !c.Running {
+				t.Error("a helper reading something else was stopped")
+			}
+			stagingKept(t, b.StateDir, backupStaging(b, machine), false)
+		})
+	}
+}
+
+// dockerForgets stands in front of the stand-in and, once a restic
+// backup's helper has started, fails every call about it, as Docker does
+// while it restarts under live-restore and the helper runs on.
+type dockerForgets struct {
+	fake     *dockertest.Server
+	name, id atomic.Value
+	forgot   atomic.Bool
+}
+
+func (d *dockerForgets) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	about := false
+	for _, ref := range []any{d.name.Load(), d.id.Load()} {
+		if ref, _ := ref.(string); ref != "" && (strings.Contains(r.URL.Path, "/containers/"+ref+"/") || strings.HasSuffix(r.URL.Path, "/containers/"+ref)) {
+			about = true
+		}
+	}
+	if about && d.forgot.Load() {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = io.WriteString(w, `{"message":"dockerd is restarting"}`)
+		return
+	}
+	d.fake.ServeHTTP(w, r)
+	if about && strings.HasSuffix(r.URL.Path, "/start") {
+		d.forgot.Store(true)
+	}
+}
+
+// A snapshot that loses Docker's answers about its helper fails without
+// stopping it, and the helper reads on. So the staging stays, with its
+// owner file, and the failure says why.
+func TestAFailedSnapshotKeepsItsStagingWhileItCantStopTheHelperThatReadsIt(t *testing.T) {
+	for _, machine := range []bool{false, true} {
+		t.Run(map[bool]string{false: "app", true: "machine"}[machine], func(t *testing.T) {
+			b, raw := backupIdentityFixture(t, machine)
+			fake := dockertest.New(t)
+			front := &dockerForgets{fake: fake}
+			fake.OnCreate = func(c dockertest.Container) {
+				fake.Update(c.Name, func(c *dockertest.Container) {
+					c.ExitAfter = 1
+					switch c.Cmd[0] {
+					case "init":
+						c.ExitCode, c.Logs = 1, `{"message_type":"exit_error","code":1,"message":"Fatal: config file already exists"}`
+					case "backup":
+						c.ExitAfter, c.Logs = 0, `{"message_type":"status"}`
+						front.name.Store(c.Name)
+						front.id.Store(c.ID)
+					}
+				})
+			}
+			srv := httptest.NewServer(front)
+			t.Cleanup(srv.Close)
+			t.Setenv("DOCKER_HOST", "tcp"+strings.TrimPrefix(srv.URL, "http"))
+			reg := kernel.Registry{}
+			reg.Add(b)
+			receipt, err := kernel.New(b.Store, reg, "daemon").Run(context.Background(), BackupKind, raw, func(kernel.Event) {})
+			if err != nil || receipt.Status != state.Failed {
+				t.Fatalf("the backup must fail: %+v %v", receipt, err)
+			}
+			name, _ := front.name.Load().(string)
+			if c, ok := fake.Container(name); !ok || !c.Running {
+				t.Fatal("the helper stopped, so this doesn't test what it means to")
+			}
+			stagingKept(t, b.StateDir, backupStaging(b, machine), true)
+			const why = "a restic helper may still read it"
+			if !strings.Contains(receipt.Error, why) {
+				t.Errorf("the failure doesn't say why its staging stays: %s", receipt.Error)
+			}
+			lastRunFailed(t, b.Store, map[bool]string{false: "hello", true: manifest.ReservedApp}[machine], why)
+		})
+	}
+}
+
 // A daemon killed while a failed snapshot removes its staging leaves part
 // of the tree, and the step's failure unjournaled, so its operation
 // resumes the snapshot. The owner file goes first, so the resumed snapshot

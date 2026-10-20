@@ -430,19 +430,42 @@ func (x *backingUp) discardStaging(ctx context.Context) error {
 	return nil
 }
 
-// dropStaging removes a failed backup's staging. The owner file goes
-// first: the failure is journaled only after the step returns, so a daemon
-// killed partway through the removal resumes the snapshot, which must find
-// a staging it doesn't own and refuse rather than snapshot what is left.
+// dropStaging removes a failed backup's staging. A capture that began
+// and saved no snapshot may have left its restic helper reading it: one a
+// killed daemon left behind, or one Docker stopped answering about. That
+// helper goes first, and the staging stays while one may still read it,
+// since restic saves what it read of a vanishing tree as a snapshot.
+// Then the owner file goes: the failure is journaled only after the step
+// returns, so a daemon killed partway through the removal resumes the
+// snapshot, which must find a staging it doesn't own and refuse rather
+// than snapshot what is left.
 func (x *backingUp) dropStaging(ctx context.Context) error {
 	owned, err := x.ownsStaging(ctx)
 	if err != nil || !owned {
 		return err
 	}
+	if x.receipt != nil && x.receipt.Started && x.receipt.Summary == nil {
+		if err := x.stopSnapshotHelpers(ctx); err != nil {
+			return fmt.Errorf("a restic helper may still read it: %w", err)
+		}
+	}
 	if err := os.Remove(x.staging + ".operation.json"); err != nil {
 		return err
 	}
 	return removeStaging(x.staging)
+}
+
+// stopSnapshotHelpers stops and removes the restic helpers still reading
+// the staging.
+func (x *backingUp) stopSnapshotHelpers(ctx context.Context) error {
+	connect, cancel := context.WithTimeout(ctx, 30*time.Second)
+	e, err := docker.Connect(connect)
+	cancel()
+	if err != nil {
+		return err
+	}
+	defer e.Close()
+	return restic.StopHelpersReading(ctx, e, x.owner, x.staging)
 }
 
 // failStaged records a failed prepare or snapshot and removes the staging

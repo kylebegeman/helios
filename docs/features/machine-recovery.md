@@ -30,8 +30,11 @@ refuses, before copying, a pin whose backup finished before the app's active
 revision. A machine backup that fails while it prepares or snapshots removes
 everything it staged there. One that is stopped keeps it for its operation to
 resume, which stages it again or snapshots the copy it kept, or fails and
-removes it if the stopped one had begun its upload. The next machine backup
-replaces anything else left there.
+removes it if the stopped one had begun its upload. A failure after the upload
+began first stops any restic helper still reading the copy, such as one a
+killed daemon left running, since restic saves what it read of a vanishing
+tree as a snapshot. While it can't stop one, it keeps the copy and says so. The
+next machine backup replaces anything else left there.
 
 A machine that goes 36 hours without a successful machine backup raises a
 warning about machine backups in `helios alerts`, as does one whose machine

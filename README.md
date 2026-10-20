@@ -749,8 +749,11 @@ backup finished before the app's active revision. A backup of an app or the
 machine that fails while it prepares or snapshots removes what it staged. One
 that is stopped keeps it for its operation to resume: a resumed prepare stages
 it again from nothing, and a resumed snapshot snapshots the copy it kept, or
-fails and removes it if the stopped one had begun its upload. The next backup
-of that app or the machine replaces anything else left there.
+fails and removes it if the stopped one had begun its upload. A failure after
+the upload began first stops any restic helper still reading the copy, such as
+one a killed daemon left running, and keeps the copy, saying so, while it
+can't. The next backup of that app or the machine replaces anything else left
+there.
 
 `helios drill <app> --skip-next --reason <text>` skips the next scheduled
 drill when you know it can't run, such as while a disk is being resized. Its
