@@ -10,6 +10,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/kylebegeman/helios/internal/peer"
 	"github.com/kylebegeman/helios/internal/state"
 	"github.com/kylebegeman/helios/internal/watch"
 )
@@ -45,13 +46,20 @@ func newAlerts(a *app) *cobra.Command {
 			if len(open) == 0 {
 				fmt.Fprintln(a.stdout, "nothing wrong right now")
 			}
+			// Who sent a peer notice is in peer watch's sidecar; without
+			// one, every notice reads as this machine's own.
+			sidecar, _ := peer.ReadSidecar(store)
 			for _, inc := range open {
 				fmt.Fprintf(a.stdout, "OPEN  %s (%s) since %s: %s\n", inc.Subject, inc.Severity, inc.OpenedAt.Local().Format("2006-01-02 15:04"), inc.Message)
 				// Some legs can have told you while another missed it.
-				if !inc.NotifiedAt.IsZero() {
+				if by, at, ok := sidecar.SentBy(inc); ok {
+					fmt.Fprintf(a.stdout, "      sent by %s at %s\n", by, at.Local().Format("15:04"))
+				} else if !inc.NotifiedAt.IsZero() {
 					fmt.Fprintf(a.stdout, "      told you at %s\n", inc.NotifiedAt.Local().Format("15:04"))
 				}
-				if inc.NotifyError != "" {
+				if to, since, ok := sidecar.WaitingOn(inc); ok {
+					fmt.Fprintf(a.stdout, "      %s is to send this%s\n", to, waitingSince(since))
+				} else if inc.NotifyError != "" {
 					fmt.Fprintf(a.stdout, "      NOT DELIVERED: %s\n", inc.NotifyError)
 				}
 			}
@@ -179,4 +187,13 @@ func newWatch(a *app) *cobra.Command {
 	}
 	cmd.AddCommand(add, remove)
 	return cmd
+}
+
+// waitingSince says since when this machine has held a notice for the
+// observer that is to send it, where peer watch's sidecar says.
+func waitingSince(since time.Time) string {
+	if since.IsZero() {
+		return ""
+	}
+	return " (waiting since " + since.Local().Format("15:04") + ")"
 }

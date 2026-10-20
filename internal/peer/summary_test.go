@@ -44,9 +44,9 @@ func ran(t *testing.T, store *state.Store, appName, kind string, at time.Time) {
 	}
 }
 
-// opened records an open incident, told at told and owing a notice that
-// failed with owed.
-func opened(t *testing.T, store *state.Store, i state.Incident) {
+// opened records an open incident as it is given, told or owing a
+// notice, and returns its ID.
+func opened(t *testing.T, store *state.Store, i state.Incident) int64 {
 	t.Helper()
 	ctx := context.Background()
 	id, err := store.OpenIncident(ctx, i)
@@ -57,13 +57,17 @@ func opened(t *testing.T, store *state.Store, i state.Incident) {
 	if err := store.UpdateIncident(ctx, i); err != nil {
 		t.Fatal(err)
 	}
+	return id
 }
 
 // The summary tells a peer what this machine may be unable to alert
 // about: its open incidents, whether each was told, its backups and
 // drills, when each alert leg last worked, its disk, and its own last
-// look at its peers. It never says why a notice failed or what a leg
-// delivered, and no address it knows.
+// look at its peers. A peer incident reads as told only when this
+// machine sent it itself, and as owed never while another observer is to
+// send it; the peer notices it is sending right now are listed. It never
+// says why a notice failed or what a leg delivered, and no address it
+// knows.
 func TestSummaryReports(t *testing.T) {
 	w := setUpWeb1(t)
 	store, ctx := w.store, context.Background()
@@ -82,6 +86,14 @@ func TestSummaryReports(t *testing.T) {
 		NotifiedAt: now.Add(-88 * time.Minute)})
 	opened(t, store, state.Incident{Key: "host:disk", Subject: "disk", Severity: state.SeverityCritical, OpenedAt: now.Add(-30 * time.Minute),
 		NotifyError: failure})
+	// web3 told the edge provider's warning and this machine stood down;
+	// it sent web2's page itself, and holds web4's for web3.
+	opened(t, store, state.Incident{Key: "peer:edge-provider", Subject: "public edge", Severity: state.SeverityWarning,
+		OpenedAt: now.Add(-25 * time.Minute), NotifiedAt: now.Add(-24 * time.Minute)})
+	web2 := opened(t, store, state.Incident{Key: "peer:web2", Subject: "web2", Severity: state.SeverityCritical,
+		OpenedAt: now.Add(-20 * time.Minute), NotifiedAt: now.Add(-19 * time.Minute), NotifyError: failure})
+	opened(t, store, state.Incident{Key: "peer:web4", Subject: "web4", Severity: state.SeverityWarning,
+		OpenedAt: now.Add(-10 * time.Minute), NotifyError: (&Deferred{To: "web3"}).Error()})
 
 	if _, _, err := integration.Set(w.secrets, integration.EmailName, map[string]string{"smtp_host": "smtp.example.test", "smtp_port": "587",
 		"from": "helios@example.test", "to": "ops@example.test"}); err != nil {
@@ -98,7 +110,9 @@ func TestSummaryReports(t *testing.T) {
 	s.Deps.Last = func() Last {
 		return Last{Round: now.Add(-41 * time.Second), Looked: now.Add(-41 * time.Second), SelfCheck: true,
 			Findings: []Finding{{Key: "peer:web2", Severity: state.SeverityWarning}},
-			Paths:    map[string]Paths{"web2": {WordOK, WordOK, "timeout"}}}
+			Paths:    map[string]Paths{"web2": {WordOK, WordOK, "timeout"}},
+			Sending:  []string{"peer:web2"},
+			Sent:     map[int64]time.Time{web2: now.Add(-19 * time.Minute)}}
 	}
 	rec := asked(s, at(in("100.64.0.0/10"), 7700), http.MethodGet, SummaryPath, w.keys["web2"], "")
 	if rec.Code != http.StatusOK || rec.Header().Get("Content-Type") != "application/json" {
@@ -116,7 +130,11 @@ func TestSummaryReports(t *testing.T) {
 	want := Summary{Name: "web1", Version: version.Current().Version, LastRoundAgeS: 41, SelfCheck: true,
 		Incidents: []SummaryIncident{
 			{Key: "app:shop", Subject: "shop", Severity: state.SeverityWarning, OpenedAgeS: 5400, ToldAgeS: seconds(5280)},
-			{Key: "host:disk", Subject: "disk", Severity: state.SeverityCritical, OpenedAgeS: 1800, Owed: true}},
+			{Key: "host:disk", Subject: "disk", Severity: state.SeverityCritical, OpenedAgeS: 1800, Owed: true},
+			{Key: "peer:edge-provider", Subject: "public edge", Severity: state.SeverityWarning, OpenedAgeS: 1500},
+			{Key: "peer:web2", Subject: "web2", Severity: state.SeverityCritical, OpenedAgeS: 1200, ToldAgeS: seconds(1140), Owed: true},
+			{Key: "peer:web4", Subject: "web4", Severity: state.SeverityWarning, OpenedAgeS: 600}},
+		Sending: []string{"peer:web2"},
 		Backups: []SummaryBackup{
 			{App: "shop", LastGoodBackupAgeS: seconds(54 * 3600), DeployedAgeS: seconds(10 * 86400),
 				LastGoodDrillAgeS: seconds(9*86400 + 170*60), DrillOverdueS: seconds(2*86400 + 170*60)},
@@ -130,7 +148,7 @@ func TestSummaryReports(t *testing.T) {
 		wantJSON, _ := json.Marshal(want)
 		t.Fatalf("the summary reads\n%s\nwant\n%s", gotJSON, wantJSON)
 	}
-	if strings.Contains(raw, `"told_age_s":null`) || strings.Count(raw, `"told_age_s"`) != 1 || strings.Count(raw, `"last_ok_age_s"`) != 1 {
+	if strings.Contains(raw, `"told_age_s":null`) || strings.Count(raw, `"told_age_s"`) != 2 || strings.Count(raw, `"last_ok_age_s"`) != 1 {
 		t.Fatalf("an age with nothing to measure from is not left out: %s", raw)
 	}
 	mesh, _, _ := strings.Cut(at(in("100.64.0.0/10"), 7700), ":")

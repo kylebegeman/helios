@@ -6,12 +6,14 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"maps"
 	"math"
 	"net"
 	"net/http"
 	"net/netip"
 	"net/url"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -77,12 +79,15 @@ var answeredStatus = regexp.MustCompile(`: answered ([1-5][0-9]{2})\b`)
 // mesh, a TLS handshake with its edge over the mesh, and its public URLs
 // through the edge provider. It checks this machine's own public URLs
 // alongside, keeps what it found for this machine's summary, and keeps
-// what observers push.
+// what observers push. What it must remember across a restart it keeps
+// in the sidecar beside the state database.
 type Source struct {
 	Secrets *secrets.Store
 	Store   *state.Store
 	// Now is the clock; time.Now when nil.
 	Now func() time.Time
+	// Log reports what the watch can't keep; nothing when nil.
+	Log func(format string, args ...any)
 
 	// The paths, replaced in tests; nil means the real ones. fetch reads
 	// the summary at a peer's mesh address presenting token, handshake
@@ -105,10 +110,26 @@ type Source struct {
 	started time.Time
 	round   time.Time
 	last    Last
-	// lastGood is when each peer's summary last came back ok, by name.
+	// self is this machine's name to its peers.
+	self string
+	// lastGood is when each peer's summary last came back ok, and
+	// lastView when each observer's last push arrived, by name.
 	lastGood map[string]time.Time
+	lastView map[string]time.Time
 	// pushed is each observer's last push, by name.
 	pushed map[string]received
+	// seen is each peer's summary that came back ok in the last round,
+	// by name.
+	seen map[string]Summary
+	// told and deferring are the gate's records: who told each peer
+	// incident, and the notices held while another observer is to send
+	// them. sending counts the notices the gate is passing to this
+	// machine's own fan-out right now, by key, and missed holds the last
+	// notice it passed there that some leg missed, by incident.
+	told      []Told
+	deferring []Deferral
+	sending   map[string]int
+	missed    map[int64]miss
 }
 
 // received is an observer's last push, and when it arrived.
@@ -131,14 +152,51 @@ func (s *Source) now() time.Time {
 	return time.Now()
 }
 
-// begin starts the watch's clock the first time it is asked anything.
-// The caller holds mu.
-func (s *Source) begin() {
-	if s.started.IsZero() {
-		s.started = s.now()
-		s.lastGood = map[string]time.Time{}
-		s.pushed = map[string]received{}
+func (s *Source) log(format string, args ...any) {
+	if s.Log != nil {
+		s.Log(format, args...)
 	}
+}
+
+// begin starts the watch's clock the first time it is asked anything,
+// and takes up what the sidecar kept. A sidecar that can't be read is
+// started afresh, which only makes the clocks it kept start again. The
+// caller holds mu.
+func (s *Source) begin() {
+	if !s.started.IsZero() {
+		return
+	}
+	s.started = s.now()
+	s.lastGood = map[string]time.Time{}
+	s.lastView = map[string]time.Time{}
+	s.pushed = map[string]received{}
+	s.sending = map[string]int{}
+	s.missed = map[int64]miss{}
+	if s.Store == nil {
+		return
+	}
+	sc, err := ReadSidecar(s.Store)
+	if err != nil {
+		s.log("peer state: unreadable, starting fresh")
+		return
+	}
+	maps.Copy(s.lastGood, sc.LastGood)
+	maps.Copy(s.lastView, sc.LastView)
+	s.self, s.told, s.deferring = sc.Self, sc.Told, sc.Deferring
+}
+
+// Save writes what the watch must remember across a restart to the
+// sidecar, leaving out what is past keeping. The watch saves once after
+// each round.
+func (s *Source) Save() error {
+	s.mu.Lock()
+	s.begin()
+	sc := Sidecar{Self: s.self, LastGood: maps.Clone(s.lastGood), LastView: maps.Clone(s.lastView), Told: s.told, Deferring: s.deferring}
+	sc.prune(s.now())
+	s.told, s.deferring = sc.Told, sc.Deferring
+	sc.Told, sc.Deferring = append([]Told{}, sc.Told...), append([]Deferral{}, sc.Deferring...)
+	s.mu.Unlock()
+	return writeSidecar(s.Store, sc)
 }
 
 // Observe looks at every peer once and returns the peer conditions that
@@ -152,6 +210,11 @@ func (s *Source) Observe(ctx context.Context) []watch.Condition {
 	s.begin()
 	s.mu.Unlock()
 	c, err := Load(s.Secrets)
+	if err != nil {
+		s.mu.Lock()
+		s.seen = nil
+		s.mu.Unlock()
+	}
 	switch {
 	case errors.Is(err, ErrNotSet):
 		return nil
@@ -183,6 +246,8 @@ func (s *Source) judge(ctx context.Context, c Config, selfCheck bool, looks []lo
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	r.Started = s.started
+	s.self = c.Self.Name
+	s.seen = map[string]Summary{}
 	watched := map[string]bool{}
 	paths := map[string]Paths{}
 	for i, p := range c.Peers {
@@ -191,6 +256,7 @@ func (s *Source) judge(ctx context.Context, c Config, selfCheck bool, looks []lo
 		paths[p.Name] = l.paths
 		if l.paths.Summary == WordOK {
 			s.lastGood[p.Name] = r.Now
+			s.seen[p.Name] = *l.summary
 		}
 		sight := Sight{Name: p.Name, Paths: l.paths, LastGood: s.lastGood[p.Name]}
 		if l.summary != nil {
@@ -212,9 +278,14 @@ func (s *Source) judge(ctx context.Context, c Config, selfCheck bool, looks []lo
 		}
 		r.Views = append(r.Views, got.views(name, r.Now)...)
 	}
+	for name := range s.lastView {
+		if _, ok := c.Observers[name]; !ok {
+			delete(s.lastView, name)
+		}
+	}
 	for name := range c.Observers {
 		if !watched[name] {
-			r.Observers = append(r.Observers, Observer{Name: name, LastView: s.pushed[name].at})
+			r.Observers = append(r.Observers, Observer{Name: name, LastView: s.lastView[name]})
 		}
 	}
 	sort.Slice(r.Observers, func(i, j int) bool { return r.Observers[i].Name < r.Observers[j].Name })
@@ -255,7 +326,8 @@ func (s *Source) held(ctx context.Context) []watch.Condition {
 	return conditions
 }
 
-// Last is what this machine's watching last found, for its summary.
+// Last is what this machine's watching last found, for its summary, and
+// what its gate is doing about its peer notices.
 func (s *Source) Last() Last {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -264,6 +336,13 @@ func (s *Source) Last() Last {
 	last.Round = s.round
 	if last.Round.IsZero() {
 		last.Round = s.started
+	}
+	last.Sending = slices.Sorted(maps.Keys(s.sending))
+	last.Sent = map[int64]time.Time{}
+	for _, t := range s.told {
+		if t.By == s.self {
+			last.Sent[t.IncidentID] = later(last.Sent[t.IncidentID], t.At)
+		}
 	}
 	return last
 }
@@ -275,6 +354,7 @@ func (s *Source) Receive(observer string, p Push, at time.Time) {
 	defer s.mu.Unlock()
 	s.begin()
 	s.pushed[observer] = received{push: p, at: at}
+	s.lastView[observer] = at
 }
 
 // RoundDone records that this machine's watch finished a round at at.
@@ -500,7 +580,7 @@ func (s Summary) report() *Report {
 			DeployedAge: elapsedIf(b.DeployedAgeS), DrillOverdue: elapsedIf(b.DrillOverdueS)})
 	}
 	for _, l := range s.Legs {
-		r.Legs = append(r.Legs, Leg{Name: l.Name, Worked: l.LastOKAgeS != nil, LastOK: elapsedIf(l.LastOKAgeS)})
+		r.Legs = append(r.Legs, l.leg())
 	}
 	for _, i := range s.Incidents {
 		r.Open = append(r.Open, OpenIncident{Subject: i.Subject, Severity: i.Severity})

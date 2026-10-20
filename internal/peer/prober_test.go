@@ -37,11 +37,13 @@ const (
 	pathPublic  = "public"
 )
 
-// watcher is web1 watching its peers through fake paths, on a clock the
-// test moves. Every path passes unless failing holds how it fails, by
-// machine and path, and a peer's summary is a fresh one unless summaries
-// holds what it says. web1's own public URL is its machine's public path.
+// watcher is a machine, web1 unless the test names another, watching its
+// peers through fake paths, on a clock the test moves. Every path passes
+// unless failing holds how it fails, by machine and path, and a peer's
+// summary is a fresh one unless summaries holds what it says. The
+// machine's own public URL is its own public path.
 type watcher struct {
+	self    string
 	src     *Source
 	secrets *secrets.Store
 	store   *state.Store
@@ -66,7 +68,13 @@ func peerNamed(name string) Peer {
 
 func watching(t *testing.T, peers ...Peer) *watcher {
 	t.Helper()
-	w := &watcher{secrets: keyedStore(t), store: stateStore(t), clock: now, names: map[string]string{},
+	return watchingAs(t, "web1", peers...)
+}
+
+// watchingAs is the machine named self watching peers.
+func watchingAs(t *testing.T, self string, peers ...Peer) *watcher {
+	t.Helper()
+	w := &watcher{self: self, secrets: keyedStore(t), store: stateStore(t), clock: now, names: map[string]string{},
 		failing: map[string]error{}, summaries: map[string]Summary{}, checked: map[string]int{}}
 	for i := range peers {
 		if peers[i].Mesh == "" {
@@ -75,7 +83,7 @@ func watching(t *testing.T, peers ...Peer) *watcher {
 		w.names[peers[i].Mesh] = peers[i].Name
 	}
 	c, _, err := Update(w.secrets, true, func(c *Config) (err error) {
-		c.Self = Self{Name: "web1", Public: []string{"https://web1.example.test"}}
+		c.Self = Self{Name: self, Public: []string{"https://" + self + ".example.test"}}
 		c.Peers = peers
 		c.Token, err = NewToken()
 		return err
@@ -194,7 +202,7 @@ func (w *watcher) observe(t *testing.T) map[string]watch.Condition {
 	return conditions
 }
 
-// round is one round of web1's watch over what its peers show.
+// round is one round of the machine's watch over what its peers show.
 func (w *watcher) round(t *testing.T, wt *watch.Watcher) {
 	t.Helper()
 	w.clock = w.clock.Add(time.Minute)
@@ -204,9 +212,9 @@ func (w *watcher) round(t *testing.T, wt *watch.Watcher) {
 	w.src.RoundDone(w.clock)
 }
 
-// incidents watches web1's store on web1's clock.
+// incidents watches the machine's store on its clock.
 func (w *watcher) incidents(n watch.Notifier) *watch.Watcher {
-	return &watch.Watcher{Store: w.store, Notifier: n, Hostname: "web1", Now: func() time.Time { return w.clock }}
+	return &watch.Watcher{Store: w.store, Notifier: n, Hostname: w.self, Now: func() time.Time { return w.clock }}
 }
 
 func openIncidentKeys(t *testing.T, store *state.Store) []string {

@@ -32,8 +32,11 @@ type Summary struct {
 	LastRoundAgeS int64             `json:"last_round_age_s"`
 	SelfCheck     bool              `json:"self_check"`
 	Incidents     []SummaryIncident `json:"incidents"`
-	Backups       []SummaryBackup   `json:"backups"`
-	Legs          []SummaryLeg      `json:"legs"`
+	// Sending are the keys of the peer notices it is passing to its own
+	// fan-out right now.
+	Sending []string        `json:"sending"`
+	Backups []SummaryBackup `json:"backups"`
+	Legs    []SummaryLeg    `json:"legs"`
 	// Disk is left out when the disk can't be read.
 	Disk     *SummaryDisk  `json:"disk,omitempty"`
 	Findings []Finding     `json:"findings"`
@@ -47,10 +50,13 @@ type SummaryIncident struct {
 	Severity   string `json:"severity"`
 	OpenedAgeS int64  `json:"opened_age_s"`
 	// ToldAgeS is how long ago it was last told, absent when it never
-	// was.
+	// was. A peer incident counts as told only when this machine sent
+	// the notice itself, so one observer standing down for another never
+	// reads as a page to a third.
 	ToldAgeS *int64 `json:"told_age_s,omitempty"`
-	// Owed is a notice that failed to go out. Why is never said: a mail
-	// server's error can name hosts.
+	// Owed is a notice that failed to go out, and never one held while
+	// another observer is to send it. Why is never said: a mail server's
+	// error can name hosts.
 	Owed bool `json:"owed"`
 }
 
@@ -99,6 +105,11 @@ type Last struct {
 	SelfCheck bool
 	Findings  []Finding
 	Paths     map[string]Paths
+	// Sending are the keys of the peer notices its gate is passing to its
+	// own fan-out right now, and Sent when it last sent a notice about
+	// each of its peer incidents itself, by incident.
+	Sending []string
+	Sent    map[int64]time.Time
 }
 
 // Deps is what a summary is built from.
@@ -131,25 +142,26 @@ func Build(ctx context.Context, d Deps, name string) (Summary, error) {
 		last = d.Last()
 	}
 	s := Summary{Name: name, Version: version.Current().Version, LastRoundAgeS: age(now, last.Round), SelfCheck: last.SelfCheck,
-		Incidents: []SummaryIncident{}, Backups: []SummaryBackup{}, Legs: []SummaryLeg{}, Findings: []Finding{}, Views: []SummaryView{}}
+		Incidents: []SummaryIncident{}, Sending: append([]string{}, last.Sending...), Backups: []SummaryBackup{}, Findings: []Finding{}, Views: []SummaryView{}}
 
 	open, err := d.Store.OpenIncidents(ctx)
 	if err != nil {
 		return Summary{}, err
 	}
 	for _, i := range open {
+		told, owed := i.NotifiedAt, i.NotifyError != ""
+		if gated(i.Key) {
+			_, held := deferredTo(i.NotifyError)
+			told, owed = last.Sent[i.ID], owed && !held
+		}
 		s.Incidents = append(s.Incidents, SummaryIncident{Key: i.Key, Subject: i.Subject, Severity: i.Severity,
-			OpenedAgeS: age(now, i.OpenedAt), ToldAgeS: ageIf(now, i.NotifiedAt), Owed: i.NotifyError != ""})
+			OpenedAgeS: age(now, i.OpenedAt), ToldAgeS: ageIf(now, told), Owed: owed})
 	}
 	if s.Backups, err = backups(ctx, d.Store, now); err != nil {
 		return Summary{}, err
 	}
-	uses, err := d.Store.IntegrationUses(ctx)
-	if err != nil {
+	if s.Legs, err = legs(ctx, d.Store, d.Secrets, now); err != nil {
 		return Summary{}, err
-	}
-	for _, leg := range watch.LegNames(d.Secrets) {
-		s.Legs = append(s.Legs, SummaryLeg{Name: leg, LastOKAgeS: ageIf(now, uses[leg].UsedAt)})
 	}
 	root := d.Root
 	if root == "" {
@@ -168,6 +180,25 @@ func Build(ctx context.Context, d Deps, name string) (Summary, error) {
 		sort.Slice(s.Views, func(i, j int) bool { return s.Views[i].Subject < s.Views[j].Subject })
 	}
 	return s, nil
+}
+
+// legs are each of a machine's alert legs, and how long ago it last
+// delivered.
+func legs(ctx context.Context, store *state.Store, sec *secrets.Store, now time.Time) ([]SummaryLeg, error) {
+	uses, err := store.IntegrationUses(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out := []SummaryLeg{}
+	for _, leg := range watch.LegNames(sec) {
+		out = append(out, SummaryLeg{Name: leg, LastOKAgeS: ageIf(now, uses[leg].UsedAt)})
+	}
+	return out, nil
+}
+
+// leg is a summary's leg as a judge reads it.
+func (l SummaryLeg) leg() Leg {
+	return Leg{Name: l.Name, Worked: l.LastOKAgeS != nil, LastOK: elapsedIf(l.LastOKAgeS)}
 }
 
 // backups are the apps the scheduler backs up, the way it finds them:
