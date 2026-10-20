@@ -154,7 +154,7 @@ func TestSecretCopyGivesAnotherAppTheSameValueUnseen(t *testing.T) {
 func TestDataCommandPreservesOutputAndExitCode(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	a := &app{stateDir: t.TempDir(), stdout: &stdout, stderr: &stderr}
-	err := a.runDataCommand(context.Background(), "fixture", "sh", []string{"-c", "printf hello; exit 7"}, os.Environ())
+	err := a.runDataCommand(context.Background(), "fixture", "sh", []string{"-c", "printf hello; exit 7"}, os.Environ(), nil)
 	var exit quietError
 	if !errors.As(err, &exit) || exit.code != 7 || stdout.String() != "hello" {
 		t.Fatalf("output or exit lost: %q %v", stdout.String(), err)

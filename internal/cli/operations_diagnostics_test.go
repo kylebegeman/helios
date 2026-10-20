@@ -47,10 +47,16 @@ func TestDisconnectedOperationOffersSavedDiagnosticsOnTheSameSocket(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
+	shortenFollowing(t, 20*time.Millisecond)
 	server := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		encoder := json.NewEncoder(w)
 		if r.URL.Path == "/v1/version" {
 			_ = encoder.Encode(version.Current())
+			return
+		}
+		if r.Method == http.MethodGet {
+			// The daemon never comes back to say how the operation ended.
+			w.WriteHeader(http.StatusServiceUnavailable)
 			return
 		}
 		var req api.RunRequest

@@ -69,6 +69,11 @@ func (a *app) operateRaw(ctx context.Context, runner api.Runner, kind string, ra
 		}
 		r.Event(ev)
 	})
+	// A daemon that restarts mid-way, as an upgrade's does, ends the stream
+	// before the outcome while the journaled operation goes on.
+	if lastID != "" && ctx.Err() == nil && brokenOff(err) {
+		receipt, err = a.follow(ctx, runner, r, lastID)
+	}
 	if errors.Is(err, api.ErrDisconnected) {
 		if lastID != "" {
 			return fmt.Errorf("%w; the daemon finishes or undoes %s on its own; inspect saved output: %s", err, lastID, a.historyOutputCommand(lastID))
@@ -85,6 +90,71 @@ func (a *app) operateRaw(ctx context.Context, runner api.Runner, kind string, ra
 		return fmt.Errorf("%s: %s; inspect saved output: %s", receipt.Status, receipt.Error, a.historyOutputCommand(receipt.ID))
 	}
 	return nil
+}
+
+// restartPatience is how long a command following an operation waits for a
+// daemon that doesn't answer. It covers what bedrock.service gives systemd:
+// stopping the old daemon (TimeoutStopSec=60), a new build that won't start
+// using up its three tries within StartLimitIntervalSec=60, and the rollback
+// unit starting the previous build in its place.
+const restartPatience = 3 * time.Minute
+
+// How often a followed operation's receipt is read, and how long its daemon
+// may stay away. Tests shorten both.
+var (
+	followEvery    = time.Second
+	followPatience = restartPatience
+)
+
+// brokenOff reports whether a run's stream ended without its outcome because
+// the daemon went away: the connection dropped, or the daemon, stopping,
+// canceled the run it was streaming.
+func brokenOff(err error) bool {
+	var problem *api.Error
+	return errors.Is(err, api.ErrDisconnected) || errors.As(err, &problem) && problem.Code == "canceled"
+}
+
+// follow reads an operation's receipt until the operation ends, through the
+// daemon going away and coming back, and shows the outcome.
+func (a *app) follow(ctx context.Context, runner api.Runner, r *ui.Renderer, id string) (*kernel.Receipt, error) {
+	note := fmt.Sprintf("the daemon restarted; following %s until it ends", id)
+	if a.json {
+		fmt.Fprintln(a.stderr, note)
+	} else {
+		r.Note(note)
+	}
+	// heard is when the daemon last showed the operation under way. A
+	// planned one isn't: once its run is broken off, nothing starts it.
+	heard := time.Now()
+	for {
+		receipt, err := runner.Receipt(ctx, id)
+		switch {
+		case ctx.Err() != nil:
+			return nil, fmt.Errorf("stopped following %s; the daemon carries on with it", id)
+		case err == nil && receipt.Status.Final():
+			// The events since the restart went unseen: show the whole
+			// receipt, or under --json the event a run streamed to its end
+			// finishes with, its message the reason the kernel gave.
+			if a.json {
+				r.Event(kernel.Event{Type: kernel.EventFinished, Operation: id, At: receipt.FinishedAt, Receipt: receipt, Message: receipt.Error})
+			} else {
+				r.Receipt(receipt)
+			}
+			return receipt, nil
+		case err == nil && receipt.Status != state.Planned:
+			heard = time.Now()
+		case time.Since(heard) < followPatience:
+			// away, or not started yet: keep asking
+		case err == nil:
+			return nil, fmt.Errorf("%s never started, so nothing was applied, and the daemon won't start it now", id)
+		default:
+			return nil, fmt.Errorf("%w and it hasn't come back in %s", api.ErrDisconnected, ui.Duration(followPatience))
+		}
+		select {
+		case <-ctx.Done(): // the next read says so
+		case <-time.After(followEvery):
+		}
+	}
 }
 
 // historyOutputCommand keeps a diagnostic follow-up on the same state and

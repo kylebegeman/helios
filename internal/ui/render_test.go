@@ -81,6 +81,21 @@ func TestJSONOutputIsOneObjectPerEvent(t *testing.T) {
 	}
 }
 
+func TestANoteAfterARunningStepStartsOnALineOfItsOwnAndJSONLeavesItOut(t *testing.T) {
+	var out bytes.Buffer
+	r := New(&out, true, false)
+	r.Event(events()[1])
+	r.Note("following op-1")
+	if got := out.String(); got != "\r\033[K  ...  step-1\r\033[Kfollowing op-1\n" {
+		t.Fatalf("note shares the running line: %q", got)
+	}
+	out.Reset()
+	New(&out, true, true).Note("following op-1")
+	if out.Len() != 0 {
+		t.Fatalf("JSON output carries a note: %q", out.String())
+	}
+}
+
 func TestPlanAndReceiptRender(t *testing.T) {
 	var out bytes.Buffer
 	r := New(&out, false, false)

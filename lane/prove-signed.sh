@@ -6,7 +6,10 @@
 # doesn't require signatures deploys as before. A webhook delivery needs a
 # routed app and public DNS (m6 covers it on a dedicated machine), so the
 # webhook's check runs here through the gitdeploy tests, on the box's own
-# git and OpenSSH, as root the way the daemon runs it.
+# git and OpenSSH, as root the way the daemon runs it. First the daemon on
+# its own, then reconcile on its own, each from a stock 755 root:root
+# /etc/bedrock, let the push user through it to the policy without listing
+# it.
 set -euo pipefail
 umask 077
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -67,18 +70,31 @@ sig = open(sys.argv[1]).read().rstrip("\n").replace("\n", "\n ")
 sys.stdout.write(header + "\ngpgsig " + sig + "\n\n" + body)' "$2" | g hash-object -t commit -w --stdin
 }
 
-echo "== build and install; the daemon and reconcile let the push user read the policy"
+echo "== build and install; the daemon alone gives a stock /etc/bedrock to the bedrock group"
 (cd "$here/.." && CGO_ENABLED=0 GOOS=linux GOARCH="$LANE_ARCH" go build -trimpath -o "bin/bedrock-linux-$LANE_ARCH" ./cmd/helios \
   && CGO_ENABLED=0 GOOS=linux GOARCH="$LANE_ARCH" go test -c -trimpath -o "bin/gitdeploy-linux-$LANE_ARCH.test" ./internal/gitdeploy \
   && go build -trimpath -o bin/bedrock ./cmd/helios)
 put "$here/../bin/bedrock-linux-$LANE_ARCH" /usr/local/bin/bedrock.new
+# /etc/bedrock goes back to a stock 755 root:root, as 0.7.15 left both hosts,
+# and only the daemon restarts: as it starts it makes it 715 root:bedrock,
+# as reconcile does, so the push user passes through and lists nothing.
+run 'mkdir -p /etc/bedrock && chown root:root /etc/bedrock && chmod 755 /etc/bedrock'
 run 'chmod 755 /usr/local/bin/bedrock.new && mv -f /usr/local/bin/bedrock.new /usr/local/bin/bedrock && bedrock daemon install >/dev/null && bedrock version'
+run 'stat -c "%a %U:%G %n" /etc/bedrock /etc/bedrock/git'
+run '[ "$(stat -c "%a %U:%G" /etc/bedrock)" = "715 root:bedrock" ] && sudo -u bedrock test -x /etc/bedrock/git && ! sudo -u bedrock ls /etc/bedrock >/dev/null 2>&1' \
+  || fail "the daemon left a stock /etc/bedrock other than 715 root:bedrock, or the push user can list it"
+
+echo "== reconcile on its own gives a stock /etc/bedrock to the bedrock group"
+# /etc/bedrock goes back to a stock 755 root:root, as before the daemon's
+# check, so reconcile is proven from a stock directory too and not from the
+# 715 root:bedrock the daemon left. Reconcile doesn't restart the daemon.
+run 'mkdir -p /etc/bedrock && chown root:root /etc/bedrock && chmod 755 /etc/bedrock'
 run 'bedrock host reconcile --yes' | quiet | grep -E "pushes|succeeded|failed"
 run 'git --version; ssh -V 2>&1; stat -c "%a %U:%G %n" /etc/bedrock /etc/bedrock/git; ls -l /etc/bedrock'
-# /etc/bedrock keeps whatever others had (755 on a stock box); only its
-# group becomes bedrock, and the group may pass through and list nothing.
-run '[ "$(stat -c "%U:%G" /etc/bedrock)" = "root:bedrock" ] && [ "$(stat -c "%a" /etc/bedrock | cut -c2)" = 1 ] && [ "$(stat -c "%a %U:%G" /etc/bedrock/git)" = "750 root:bedrock" ] && sudo -u bedrock test -x /etc/bedrock/git && ! sudo -u bedrock ls /etc/bedrock >/dev/null 2>&1' \
-  || fail "the push user can't reach /etc/bedrock/git, or can list /etc/bedrock"
+# chgrp bedrock and chmod g=x: others keep their r-x, and the group may
+# pass through and list nothing.
+run '[ "$(stat -c "%a %U:%G" /etc/bedrock)" = "715 root:bedrock" ] && [ "$(stat -c "%a %U:%G" /etc/bedrock/git)" = "750 root:bedrock" ] && sudo -u bedrock test -x /etc/bedrock/git && ! sudo -u bedrock ls /etc/bedrock >/dev/null 2>&1' \
+  || fail "reconcile left a stock /etc/bedrock other than 715 root:bedrock, the push user can't reach /etc/bedrock/git, or it can list /etc/bedrock"
 
 echo "== two apps the push key may deploy; hello will require signed commits"
 run 'rm -rf /var/lib/bedrock-git/hello.git /var/lib/bedrock-git/notes.git'

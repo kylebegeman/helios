@@ -99,6 +99,15 @@ func (r *Renderer) Event(ev kernel.Event) {
 	}
 }
 
+// Note prints a line of narration that is no event, on a line of its own.
+// JSON leaves it out: that output is objects alone.
+func (r *Renderer) Note(line string) {
+	if r.json {
+		return
+	}
+	r.println(line)
+}
+
 func (r *Renderer) finished(st kernel.StepView) {
 	word := "ok"
 	switch st.Status {

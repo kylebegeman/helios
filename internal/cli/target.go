@@ -273,6 +273,18 @@ func (a *app) dispatchTarget(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
+	// SSH gives the target's exec no terminal, so this end decides whether
+	// the command reads stdin. Left open, SSH would read a piped script's
+	// next lines. A target without the capability reads it regardless.
+	sayInteractive := false
+	if command == "exec" {
+		omit["interactive"] = true
+		if execReadsStdin(cmd) {
+			sayInteractive = caps.has(execInteractiveCapability)
+		} else {
+			input = nil
+		}
+	}
 	if command == "git signers add" && len(args) == 1 {
 		// A public key read here goes to the target as an argument: its
 		// plan and its apply each run with their own stdin.
@@ -468,6 +480,9 @@ func (a *app) dispatchTarget(cmd *cobra.Command, args []string) error {
 	}
 	argv := append(a.targetStateArgs(), remoteArguments(cmd, args, omit)...)
 	argv = appendRemoteFlags(argv, fileFlags...)
+	if sayInteractive {
+		argv = appendRemoteFlags(argv, "--interactive")
+	}
 	if command == "move stage" || command == "move test" {
 		if commit, _ := cmd.Flags().GetString("source-commit"); commit != "" {
 			argv = appendRemoteFlags(argv, "--source-commit="+commit)

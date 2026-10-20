@@ -207,6 +207,11 @@ func Run(ctx context.Context, cfg Config, logw io.Writer) error {
 	clearStaleUpgrade(logf)
 	// A machine set up before the signing policy existed keeps /etc/bedrock
 	// to root, and the push hook needs its way through to read the policy.
+	// An /etc/bedrock of root's or the bedrock group's becomes bedrock's with
+	// group bits --x, even where others could already pass, as reconcile
+	// leaves it: the group passes through and lists nothing. One of another
+	// group keeps its group and gains only others' x, where reconcile would
+	// give it to bedrock.
 	if cfg.StateDir == DefaultStateDir {
 		if err := gitdeploy.ShareSigningDir(); err != nil {
 			logf("signing policy: %v", err)

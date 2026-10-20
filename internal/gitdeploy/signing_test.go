@@ -277,6 +277,35 @@ func TestThePolicyFilesAreWrittenWholeAndKeepHandWrittenLines(t *testing.T) {
 	}
 }
 
+func TestTheBedrockGroupMayPassThroughEtcBedrockAndListNothing(t *testing.T) {
+	const bedrock, adm = 997, 4
+	for name, c := range map[string]struct {
+		mode      os.FileMode
+		gid       int
+		wantGroup int
+		wantMode  os.FileMode
+	}{
+		"a stock 755 root:root":          {0o755, 0, bedrock, 0o715},
+		"750 root:root":                  {0o750, 0, bedrock, 0o710},
+		"700 root:root":                  {0o700, 0, bedrock, 0o710},
+		"715 root:bedrock, as reconcile": {0o715, bedrock, -1, 0o715},
+		"755 root:bedrock":               {0o755, bedrock, -1, 0o715},
+		"755 of another group":           {0o755, adm, -1, 0o755},
+		"750 of another group gains o+x": {0o750, adm, -1, 0o751},
+		// os.Stat's mode, directory and all; chmod g=x keeps the
+		// setuid, setgid and sticky bits, and so does the daemon.
+		"2755 root:root":        {os.ModeDir | os.ModeSetgid | 0o755, 0, bedrock, os.ModeSetgid | 0o715},
+		"1777 root:root":        {os.ModeDir | os.ModeSticky | 0o777, 0, bedrock, os.ModeSticky | 0o717},
+		"4750 root:bedrock":     {os.ModeDir | os.ModeSetuid | 0o750, bedrock, -1, os.ModeSetuid | 0o710},
+		"3750 of another group": {os.ModeDir | os.ModeSetgid | os.ModeSticky | 0o750, adm, -1, os.ModeSetgid | os.ModeSticky | 0o751},
+	} {
+		group, mode := sharedParent(c.mode, c.gid, bedrock)
+		if group != c.wantGroup || mode != c.wantMode {
+			t.Errorf("%s: group %d mode %v, want %d %v", name, group, mode, c.wantGroup, c.wantMode)
+		}
+	}
+}
+
 func TestAnUploadedTreeIsRefusedForAnAppThatRequiresSignedCommits(t *testing.T) {
 	dir := policyWith(t, requiring("hello"))
 	if err := CheckTree(dir, "hello"); err == nil || !strings.Contains(err.Error(), "an uploaded tree has no commit to check") || !strings.Contains(err.Error(), "helios deploy --to root@") {

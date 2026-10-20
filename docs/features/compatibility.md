@@ -18,6 +18,29 @@ writes a private consistent SQLite checkpoint before staging the binary.
 Checkpoint metadata is bound to the kernel operation ID so an interrupted
 upgrade cannot adopt a checkpoint from a different attempt.
 
+The daemon restarts itself partway through an upgrade, which ends the
+command's event stream before the outcome. The command then follows the
+journaled operation: it says so, reads the receipt until the operation ends,
+shows it and exits as it says. It waits up to three minutes for a daemon that
+doesn't answer, long enough for systemd to stop the old daemon, try the new
+build and put the previous one back; past that, or on Ctrl-C, it names
+`helios history <id> --output` and leaves the operation to the daemon. Any
+operation a daemon restart cuts off is followed the same way. The command
+running the upgrade is the build being replaced, so an upgrade run by a build
+before 0.7.16 still ends with `context canceled`, even when it succeeded;
+`helios history` shows how it ended.
+
+From 0.7.16, `helios exec` hands the command standard input only at a
+terminal or with `-i`. Piping or redirecting input into it now needs `-i`
+before the `--`, as in
+`helios exec site -i -- sh -c 'cat > /data/import.csv' < import.csv`; without
+`-i` the command reads nothing. SSH gives a target's `exec` no terminal, so
+through `--target` the client decides, and passes `--interactive` to a target
+that reports `exec.interactive.v1`. A client before 0.7.16 never does, so its
+`exec` through `--target` gets no standard input on a 0.7.16 target, even
+typed at a terminal; typing into or piping to the command needs the client
+upgraded too.
+
 When an app's active revision sets `origin_pull` for a host, the candidate
 must also report `edge.origin-pull.v1`: an older build reads the stored
 `origin_pull` as nothing, and its edge would stop checking Cloudflare's

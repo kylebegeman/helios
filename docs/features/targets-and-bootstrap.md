@@ -50,7 +50,8 @@ source artifacts are compared with the uploaded archive, including file bytes,
 executable permissions and symlinks. A changed cache is refused rather than
 replaced underneath an operation. Keep the state directory on a filesystem
 with enough room for the source and restore inputs. `run --stdin` and recovery
-identities stream stdin; planning does not consume it.
+identities stream stdin; planning does not consume it. `exec` streams it only
+from a terminal or with `-i`, so SSH never reads a piped script's next lines.
 
 For `secret set` and `integration set`, typed values are collected at the local
 terminal with hidden prompts for secret fields, then streamed through SSH.
