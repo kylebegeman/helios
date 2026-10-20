@@ -19,6 +19,13 @@ DEFAULT_MEMORY_MIB = 3072
 MIN_MEMORY_MIB = 512
 MAX_MEMORY_MIB = 65536
 TCG_CACHE_MIB = 128
+# Docker hands a published port's connections to the container from its
+# network's gateway, and QEMU's user network passes that address on to the
+# guest. On the default bridge it is 172.17.0.1, the address the guest's own
+# Docker gives docker0, so once host setup installs Docker the guest drops
+# every new SSH connection as coming from itself. Each VM gets a network of
+# its own in a range Docker never picks by default.
+NETWORK_SUBNETS = tuple(f"10.213.{n}.0/24" for n in range(1, 255))
 
 
 def requested_memory() -> int:
@@ -59,6 +66,8 @@ def saved() -> dict:
         raise RuntimeError("Invalid saved VM identity; refusing to act.")
     if data.get("container") != "bedrock-lane-" + data["id"]:
         raise RuntimeError("Saved container is not a managed lane name; refusing to act.")
+    if data.get("network", data["container"]) != data["container"]:
+        raise RuntimeError("Saved network is not the managed lane network; refusing to act.")
     info = json.loads(command("docker", "inspect", data["container"], capture=True))[0]
     if info.get("Config", {}).get("Labels", {}).get(LABEL) != data["id"]:
         raise RuntimeError("Container identity does not match; refusing to act.")
@@ -73,10 +82,30 @@ def destroy() -> None:
         subprocess.run(["bash", "-c", '. "$1/common.sh"', "lane", str(HERE.parent)],
                        env={**os.environ, "LANE_CONFIG": str(STATE / "lane.env")}, check=True, timeout=60)
     command("docker", "rm", "-f", data["container"])
+    if data.get("network"):
+        remove_network(data["network"], data["id"])
     # These are exactly the generated files owned by this provisioner.
     for name in ("machine.json", "lane.env", "ssh-key", "ssh-key.pub", "host-key", "host-key.pub", "known_hosts", "user-data", "meta-data"):
         (STATE / name).unlink(missing_ok=True)
     print("Disposable VM removed.")
+
+
+def create_network(name: str, identity: str) -> str:
+    for subnet in NETWORK_SUBNETS:
+        try:
+            command("docker", "network", "create", "--label", f"{LABEL}={identity}", "--subnet", subnet, name, capture=True)
+            return name
+        except subprocess.CalledProcessError as error:
+            if "overlaps" not in (error.stderr or ""):
+                raise
+    raise RuntimeError(f"Every lane network range {NETWORK_SUBNETS[0]} through {NETWORK_SUBNETS[-1]} is taken.")
+
+
+def remove_network(name: str, identity: str) -> None:
+    # Only the exact network carrying this VM's label; one already gone is fine.
+    owned = command("docker", "network", "ls", "--filter", f"label={LABEL}={identity}", "--format", "{{.Name}}", capture=True)
+    if name in owned.split():
+        command("docker", "network", "rm", name)
 
 
 def wait_ready(data: dict) -> None:
@@ -136,6 +165,9 @@ def up(prepared: tuple[str | None, dict] | None = None) -> None:
             raise RuntimeError("An existing VM keeps its recorded resources; RAM cannot be changed by up. "
                                "Use a fresh LANE_VM_STATE directory with a current provider image.")
         print(f"Existing managed VM: {data['container']}", flush=True)
+        if not data.get("network"):
+            print("This VM runs on Docker's default bridge, so SSH stops answering once host setup installs "
+                  "Docker in the guest. Recreate it with make lane-reset before proving m2.", flush=True)
         command("docker", "start", data["container"])
         wait_ready(data)
         return
@@ -177,14 +209,19 @@ runcmd:
     if not provider_image:
         command("docker", "build", "--tag", IMAGE, str(HERE), timeout=1800)
         provider_image = IMAGE
+    network = create_network(name, identity)
     create_args = ["docker", "create", "--name", name, "--label", f"{LABEL}={identity}",
-                   "--publish", "127.0.0.1::2222"]
+                   "--network", network, "--publish", "127.0.0.1::2222"]
     if resources["guest_memory_mib"] is not None:
         create_args += ["--env", f"LANE_VM_MEMORY_MIB={resources['guest_memory_mib']}"]
-    command(*create_args, provider_image)
+    try:
+        command(*create_args, provider_image)
+    except (subprocess.SubprocessError, OSError):
+        remove_network(network, identity)
+        raise
     # Record ownership before any further Docker probe can fail. This receipt
     # is sufficient to identify and clean up the exact never-booted container.
-    data = {"id": identity, "container": name, "ready": False, **resources}
+    data = {"id": identity, "container": name, "network": network, "ready": False, **resources}
     (STATE / "machine.json").write_text(json.dumps(data) + "\n")
     image_id = command("docker", "inspect", "--format", "{{.Image}}", name, capture=True)
     image_sha = command("docker", "run", "--rm", "--entrypoint", "/bin/cat", image_id, "/opt/ubuntu.sha256", capture=True).split()[0]
