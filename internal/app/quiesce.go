@@ -55,8 +55,51 @@ func lockAppData(ctx context.Context, stateFile, app string, exclusive bool) (fu
 	}
 }
 
+// BackupPauseLimit is the longest a backup keeps an app's writers stopped.
+const BackupPauseLimit = 30 * time.Minute
+
 func quiesceFile(stateFile, app string) string {
 	return filepath.Join(filepath.Dir(stateFile), "locks", app+".quiesce.json")
+}
+
+// BackupPause is a backup that has stopped an app's writers, and since
+// when: the recovery record is written once, before the first stop.
+type BackupPause struct {
+	Since   time.Time
+	writers []pausedWriter
+}
+
+// Holds reports whether the pause stopped a container, named by its ID
+// or its name.
+func (p *BackupPause) Holds(id, name string) bool {
+	for _, w := range p.writers {
+		if id != "" && w.ID == id || name != "" && w.Name == name {
+			return true
+		}
+	}
+	return false
+}
+
+// ReadBackupPause returns the app's backup pause, or nil when its writers
+// aren't paused.
+func ReadBackupPause(stateFile, app string) (*BackupPause, error) {
+	file := quiesceFile(stateFile, app)
+	info, err := os.Stat(file)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	data, err := os.ReadFile(file)
+	if err != nil {
+		return nil, err
+	}
+	var writers []pausedWriter
+	if err := json.Unmarshal(data, &writers); err != nil {
+		return nil, fmt.Errorf("read backup recovery record: %w", err)
+	}
+	return &BackupPause{Since: info.ModTime().UTC(), writers: writers}, nil
 }
 
 // AcquireDataAccess protects operator commands and jobs from a backup pause.
@@ -205,7 +248,7 @@ func resumeWriters(ctx context.Context, e quiesceEngine, file string) error {
 // volume files. A failed or cancelled capture resumes under a fresh context;
 // replay after daemon death first repairs the persisted previous pause.
 func withQuiescedWriters(ctx context.Context, e quiesceEngine, stateFile string, m *manifest.Manifest, out io.Writer, capture func(context.Context) error) (result error) {
-	ctx, cancel := context.WithTimeout(ctx, 30*time.Minute)
+	ctx, cancel := context.WithTimeout(ctx, BackupPauseLimit)
 	defer cancel()
 	unlock, err := lockAppData(ctx, stateFile, m.App, true)
 	if err != nil {

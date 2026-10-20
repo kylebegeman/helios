@@ -51,9 +51,23 @@ type Definition struct {
 const (
 	StorageName    = "storage"
 	EmailName      = "email"
+	Email2Name     = "email2"
+	PushoverName   = "pushover"
+	NtfyName       = "ntfy"
 	CloudflareName = "cloudflare"
 	LoomName       = "loom"
 )
+
+// emailFields are what a mail server for alerts needs; email and email2
+// ask the same.
+var emailFields = []Field{
+	{Name: "smtp_host", Prompt: "SMTP host"},
+	{Name: "smtp_port", Prompt: "SMTP port (465 for TLS, 587 for STARTTLS)", Default: "587"},
+	{Name: "smtp_user", Prompt: "SMTP user", Optional: true},
+	{Name: "smtp_password", Prompt: "SMTP password", Secret: true, Optional: true},
+	{Name: "from", Prompt: "from address"},
+	{Name: "to", Prompt: "to address (several separated by commas)"},
+}
 
 // Definitions lists every integration, in the order they are shown.
 var Definitions = []Definition{
@@ -72,13 +86,27 @@ var Definitions = []Definition{
 	{
 		Name:    EmailName,
 		Purpose: "alerts by email",
+		Fields:  emailFields,
+	},
+	{
+		Name:    Email2Name,
+		Purpose: "a second mail server, for alerts the first one refuses",
+		Fields:  emailFields,
+	},
+	{
+		Name:    PushoverName,
+		Purpose: "alerts on a phone through Pushover; critical ones ring until acknowledged",
 		Fields: []Field{
-			{Name: "smtp_host", Prompt: "SMTP host"},
-			{Name: "smtp_port", Prompt: "SMTP port (465 for TLS, 587 for STARTTLS)", Default: "587"},
-			{Name: "smtp_user", Prompt: "SMTP user", Optional: true},
-			{Name: "smtp_password", Prompt: "SMTP password", Secret: true, Optional: true},
-			{Name: "from", Prompt: "from address"},
-			{Name: "to", Prompt: "to address (several separated by commas)"},
+			{Name: "app_token", Prompt: "Pushover application API token", Secret: true},
+			{Name: "user_key", Prompt: "Pushover user or group key", Secret: true},
+		},
+	},
+	{
+		Name:    NtfyName,
+		Purpose: "alerts on a phone through ntfy, instead of Pushover",
+		Fields: []Field{
+			{Name: "topic_url", Prompt: "topic URL, such as https://ntfy.sh/a-long-unguessable-topic", Secret: true},
+			{Name: "token", Prompt: "access token, for a protected topic", Secret: true, Optional: true},
 		},
 	},
 	{
@@ -136,7 +164,14 @@ func hookSecretName(kind, app string) string {
 // ErrNotSet means an integration hasn't been set up on this machine.
 var ErrNotSet = errors.New("not set up")
 
-var bucketPrefixPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{1,19}$`)
+var (
+	bucketPrefixPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{1,19}$`)
+	// Pushover's application tokens and user keys are 30 letters and digits.
+	pushoverKeyPattern = regexp.MustCompile(`^[A-Za-z0-9]{30}$`)
+	// ntfy topics are 1 to 64 letters, digits, hyphens and underscores.
+	ntfyTopicPattern = regexp.MustCompile(`^[-_A-Za-z0-9]{1,64}$`)
+	ntfyTokenPattern = regexp.MustCompile(`^[!-~]+$`)
+)
 
 // Set stores an integration's values in one new version of helios's
 // secrets and returns values it made up, such as a generated password,
@@ -242,21 +277,35 @@ func validate(name string, v map[string]string) error {
 				return fmt.Errorf("cloudflare.api: %w", err)
 			}
 		}
-	case EmailName:
+	case EmailName, Email2Name:
 		port, err := strconv.Atoi(v["smtp_port"])
 		if err != nil || port < 1 || port > 65535 {
-			return errors.New("email.smtp_port must be a port number")
+			return fmt.Errorf("%s.smtp_port must be a port number", name)
 		}
 		for _, f := range []string{"from", "to"} {
 			for _, addr := range strings.Split(v[f], ",") {
 				addr = strings.TrimSpace(addr)
 				if _, err := mail.ParseAddress(addr); err != nil {
-					return fmt.Errorf("email.%s: %q isn't an address", f, addr)
+					return fmt.Errorf("%s.%s: %q isn't an address", name, f, addr)
 				}
 			}
 		}
 		if (v["smtp_user"] == "") != (v["smtp_password"] == "") {
-			return errors.New("email: give both smtp_user and smtp_password, or neither")
+			return fmt.Errorf("%s: give both smtp_user and smtp_password, or neither", name)
+		}
+	case PushoverName:
+		// Neither value is echoed: both are credentials.
+		for _, f := range []string{"app_token", "user_key"} {
+			if !pushoverKeyPattern.MatchString(v[f]) {
+				return fmt.Errorf("pushover.%s must be the 30 letters and digits Pushover shows", f)
+			}
+		}
+	case NtfyName:
+		if _, err := ParseNtfyTopic(v["topic_url"]); err != nil {
+			return fmt.Errorf("ntfy.topic_url: %w", err)
+		}
+		if t := v["token"]; t != "" && !ntfyTokenPattern.MatchString(t) {
+			return errors.New("ntfy.token must be one word with no spaces")
 		}
 	case LoomName:
 		// The edge dials this on every request to a guarded route, so a URL
@@ -484,8 +533,10 @@ func (s Storage) Describe() string {
 	return "Backblaze B2, buckets " + s.BucketPrefix + "-*"
 }
 
-// Email is the mail server alerts go through.
+// Email is a mail server alerts go through.
 type Email struct {
+	// Name is the integration it came from: email or email2.
+	Name     string
 	Host     string
 	Port     int
 	User     string
@@ -496,18 +547,106 @@ type Email struct {
 
 // LoadEmail reads the email integration.
 func LoadEmail(store *secrets.Store) (*Email, error) {
-	v, err := Get(store, EmailName)
+	return loadEmail(store, EmailName)
+}
+
+// LoadEmailRelays reads the mail servers alerts go through, in the order
+// they are tried: email, then email2. Either may be unset; none set is
+// an empty list.
+func LoadEmailRelays(store *secrets.Store) ([]Email, error) {
+	var relays []Email
+	for _, name := range []string{EmailName, Email2Name} {
+		e, err := loadEmail(store, name)
+		if errors.Is(err, ErrNotSet) {
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		relays = append(relays, *e)
+	}
+	return relays, nil
+}
+
+func loadEmail(store *secrets.Store, name string) (*Email, error) {
+	v, err := Get(store, name)
 	if err != nil {
 		return nil, err
 	}
 	port, _ := strconv.Atoi(v["smtp_port"])
-	e := &Email{Host: v["smtp_host"], Port: port, User: v["smtp_user"], Password: v["smtp_password"], From: v["from"]}
+	e := &Email{Name: name, Host: v["smtp_host"], Port: port, User: v["smtp_user"], Password: v["smtp_password"], From: v["from"]}
 	for _, addr := range strings.Split(v["to"], ",") {
 		if a := strings.TrimSpace(addr); a != "" {
 			e.To = append(e.To, a)
 		}
 	}
 	return e, nil
+}
+
+// Pushover is the Pushover application and user alerts go to.
+type Pushover struct {
+	AppToken string
+	UserKey  string
+}
+
+// LoadPushover reads the pushover integration.
+func LoadPushover(store *secrets.Store) (*Pushover, error) {
+	v, err := Get(store, PushoverName)
+	if err != nil {
+		return nil, err
+	}
+	return &Pushover{AppToken: v["app_token"], UserKey: v["user_key"]}, nil
+}
+
+// Ntfy is the ntfy topic alerts are published to.
+type Ntfy struct {
+	NtfyTopic
+	// Token is empty for an open topic.
+	Token string
+}
+
+// NtfyTopic is a topic URL split into the server it is published through
+// and the topic's name.
+type NtfyTopic struct {
+	// Server is where notices are published, ending in a slash.
+	Server string
+	Topic  string
+}
+
+// ParseNtfyTopic splits a topic URL, such as https://ntfy.sh/topic, into
+// its server and topic. The URL is a credential on a public server, since
+// anyone who knows it can read the topic, so errors never echo it.
+func ParseNtfyTopic(raw string) (NtfyTopic, error) {
+	u, err := parseEndpointURL(strings.TrimSpace(raw))
+	if err != nil {
+		return NtfyTopic{}, err
+	}
+	if u.RawQuery != "" {
+		return NtfyTopic{}, errors.New("URL must not have a query")
+	}
+	// The topic is read from the path as written, so an escaped slash
+	// can't move part of it into the server.
+	escaped := u.EscapedPath()
+	topic := escaped[strings.LastIndex(escaped, "/")+1:]
+	if !ntfyTopicPattern.MatchString(topic) {
+		return NtfyTopic{}, errors.New("URL must end in a topic of 1 to 64 letters, digits, hyphens and underscores")
+	}
+	u.Path = strings.TrimSuffix(u.Path, topic)
+	u.RawPath = strings.TrimSuffix(u.RawPath, topic)
+	return NtfyTopic{Server: u.String(), Topic: topic}, nil
+}
+
+// LoadNtfy reads the ntfy integration.
+func LoadNtfy(store *secrets.Store) (*Ntfy, error) {
+	v, err := Get(store, NtfyName)
+	if err != nil {
+		return nil, err
+	}
+	topic, err := ParseNtfyTopic(v["topic_url"])
+	if err != nil {
+		return nil, fmt.Errorf("ntfy.topic_url: %w", err)
+	}
+	return &Ntfy{NtfyTopic: topic, Token: v["token"]}, nil
 }
 
 // Cloudflare is the DNS API token, and the API it is for.

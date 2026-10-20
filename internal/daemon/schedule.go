@@ -13,10 +13,16 @@ import (
 	"github.com/kylebegeman/helios/internal/manifest"
 	"github.com/kylebegeman/helios/internal/secrets"
 	"github.com/kylebegeman/helios/internal/state"
+	"github.com/kylebegeman/helios/internal/watch"
 )
 
 // MachineBackupSchedule is when the machine's own state is backed up.
 const MachineBackupSchedule = "30 3 * * *"
+
+// AlertCanarySchedule is when every way of sending alerts is tested, so
+// a broken one is found before an incident needs it. A leg that fails
+// opens a warning the others deliver.
+const AlertCanarySchedule = "15 9 * * 1"
 
 // MachineGCSchedule is when the machine reclaims what it no longer needs.
 // It runs after the machine backup so a night's work is captured before
@@ -30,6 +36,8 @@ type Scheduler struct {
 	Secrets *secrets.Store
 	Server  *api.Server
 	Log     func(format string, args ...any)
+	// Hostname names the machine in the weekly test alert.
+	Hostname string
 	// Started is when this daemon came up; the machine backup counts
 	// from there when it has never run.
 	Started time.Time
@@ -67,6 +75,9 @@ func (s *Scheduler) Tick(ctx context.Context, now time.Time) {
 	if s.dueOp(ctx, app.GCKind, MachineGCSchedule, s.Started, now) {
 		s.run(ctx, app.GCKind, app.GCInput{}, "garbage collection")
 	}
+	if sched, err := manifest.ParseSchedule(AlertCanarySchedule); err == nil && watch.AlertTestDue(s.Store, sched.Next, s.Started, now) {
+		s.testAlerts(ctx, now)
+	}
 
 	if _, err := integration.LoadStorage(s.Secrets); err != nil {
 		// Nothing can be backed up until storage is set; say so once an
@@ -91,6 +102,20 @@ func (s *Scheduler) Tick(ctx context.Context, now time.Time) {
 	}
 	if s.due(ctx, manifest.ReservedApp, state.BackupRunBackup, MachineBackupSchedule, s.Started, now) {
 		s.run(ctx, app.BackupKind, app.BackupInput{App: manifest.ReservedApp}, "backup of the machine")
+	}
+}
+
+// testAlerts sends the weekly test through every leg. The prober turns a
+// failed leg into a warning.
+func (s *Scheduler) testAlerts(ctx context.Context, now time.Time) {
+	results, err := watch.SendTestAlerts(ctx, s.Secrets, s.Store, s.Hostname, "", now)
+	if err != nil {
+		s.Log("schedule: alert test: %v", err)
+	}
+	for _, r := range results {
+		if r.Error != "" {
+			s.Log("schedule: alert test: %s failed: %s", r.Leg, r.Error)
+		}
 	}
 }
 

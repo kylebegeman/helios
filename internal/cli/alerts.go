@@ -10,7 +10,6 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/kylebegeman/helios/internal/integration"
 	"github.com/kylebegeman/helios/internal/state"
 	"github.com/kylebegeman/helios/internal/watch"
 )
@@ -48,11 +47,12 @@ func newAlerts(a *app) *cobra.Command {
 			}
 			for _, inc := range open {
 				fmt.Fprintf(a.stdout, "OPEN  %s (%s) since %s: %s\n", inc.Subject, inc.Severity, inc.OpenedAt.Local().Format("2006-01-02 15:04"), inc.Message)
-				switch {
-				case inc.NotifyError != "":
-					fmt.Fprintf(a.stdout, "      NOT DELIVERED: %s\n", inc.NotifyError)
-				case !inc.NotifiedAt.IsZero():
+				// Some legs can have told you while another missed it.
+				if !inc.NotifiedAt.IsZero() {
 					fmt.Fprintf(a.stdout, "      told you at %s\n", inc.NotifiedAt.Local().Format("15:04"))
+				}
+				if inc.NotifyError != "" {
+					fmt.Fprintf(a.stdout, "      NOT DELIVERED: %s\n", inc.NotifyError)
 				}
 			}
 			for _, inc := range past {
@@ -62,9 +62,10 @@ func newAlerts(a *app) *cobra.Command {
 		},
 	}
 	cmd.Flags().IntVar(&limit, "limit", 20, "how many resolved incidents to list; every open incident is included")
+	var leg string
 	test := &cobra.Command{
 		Use:   "test",
-		Short: "Send a test alert through the email integration.",
+		Short: "Send a test alert through each way alerts go out, and say how each did.",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			store, err := a.openState()
@@ -73,18 +74,38 @@ func newAlerts(a *app) *cobra.Command {
 			}
 			defer store.Close()
 			hostname, _ := os.Hostname()
-			n := watch.EmailNotifier{Secrets: a.secretsStore(), Store: store}
-			if err := n.Test(cmd.Context(), hostname); err != nil {
+			results, err := watch.SendTestAlerts(cmd.Context(), a.secretsStore(), store, hostname, leg, time.Now().UTC())
+			if a.json && results != nil {
+				if err := json.NewEncoder(a.stdout).Encode(results); err != nil {
+					return err
+				}
+			}
+			for _, r := range results {
+				if a.json {
+					break
+				}
+				if r.Error != "" {
+					fmt.Fprintf(a.stdout, "%s: FAILED: %s\n", r.Leg, r.Error)
+				} else {
+					fmt.Fprintf(a.stdout, "%s: test alert sent to %s\n", r.Leg, r.To)
+				}
+			}
+			if err != nil {
 				return err
 			}
-			if cfg, err := integration.LoadEmail(a.secretsStore()); err == nil {
-				fmt.Fprintf(a.stdout, "test alert sent to %s\n", strings.Join(cfg.To, ", "))
-			} else {
-				fmt.Fprintln(a.stdout, "test alert sent")
+			failed := 0
+			for _, r := range results {
+				if r.Error != "" {
+					failed++
+				}
+			}
+			if failed > 0 {
+				return fmt.Errorf("%d of %d failed; fix it, then run helios alerts test again", failed, len(results))
 			}
 			return nil
 		},
 	}
+	test.Flags().StringVar(&leg, "leg", "", "test only this one: email, email2, pushover or ntfy")
 	cmd.AddCommand(test)
 	return cmd
 }

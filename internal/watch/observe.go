@@ -59,6 +59,10 @@ const (
 	// HoldEndingSoon is how near its end a cron hold warns, so whoever
 	// placed it can extend it before the workload runs again.
 	HoldEndingSoon = 24 * time.Hour
+	// BackupPauseGrace is how long past app.BackupPauseLimit a backup's
+	// pause may stand, for its writers to start again, before it is a
+	// problem.
+	BackupPauseGrace = 5 * time.Minute
 )
 
 // Prober looks at the machine and its apps and reports what is wrong.
@@ -111,6 +115,7 @@ func (p *Prober) Observe(ctx context.Context) []Condition {
 	conditions = append(conditions, p.host()...)
 	conditions = append(conditions, p.operationLock(ctx)...)
 	conditions = append(conditions, p.operatorHolds(ctx)...)
+	conditions = append(conditions, p.alertTest()...)
 	if why := p.retentionProblem(ctx, manifest.ReservedApp, p.Now()); why != "" {
 		conditions = append(conditions, Condition{Key: "host:backup-retention", Subject: "machine backups", Severity: state.SeverityWarning, Message: why})
 	}
@@ -308,6 +313,16 @@ func (p *Prober) app(ctx context.Context, e *docker.Engine, rev state.Revision) 
 			severity = s
 		}
 	}
+	// A backup stops the app's writers so it copies their data whole, for
+	// at most app.BackupPauseLimit. Only a pause that outlives it is news.
+	pause, err := app.ReadBackupPause(p.Store.Path(), rev.App)
+	if err != nil {
+		problems = append(problems, "its backup pause can't be read: "+err.Error())
+		worse(state.SeverityCritical)
+	} else if pause != nil && now.Sub(pause.Since) > app.BackupPauseLimit+BackupPauseGrace {
+		problems = append(problems, fmt.Sprintf("it has been paused for a backup for %d minutes", int(now.Sub(pause.Since).Minutes())))
+		worse(state.SeverityCritical)
+	}
 	for _, name := range m.WorkloadNames() {
 		w := m.Workloads[name]
 		if !w.LongRunning() {
@@ -322,6 +337,9 @@ func (p *Prober) app(ctx context.Context, e *docker.Engine, rev state.Revision) 
 			continue
 		case !info.Running && w.Singleton && p.deploying(ctx, rev.App):
 			// A deploy stopped it to start its successor.
+			continue
+		case !info.Running && pause != nil && pause.Holds(info.ID, container):
+			// The backup's pause is reported once, above, if it ran long.
 			continue
 		case !info.Running:
 			since := ""
@@ -369,9 +387,12 @@ func (p *Prober) app(ctx context.Context, e *docker.Engine, rev state.Revision) 
 			values = loaded
 		}
 	}
-	for _, err := range app.RunAppChecks(ctx, e, &m, rev.Containers, values) {
-		problems = append(problems, strings.TrimPrefix(err.Error(), "check "))
-		worse(state.SeverityCritical)
+	// An app's checks can't pass while its writers are paused.
+	if pause == nil {
+		for _, err := range app.RunAppChecks(ctx, e, &m, rev.Containers, values) {
+			problems = append(problems, strings.TrimPrefix(err.Error(), "check "))
+			worse(state.SeverityCritical)
+		}
 	}
 	for _, host := range m.Hosts() {
 		ready, why, expiry, found := edge.Certificate(ctx, host, EdgeAddress)
