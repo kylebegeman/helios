@@ -45,6 +45,9 @@ type Config struct {
 	// SweepInterval is how often the daemon looks for operations whose
 	// daemon died. Defaults to 5 seconds.
 	SweepInterval time.Duration
+	// WatchInterval is how often the daemon watches this machine and its
+	// peers. Defaults to a minute.
+	WatchInterval time.Duration
 }
 
 // DefaultSocket is where the daemon listens on a machine it manages.
@@ -263,6 +266,9 @@ func (cfg Config) withDefaults() Config {
 	if cfg.SweepInterval <= 0 {
 		cfg.SweepInterval = 5 * time.Second
 	}
+	if cfg.WatchInterval <= 0 {
+		cfg.WatchInterval = time.Minute
+	}
 	return cfg
 }
 
@@ -343,7 +349,7 @@ func (d *daemon) startLoops(ctx context.Context, edgeLoaded time.Time) {
 	prober := watch.NewProber(d.store)
 	prober.CheckSecrets = d.sec.Load
 	prober.OriginPullTrust = func() (edge.OriginPullTrust, error) { return app.LoadOriginPullTrust(d.sec) }
-	d.every(ctx, time.Minute, true, func(time.Time) {
+	d.every(ctx, d.cfg.WatchInterval, true, func(time.Time) {
 		guarded(logf, "watch", func() { d.watchRound(ctx, watcher, prober.Observe, d.peers.Observe) })
 	})
 	d.servePeers(ctx, d.newPeerListener())
