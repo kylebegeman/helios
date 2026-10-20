@@ -175,6 +175,7 @@ func TestRehearsalRunsReleasesInOrderRecordsExactEvidenceAndCleansFailure(t *tes
 		t.Run(map[bool]string{false: "pass", true: "release-failure"}[failRelease], func(t *testing.T) {
 			def, in, m := rehearsalFixture(t)
 			fake := dockertest.New(t)
+			roomToRestore(t)
 			// Internal network inspection is part of the scratch safety contract.
 			proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				path := strings.TrimPrefix(r.URL.Path, "/v"+dockertest.APIVersion)
@@ -197,7 +198,7 @@ func TestRehearsalRunsReleasesInOrderRecordsExactEvidenceAndCleansFailure(t *tes
 				fake.Update(c.Name, func(c *dockertest.Container) {
 					c.ExitAfter = 1
 					if c.Cmd[0] == "snapshots" {
-						c.Logs = `[{"id":"` + snapshot + `","short_id":"aaaaaaaa","time":"2026-10-10T00:00:00Z"}]`
+						c.Logs = `[{"id":"` + snapshot + `","short_id":"aaaaaaaa","time":"2026-10-10T00:00:00Z","summary":{"total_bytes_processed":12}}]`
 					}
 					if c.Cmd[0] == "restore" {
 						snapshots = append(snapshots, c.Cmd[1])

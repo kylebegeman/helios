@@ -1,6 +1,7 @@
 target loom, resume
  1 restore: restore snapshot latest into scratch volumes beside the app
- 2 database: start a scratch database and load the dump
- 3 objects: start a scratch object store on the restored files
- 4 app: start the app's long-running workloads on the restored data and wait for them
- 5 cleanup: remove the scratch volumes, database and containers, and record the drill
+ 2 sqlite: run an integrity check on every SQLite database in the scratch volumes
+ 3 database: start a scratch database and load the dump
+ 4 objects: start a scratch object store on the restored files
+ 5 app: start the app's long-running workloads on the restored data and wait for them
+ 6 cleanup: remove the scratch volumes, database and containers, and record the drill

@@ -308,6 +308,16 @@ func (b Backup) prepareMachineRecoveryCatalog(ctx context.Context, hostname, sta
 		if err := os.MkdirAll(appData, 0o700); err != nil {
 			return err
 		}
+		// The copy lands beside the machine's running apps, after the
+		// copies before it, so like a drill it keeps the reserve and
+		// refuses what it can't count.
+		size, err := snapshotSize(ctx, r, snap, rev.App)
+		if err != nil {
+			return err
+		}
+		if err := checkRestoreSpace([]string{appData}, allocated(size), restoreFreeReserve); err != nil {
+			return fmt.Errorf("copy %s's snapshot %s into the machine backup: %w; free space and back up the machine again", rev.App, short(snap.ID), err)
+		}
 		if _, err := r.Restore(ctx, snap.ID, rev.App, []string{restic.DirMount(appData, false)}); err != nil {
 			return fmt.Errorf("preserve %s's pinned data inside the machine backup: %w", rev.App, err)
 		}

@@ -200,6 +200,50 @@ func TestReleaseCheckpointTagsAreCapturedAndKeptByRetention(t *testing.T) {
 	}
 }
 
+func TestRestoreSizeCountsWhatARestoreWouldWrite(t *testing.T) {
+	id := strings.Repeat("a", 64)
+	for _, tc := range []struct {
+		name, snapshot, logs, wantError string
+		code                            int
+		want                            Size
+		wantArgs                        []string
+	}{
+		{name: "a pinned snapshot", snapshot: id, logs: `{"total_size":96636764160,"total_file_count":120,"snapshots_count":1}`, want: Size{Bytes: 96636764160, Files: 120}, wantArgs: []string{"stats", id, "--mode", "restore-size", "--json"}},
+		{name: "the latest of a host", snapshot: "latest", logs: `{"total_size":5,"total_file_count":1,"snapshots_count":1}`, want: Size{Bytes: 5, Files: 1}, wantArgs: []string{"stats", "latest", "--mode", "restore-size", "--json", "--host", "test", "--tag", Tag}},
+		{name: "an empty snapshot", snapshot: id, logs: `{"total_size":0,"snapshots_count":1}`, want: Size{}, wantArgs: []string{"stats", id, "--mode", "restore-size", "--json"}},
+		{name: "no count", snapshot: id, logs: `{"snapshots_count":1}`, wantError: "no restore size"},
+		{name: "a negative count", snapshot: id, logs: `{"total_size":5,"total_file_count":-1}`, wantError: "in -1 files"},
+		{name: "a failed count", snapshot: id, code: 1, logs: `Fatal: no matching ID found for prefix "aaaa"`, wantError: "no matching ID"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fake := dockertest.New(t)
+			var created dockertest.Container
+			fake.OnCreate = func(c dockertest.Container) {
+				created = c
+				fake.Update(c.Name, func(c *dockertest.Container) {
+					c.Logs, c.ExitCode, c.ExitAfter = tc.logs, tc.code, 1
+				})
+			}
+			got, err := runner(t).RestoreSize(context.Background(), tc.snapshot, "test")
+			if tc.wantError != "" {
+				if err == nil || !strings.Contains(err.Error(), tc.wantError) {
+					t.Fatalf("got %+v, %v; want an error with %q", got, err, tc.wantError)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got != tc.want {
+				t.Errorf("restore size %+v, want %+v", got, tc.want)
+			}
+			if !slices.Equal(created.Cmd, tc.wantArgs) {
+				t.Errorf("restic ran %v, want %v", created.Cmd, tc.wantArgs)
+			}
+		})
+	}
+}
+
 func TestRestoreRequiresVerifiedSuccessAndKeepsRawProgressCounters(t *testing.T) {
 	for _, tc := range []struct {
 		name      string

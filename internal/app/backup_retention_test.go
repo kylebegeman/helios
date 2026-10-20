@@ -7,6 +7,7 @@ import (
 	"io"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -212,13 +213,14 @@ func TestMachineBackupStopsAnAppDataCopyAtItsDeadline(t *testing.T) {
 		commands = append(commands, c.Cmd[0])
 		fake.Update(c.Name, func(c *dockertest.Container) {
 			if c.Cmd[0] == "snapshots" {
-				c.ExitAfter, c.Logs = 1, `[{"id":"`+snapshot+`","time":"2026-10-15T03:00:00Z"}]`
+				c.ExitAfter, c.Logs = 1, snapshotList(snapshot, `{"total_files_processed":1,"total_bytes_processed":12}`)
 				return
 			}
 			// The app's pinned data never finishes downloading.
 			c.Logs = `{"message_type":"status"}`
 		})
 	}
+	roomToRestore(t)
 	b := Backup{Store: r.Store, Secrets: r.Secrets, StateDir: r.StateDir, Deadlines: restic.Deadlines{Restore: 50 * time.Millisecond}}
 	err = b.prepareMachineRecoveryCatalog(ctx, "old-host", stage, io.Discard)
 	var deadline *restic.DeadlineError
@@ -227,5 +229,57 @@ func TestMachineBackupStopsAnAppDataCopyAtItsDeadline(t *testing.T) {
 	}
 	if !slices.Equal(commands, []string{"snapshots", "restore"}) {
 		t.Fatalf("unexpected restic runs: %v", commands)
+	}
+}
+
+// A machine backup copies each app's last good snapshot onto the machine's
+// own disk. One that can't fit beside the running apps with the reserve
+// left refuses before copying it.
+func TestAMachineBackupWithoutRoomForAnAppsDataRefuses(t *testing.T) {
+	r, _ := recoveryFixture(t)
+	ctx := context.Background()
+	m := recoveryManifest()
+	m.Data = &manifest.Data{Volumes: map[string]manifest.Volume{"uploads": {}}}
+	body, _ := json.Marshal(m)
+	rev := state.Revision{App: m.App, ID: "active-code", Manifest: body, CreatedAt: time.Now().UTC()}
+	if err := r.Store.SaveRevision(ctx, rev); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.Store.Activate(ctx, m.App, rev.ID, time.Now().UTC()); err != nil {
+		t.Fatal(err)
+	}
+	snapshot := strings.Repeat("e", 64)
+	id, err := r.Store.StartBackupRun(ctx, m.App, state.BackupRunBackup, time.Now().UTC())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := r.Store.FinishBackupRun(ctx, id, state.BackupRun{FinishedAt: time.Now().UTC(), OK: true, Snapshot: snapshot}); err != nil {
+		t.Fatal(err)
+	}
+	stage := t.TempDir()
+	if err := r.Store.BackupTo(ctx, filepath.Join(stage, "state.db")); err != nil {
+		t.Fatal(err)
+	}
+	fake := dockertest.New(t)
+	var commands []string
+	fake.OnCreate = func(c dockertest.Container) {
+		commands = append(commands, c.Cmd[0])
+		fake.Update(c.Name, func(c *dockertest.Container) {
+			c.ExitAfter = 1
+			if c.Cmd[0] == "snapshots" {
+				c.Logs = snapshotList(snapshot, `{"total_files_processed":1,"total_bytes_processed":`+strconv.FormatInt(90<<30, 10)+`}`)
+			}
+		})
+	}
+	onDisks(t, func(string) (disk, error) { return disk{dev: 1, free: 8 << 30}, nil })
+	b := Backup{Store: r.Store, Secrets: r.Secrets, StateDir: r.StateDir}
+	err = b.prepareMachineRecoveryCatalog(ctx, "old-host", stage, io.Discard)
+	want := "copy hello's snapshot eeeeeeee into the machine backup: restoring needs 90.0 GB plus a 5.0 GB reserve on " +
+		filepath.Join(stage, machineAppDataDir, m.App) + ", which has 8.0 GB free; free space and back up the machine again"
+	if err == nil || err.Error() != want {
+		t.Fatalf("got %v, want %q", err, want)
+	}
+	if !slices.Equal(commands, []string{"snapshots"}) {
+		t.Fatalf("a machine backup with no room went on to %v", commands)
 	}
 }

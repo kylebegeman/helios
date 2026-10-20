@@ -117,7 +117,7 @@ func (t MoveTest) Plan(ctx context.Context, raw json.RawMessage) (*kernel.Plan, 
 	}
 	manifestJSON, _ := json.Marshal(m)
 	r := &rollout{d: t.Deploy, m: m, manifestJSON: manifestJSON, revision: in.Revision, from: &buildFrom{source: in.Source, commit: commit}, store: t.Deploy.Store, stateDir: stateDir, images: map[string]string{}, containers: map[string]string{}}
-	d := &drillState{dr: Drill{Store: r.store, Secrets: r.d.Secrets, StateDir: stateDir}, app: m.App, snapshot: h.Snapshot, m: *m, run: &backupRun{store: r.store, app: m.App, kind: state.BackupRunDrill}, names: rehearsalNames(workspace, m, "move-test-"+in.Revision)}
+	d := &drillState{dr: Drill{Store: r.store, Secrets: r.d.Secrets, StateDir: stateDir}, app: m.App, snapshot: h.Snapshot, m: *m, run: &backupRun{store: r.store, app: m.App, kind: state.BackupRunDrill}, names: rehearsalNames(workspace, m, "move-test-"+in.Revision), advice: "free space and run the move test again"}
 	// Background workers must not consume restored queues in a move test.
 	for name := range d.names.containers {
 		if !stageServes(m.Workloads[name]) {
