@@ -73,16 +73,17 @@ checkpoint restore. Every container receives `HELIOS_APP`, `HELIOS_WORKLOAD` and
 ## Quick start
 
 ```sh
-helios host setup                 # prepare a fresh Ubuntu or Debian machine
-helios integration set cloudflare # DNS records for your hosts
-helios integration set storage    # Backblaze B2 or any S3 store, for backups
-helios integration set email      # SMTP, for alerts
-helios integration set pushover   # or ntfy: alerts that reach a phone
+helios host setup                   # prepare a fresh Ubuntu or Debian machine
+helios integration set cloudflare   # DNS records for your hosts
+helios integration set storage      # Backblaze B2 or any S3 store, for backups
+helios integration set email        # SMTP, for alerts
+helios integration set pushover     # or ntfy: alerts that reach a phone
+helios integration set loom_webhook # a Loom thread per critical incident
 
 mkdir my-app && cd my-app
 helios init my-app --host app.example.com  # write a starting helios.yaml
-helios deploy .                   # build, check, switch the edge
-helios status                     # health, traffic, errors, backups
+helios deploy .                     # build, check, switch the edge
+helios status                       # health, traffic, errors, backups
 
 helios launch https://github.com/you/site --host site.example.com  # or from a repository
 ```
@@ -156,13 +157,14 @@ checks:
 
 A cron workload runs on its schedule, in UTC, one run at a time, and a run
 still going when the next is due skips that one. `helios jobs <app>` lists its
-runs. To pause it without a deploy, `helios cron hold <app> <workload> --until
-<time> --reason <text>` holds it until an RFC 3339 time at most 14 days ahead.
-A hold doesn't stop a run already going, and when it ends the workload runs at
-its next scheduled time, with no run to catch up on the ones it held. `helios
-cron release <app> <workload>` ends a hold early. `helios status`, `helios
-jobs` and `helios ps` show the hold and its reason, and the daemon sends it as
-a notice, then as a warning on its last day.
+runs by ID, and `helios logs <app> --job <id>` shows what one printed, even
+after its container is gone. To pause it without a deploy, `helios cron hold
+<app> <workload> --until <time> --reason <text>` holds it until an RFC 3339
+time at most 14 days ahead. A hold doesn't stop a run already going, and when
+it ends the workload runs at its next scheduled time, with no run to catch up
+on the ones it held. `helios cron release <app> <workload>` ends a hold early.
+`helios status`, `helios jobs` and `helios ps` show the hold and its reason,
+and the daemon sends it as a notice, then as a warning on its last day.
 
 <details>
 <summary><b>A larger app, with releases, singletons and derived secrets</b></summary>
@@ -611,6 +613,79 @@ while any host sets `origin_pull`, since that build's edge would stop
 checking the certificate. Moving an app that requires it needs the CA on
 the other machine first; see [safe moves](docs/features/safe-moves.md).
 
+## A Loom thread for each critical incident
+
+A critical incident can open a thread in Loom that already holds what was
+known when it began: the change before it, its logs, earlier incidents and
+upstream status. In Loom, make a scheduled task with a webhook trigger that
+starts a new thread for each run. Have it ask for approval, and give it no
+tools that write, because its evidence holds log lines that anyone who
+reaches an app can put words into. Set its signature check to header
+`x-helios-signature`, hex, prefix `sha256=`, with a secret of 16 to 512
+characters. Its prompt should treat `{{body.message}}` and
+`{{body.evidence}}` as data, and stop when `{{body.transition}}` is `test`.
+Then on the machine:
+
+```sh
+helios integration set loom_webhook    # the task's relay URL and the secret
+helios alerts test                     # probe the task; opens no thread
+helios alerts test --leg loom_webhook  # a signed test; opens one thread
+```
+
+Only the task's URL on the T3 Connect relay is accepted,
+`https://<relay>/v1/hooks/<endpoint>/<task>/<token>`, with no query. Loom's
+own `/api/hooks` route is refused. Both values are kept secret, and an error
+never repeats them.
+
+Loom tells an agent, not a person, so it never goes alone. With
+`loom_webhook` the only way set up, no alert goes out at all, and each
+incident says `loom_webhook needs a person leg too; set email, pushover or
+ntfy`, which `helios alerts` shows as NOT DELIVERED. This is checked when an
+alert goes out, not when the integration is set.
+
+The task hears of an incident once, at its first critical notice, so a
+warning that grows critical is sent when it does. Warnings, daily repeats
+and recoveries never reach it. The body carries the incident's id, host,
+key, severity, message and opening time, and its evidence cut to fit 90,000
+bytes. It is signed with the secret in `x-helios-signature`, as `sha256=`
+and the hex HMAC-SHA256 of the body.
+
+Each incident is sent at most once. Before the request goes out, Helios
+writes a marker beside the incident, in
+`/var/lib/bedrock/incidents/<id>/loom.json`, and never sends that incident
+again while the marker is there. A request that never went out, or a 429,
+takes the marker back, so it is tried again like any way that failed.
+Otherwise the marker ends in one of these, which `helios alerts show <id>`
+reads back:
+
+- **delivered**: any 2xx.
+- **refused**: a 3xx, 400, 401, 404, 405, 409, 410 or 413. The task turned
+  it away, and it isn't sent again. It counts as this way's failed test, so
+  `host:alerts` warns through the other ways until
+  `helios alerts test --leg loom_webhook` passes or a later incident is
+  delivered.
+- **ambiguous**: any other answer, or none, once the request went out, such
+  as a 504 or a timeout. Loom may have opened the thread or may not. Helios
+  won't risk a second one, so it isn't sent again: look for its thread in
+  Loom. `helios alerts show` reads `ambiguous 504, not resent`.
+- **sending**: the daemon stopped partway through. That too isn't sent
+  again.
+
+In Loom's connection settings, turn on "Hold webhook requests while this
+computer is offline". The relay then keeps a request for up to 24 hours and
+answers 202. Without it, an incident sent while Loom is offline gets a 503
+or 504, which is ambiguous, and no thread opens.
+
+`helios alerts test`, and the daemon's Monday test, send the task a probe
+signed with a random key. A task that checks the signature turns it away
+with a 401 and opens no thread, and that is a pass: the relay, the URL and
+the signature check all work. A task that takes the probe would open a
+thread for anyone who has its URL, so the test fails and says how to set
+the check. `--leg loom_webhook` sends a test signed with the real secret,
+which opens a thread whose prompt should stop at once. Neither leaves a
+marker. A probe that passes never clears a refusal or a failed signed test;
+a signed test that passes does.
+
 ## What Helios keeps an eye on
 
 The daemon watches every app and the machine once a minute: containers
@@ -642,6 +717,26 @@ acknowledged, and a server of your own reaches an iPhone at once only with
 `helios alerts test` sends a test alert each way and says how each did;
 `--leg pushover` tests one. The daemon runs the same test every Monday at
 09:15 UTC, and a way that fails becomes a warning the others deliver.
+
+`helios alerts show <id>` shows one incident: when it opened and resolved,
+when you were told, any alert that wasn't delivered, and how its Loom thread
+went. `--evidence` adds what was known about it. For an app, that is the
+last deploy or rollback and its steps, the logs from the 10 minutes before
+the incident opened, and the app's signals over 6 hours. For the machine, it
+is the deploys and rollbacks in the hour before. Both get the key's earlier
+incidents and the status of Cloudflare and GitHub. Secrets, credentials, and
+private and mesh addresses are redacted, and logs and step notes are left
+out when the secrets can't be read. The daemon keeps this evidence when it
+sends an incident to Loom, in `/var/lib/bedrock/incidents/<id>/`, at most
+256 KiB. Otherwise it is collected and kept the first time you ask, and by
+then logs older than the journal keeps are gone. `--json` prints the
+incident, its Loom delivery and its evidence.
+
+`helios alerts review <id>` prints a blameless review in Markdown for you to
+finish. Its timeline is filled in from the change before the incident, the
+operations around it, the alerts and the Loom delivery, and the key's
+earlier incidents. Log lines and step notes are left out of it. The blank
+review is [docs/operations/incident-review.md](docs/operations/incident-review.md).
 
 A backup stops an app's writers for at most 30 minutes. A writer the backup
 stopped is not an alert until the pause has lasted 35 minutes, and then it is
@@ -831,10 +926,13 @@ fails), `helios integration set pushover` or `helios integration set ntfy`
 (alerts on a phone; the ntfy topic URL is kept secret, since anyone who knows
 it can read the topic),
 `helios integration set cloudflare` (checked against the API before it is
-kept) and `helios integration set loom` (a Loom Core's verify endpoint, for
-routes behind a sign-in). Setting one again changes only what is answered; a
-blank answer keeps the current value. `helios integration list` shows which
-are set and when each was last used, never the values.
+kept), `helios integration set loom` (a Loom Core's verify endpoint, for
+routes behind a sign-in) and `helios integration set loom_webhook` (a Loom
+task's webhook URL and signing secret, for
+[a thread per critical incident](#a-loom-thread-for-each-critical-incident)).
+Setting one again changes only what is answered; a blank answer keeps the
+current value. `helios integration list` shows which are set and when each
+was last used, never the values.
 
 <details>
 <summary><b>Moving a secret between machines</b></summary>
@@ -879,6 +977,26 @@ operations before applying the limit. `helios history ID --output` retrieves
 saved diagnostic tails, optionally with `--step NAME` or a one-based step
 position. Saved tails contain up to 40 lines per execution, rather than a
 complete log, and become available when an execution finishes.
+
+App workloads and jobs log to systemd's journal, so their output outlives
+their containers. `helios host setup`, and `helios host reconcile`, keep the
+journal on disk for 14 days, at most 1G, with a rate limit loose enough for
+a noisy app; `helios doctor` shows the cap. A container made before Helios
+logged to the journal keeps its old log driver until it is replaced. The
+database, object store, backups and edge keep Docker's own logs, five files
+of 20m.
+
+`helios logs <app> [workload] --revision <id>` shows a revision's output,
+from Docker while its containers exist and from the journal once they are
+removed, even after `helios gc` has forgotten the revision. `--follow` takes
+one workload, and a removed container has nothing more to follow.
+`helios logs <app> --job <id>` shows a job run's output, by the ID
+`helios jobs` shows. When the journal has nothing for a run, say one older
+than its 14 days, the 40 lines kept with the run are shown instead. A
+container removed before Helios logged to the journal took its output with
+it. Reading the journal takes root or the `systemd-journal` group. A machine
+on an older Helios says to upgrade it before `--revision`, `--job`,
+`alerts show` or `alerts review` work.
 
 ## Commands
 
@@ -1016,6 +1134,7 @@ remains available for initial binary installation.
 | [docs/features/safe-moves.md](docs/features/safe-moves.md) | source fencing and deliberate target cutover |
 | [docs/features/release-safety.md](docs/features/release-safety.md) | release rehearsal and data-aware rollback |
 | [docs/features/deployment-sources.md](docs/features/deployment-sources.md) | approved source captures, safe retries and cleanup |
+| [docs/operations/incident-review.md](docs/operations/incident-review.md) | the blank review `helios alerts review` fills in |
 | [docs/technical/performance.md](docs/technical/performance.md) | benchmark workloads, repeated comparisons and optimization results |
 | [docs/technical/minio-image-availability.md](docs/technical/minio-image-availability.md) | open object-service image distribution issue |
 | [lane/README.md](lane/README.md) | the proving ground |
