@@ -45,7 +45,7 @@ func TestGatherReadsASetUpBox(t *testing.T) {
 	if f.SSH.PasswordAuth || f.SSH.RootLogin != "prohibit-password" {
 		t.Fatalf("ssh: %+v", f.SSH)
 	}
-	if f.SwapBytes != 4*gib || !f.Fail2ban || !f.UnattendedUpgrades || f.JournalMaxUse != "500M" || f.UpdatesPending != 0 || !f.RebootRequired {
+	if f.SwapBytes != 4*gib || !f.Fail2ban || !f.UnattendedUpgrades || f.JournalMaxUse != "1G" || f.JournalMaxRetention != "14day" || f.UpdatesPending != 0 || !f.RebootRequired {
 		t.Fatalf("rest: %+v", f)
 	}
 }

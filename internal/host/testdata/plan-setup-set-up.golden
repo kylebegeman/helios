@@ -8,7 +8,7 @@ host.setup on box, resume
  7 cloudflare-ranges: keep Cloudflare's address ranges at /etc/bedrock/cloudflare-ranges.json, which the edge trusts to name visitors behind its proxy (none kept yet)
  8 edge: run the web edge on ports 80 and 443 (already running)
  9 security-updates: install security updates automatically, without automatic reboots (already on)
-10 journal: cap the system journal at 500M (already capped)
+10 journal: cap the system journal at 1G for 14 days (already capped)
 11 ssh: allow only key logins over SSH (already keys only)
 12 firewall: allow only ssh, 80 and 443 in (already active)
 13 fail2ban: ban repeated SSH failures (already active)

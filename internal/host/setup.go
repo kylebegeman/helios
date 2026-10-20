@@ -60,8 +60,16 @@ APT::Periodic::AutocleanInterval "7";
 	unattendedHelios = `Unattended-Upgrade::Automatic-Reboot "false";
 Unattended-Upgrade::Remove-Unused-Dependencies "true";
 `
+	// The journal keeps app and job logs after their containers are gone:
+	// two weeks of them in at most 1G, on disk, with a rate limit loose
+	// enough for a noisy app.
 	journaldHelios = `[Journal]
-SystemMaxUse=500M
+Storage=persistent
+SystemMaxUse=1G
+MaxRetentionSec=14day
+MaxFileSec=1day
+RateLimitIntervalSec=30s
+RateLimitBurst=50000
 `
 	sshdHelios = `# Written by bedrock host setup. Keys only.
 PasswordAuthentication no
@@ -262,8 +270,10 @@ func (x *setting) securityUpdatesStep() kernel.Step {
 
 func (x *setting) journalStep() kernel.Step {
 	return kernel.Step{
-		Name: "journal", Change: "cap the system journal at 500M",
-		Note: doneIf(x.f.JournalMaxUse == "500M", "already capped", "unbounded"),
+		Name: "journal", Change: "cap the system journal at 1G for 14 days",
+		// Only the drop-in as setup writes it is done: an older one, such
+		// as 500M kept for any age, is rewritten and journald restarted.
+		Note: doneIf(x.f.JournalDropIn == journaldHelios, "already capped", journalNote(x.f)),
 		Apply: func(ctx context.Context, _ io.Writer) error {
 			changed, err := x.env.WriteFile("/etc/systemd/journald.conf.d/bedrock.conf", journaldHelios, 0o644)
 			if err != nil || !changed {
@@ -273,6 +283,15 @@ func (x *setting) journalStep() kernel.Step {
 			return err
 		},
 	}
+}
+
+// journalNote says how the journal is bounded before setup writes its
+// drop-in.
+func journalNote(f Facts) string {
+	if f.JournalMaxUse == "" {
+		return "unbounded"
+	}
+	return "currently capped at " + f.journalCap()
 }
 
 func (x *setting) sshStep() kernel.Step {

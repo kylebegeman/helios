@@ -33,5 +33,5 @@ set-up
   pass updates: up to date
   pass security updates: automatic
   pass time: synchronized, Etc/UTC
-  pass logs: journal capped at 500M
+  pass logs: journal capped at 1G for 14day
   fail daemon: not answering (fix: helios daemon install)

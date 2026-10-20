@@ -50,6 +50,37 @@ func TestAnIsolatedContainerKeepsNothingItDidntAskFor(t *testing.T) {
 	}
 }
 
+// An app's workload or job logs to the journal, named and labeled so its
+// lines can be found after the container is gone. Anything else, and any
+// container on a machine without journald, keeps Docker's bounded files.
+func TestAnAppContainerLogsToTheJournalWhenTheMachineRunsOne(t *testing.T) {
+	e, fake := connect(t)
+	saved := journaldListening
+	t.Cleanup(func() { journaldListening = saved })
+	listening := true
+	journaldListening = func() bool { return listening }
+	logConfig := func(name string, labels map[string]string) string {
+		t.Helper()
+		if err := e.Run(context.Background(), Spec{Name: name, Image: "img", Labels: labels}); err != nil {
+			t.Fatal(err)
+		}
+		c, _ := fake.Container(name)
+		l := c.HostConfig.LogConfig
+		return l.Type + " tag=" + l.Config["tag"] + " labels=" + l.Config["labels"] + " max-size=" + l.Config["max-size"] + " max-file=" + l.Config["max-file"]
+	}
+	files := "json-file tag= labels= max-size=20m max-file=5"
+	if got := logConfig("bedrock-a-web-r1", map[string]string{LabelApp: "a", LabelWorkload: "web", LabelRevision: "r1"}); got != "journald tag={{.Name}} labels=bedrock.app,bedrock.workload,bedrock.revision max-size= max-file=" {
+		t.Fatalf("an app workload logs as %q", got)
+	}
+	if got := logConfig("bedrock-a-postgres", map[string]string{LabelApp: "a", LabelWorkload: "postgres"}); got != files {
+		t.Fatalf("a container with no revision logs as %q", got)
+	}
+	listening = false
+	if got := logConfig("bedrock-a-web-r2", map[string]string{LabelApp: "a", LabelWorkload: "web", LabelRevision: "r2"}); got != files {
+		t.Fatalf("an app workload on a machine without journald logs as %q", got)
+	}
+}
+
 func TestAPrivilegedContainerIsNotIsolated(t *testing.T) {
 	e, fake := connect(t)
 	if err := e.Run(context.Background(), Spec{Name: "bedrock-a-runner-r1", Image: "img", Privileged: true, Isolated: true}); err != nil {

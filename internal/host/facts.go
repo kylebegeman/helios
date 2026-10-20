@@ -51,9 +51,14 @@ type Facts struct {
 	TimeSynced         bool   `json:"time_synced"`
 	Timezone           string `json:"timezone,omitempty"`
 	UnattendedUpgrades bool   `json:"unattended_upgrades"`
-	JournalMaxUse      string `json:"journal_max_use,omitempty"`
-	Fail2ban           bool   `json:"fail2ban"`
-	Registry           struct {
+	// JournalMaxUse and JournalMaxRetention are how big and how old
+	// helios's journald drop-in lets the journal grow; JournalDropIn is the
+	// drop-in itself, which setup rewrites unless it is exactly its own.
+	JournalMaxUse       string `json:"journal_max_use,omitempty"`
+	JournalMaxRetention string `json:"journal_max_retention,omitempty"`
+	JournalDropIn       string `json:"-"`
+	Fail2ban            bool   `json:"fail2ban"`
+	Registry            struct {
 		Present bool `json:"present"`
 		Running bool `json:"running"`
 	} `json:"registry"`
@@ -274,7 +279,8 @@ func (f *Facts) gatherUpkeep(ctx context.Context, env Env, socket string) {
 		f.UnattendedUpgrades = strings.Contains(conf, `Unattended-Upgrade "1"`)
 	}
 	if conf, err := env.ReadFile("/etc/systemd/journald.conf.d/bedrock.conf"); err == nil {
-		f.JournalMaxUse = parseKeyValues(conf)["SystemMaxUse"]
+		kv := parseKeyValues(conf)
+		f.JournalMaxUse, f.JournalMaxRetention, f.JournalDropIn = kv["SystemMaxUse"], kv["MaxRetentionSec"], conf
 	}
 	if _, err := env.Run(ctx, "id", "-u", "bedrock"); err == nil {
 		f.PushUser = true
@@ -428,6 +434,15 @@ func (f Facts) Allows(port string) bool {
 		}
 	}
 	return false
+}
+
+// journalCap is how far the journal may grow, as "1G for 14day", or as
+// "500M" when the drop-in bounds only its size.
+func (f Facts) journalCap() string {
+	if f.JournalMaxRetention == "" {
+		return f.JournalMaxUse
+	}
+	return f.JournalMaxUse + " for " + f.JournalMaxRetention
 }
 
 // Addresses returns the machine's public addresses, the ones DNS should

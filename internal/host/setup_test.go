@@ -127,7 +127,7 @@ func TestSetupAppliesInASafeOrderOnAFreshBox(t *testing.T) {
 	for path, want := range map[string]string{
 		"/etc/docker/daemon.json":                   `"live-restore": true`,
 		"/etc/ssh/sshd_config.d/00-bedrock.conf":    "PasswordAuthentication no",
-		"/etc/systemd/journald.conf.d/bedrock.conf": "SystemMaxUse=500M",
+		"/etc/systemd/journald.conf.d/bedrock.conf": "SystemMaxUse=1G\nMaxRetentionSec=14day",
 		"/etc/apt/apt.conf.d/20auto-upgrades":       `Unattended-Upgrade "1"`,
 		"/etc/apt/apt.conf.d/52bedrock-unattended":  `Automatic-Reboot "false"`,
 		"/etc/fail2ban/jail.d/bedrock.conf":         "[sshd]",
@@ -172,6 +172,40 @@ func TestSetupOnASetUpBoxChangesNothingHeavy(t *testing.T) {
 	for _, heavy := range []string{"apt-get install -y docker-ce", "curl", "docker run", "fallocate", "mkswap", "systemctl restart docker", "systemctl restart systemd-journald", "sshd -t"} {
 		if m.ranCommand(heavy) {
 			t.Errorf("reconcile ran %q on a box that didn't need it", heavy)
+		}
+	}
+}
+
+// A machine set up before the journal kept logs for two weeks has the
+// older drop-in. Setup rewrites it and restarts journald once, then
+// leaves both alone.
+func TestSetupMovesAnOlderJournalCapAndRestartsJournaldOnce(t *testing.T) {
+	m := setUpBox(t)
+	allowEverything(m)
+	m.write("/etc/systemd/journald.conf.d/bedrock.conf", "[Journal]\nSystemMaxUse=500M\n")
+	restarts := func() int {
+		n := 0
+		for _, c := range m.commands() {
+			if c == "systemctl restart systemd-journald" {
+				n++
+			}
+		}
+		return n
+	}
+	engine := kernel.New(openStore(t), registryWith(m), "test")
+	for i, note := range []string{"currently capped at 500M", "already capped"} {
+		if _, notes := planSteps(t, m, Profile{Hostname: "personal-vps", SwapGiB: 4}); notes["journal"] != note {
+			t.Fatalf("setup %d: journal note %q, want %q", i+1, notes["journal"], note)
+		}
+		receipt, err := engine.Run(context.Background(), SetupKind, profileJSON(t, Profile{Hostname: "personal-vps", SwapGiB: 4}), func(kernel.Event) {})
+		if err != nil || receipt.Status != state.Succeeded {
+			t.Fatalf("setup %d: %v %+v", i+1, err, receipt)
+		}
+		if got := m.read("/etc/systemd/journald.conf.d/bedrock.conf"); got != journaldHelios {
+			t.Fatalf("setup %d left the drop-in as %q", i+1, got)
+		}
+		if restarts() != 1 {
+			t.Fatalf("setup %d: journald restarted %d times in all, want once", i+1, restarts())
 		}
 	}
 }

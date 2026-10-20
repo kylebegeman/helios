@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"io"
 	"net/netip"
+	"os"
 	"strings"
 	"time"
 
@@ -259,8 +260,19 @@ func (e *Engine) Run(ctx context.Context, spec Spec) error {
 	return nil
 }
 
+// journalSocket is where journald takes logs on a machine that runs it.
+const journalSocket = "/run/systemd/journal/socket"
+
+// journaldListening reports whether the machine's journald takes logs.
+// Tests replace it.
+var journaldListening = func() bool {
+	_, err := os.Stat(journalSocket)
+	return err == nil
+}
+
 // hostConfigFor is how Docker is to run a spec: its mounts, limits and
-// privileges, and the ports it publishes, which the container also exposes.
+// privileges, where it logs, and the ports it publishes, which the
+// container also exposes.
 func hostConfigFor(spec Spec) (*container.HostConfig, network.PortSet, error) {
 	hostConfig := &container.HostConfig{
 		Binds:          spec.Mounts,
@@ -268,6 +280,15 @@ func hostConfigFor(spec Spec) (*container.HostConfig, network.PortSet, error) {
 		Resources:      container.Resources{Memory: spec.MemoryBytes, NanoCPUs: spec.NanoCPUs},
 		ReadonlyRootfs: spec.ReadOnly,
 		Privileged:     spec.Privileged,
+	}
+	// An app's workloads and jobs, the containers labeled with a
+	// revision, log to the journal, so what they wrote outlives them.
+	// Each line carries the container's name and whose it is.
+	if spec.Labels[LabelRevision] != "" && journaldListening() {
+		hostConfig.LogConfig = container.LogConfig{Type: "journald", Config: map[string]string{
+			"tag":    "{{.Name}}",
+			"labels": strings.Join([]string{LabelApp, LabelWorkload, LabelRevision}, ","),
+		}}
 	}
 	if !spec.Privileged {
 		hostConfig.SecurityOpt = []string{"no-new-privileges"}
