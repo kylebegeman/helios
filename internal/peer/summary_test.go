@@ -88,7 +88,8 @@ func TestSummaryReports(t *testing.T) {
 	opened(t, store, state.Incident{Key: "host:disk", Subject: "disk", Severity: state.SeverityCritical, OpenedAt: now.Add(-30 * time.Minute),
 		NotifyError: failure})
 	// web3 told the edge provider's warning and this machine stood down;
-	// it sent web2's page itself, and holds web4's for web3.
+	// it sent web2's warning and then its page itself, and holds web4's
+	// for web3.
 	opened(t, store, state.Incident{Key: "peer:edge-provider", Subject: "public edge", Severity: state.SeverityWarning,
 		OpenedAt: now.Add(-25 * time.Minute), NotifiedAt: now.Add(-24 * time.Minute)})
 	web2 := opened(t, store, state.Incident{Key: "peer:web2", Subject: "web2", Severity: state.SeverityCritical,
@@ -125,7 +126,8 @@ func TestSummaryReports(t *testing.T) {
 			Findings: []Finding{{Key: "peer:web2", Severity: state.SeverityWarning}},
 			Paths:    map[string]Paths{"web2": {WordOK, WordOK, "timeout"}},
 			Sending:  []string{"peer:web2"},
-			Sent:     append([]Told{{IncidentID: web2, Key: "peer:web2", Severity: state.SeverityCritical, By: "web1", At: now.Add(-19 * time.Minute)}}, recoveries...)}
+			Sent: append([]Told{{IncidentID: web2, Key: "peer:web2", Severity: state.SeverityCritical, By: "web1", At: now.Add(-19 * time.Minute)},
+				{IncidentID: web2, Key: "peer:web2", Severity: state.SeverityWarning, By: "web1", At: now.Add(-20 * time.Minute)}}, recoveries...)}
 	}
 	rec := asked(s, at(in("100.64.0.0/10"), 7700), http.MethodGet, SummaryPath, w.keys["web2"], "")
 	if rec.Code != http.StatusOK || rec.Header().Get("Content-Type") != "application/json" {
@@ -145,7 +147,8 @@ func TestSummaryReports(t *testing.T) {
 			{Key: "app:shop", Subject: "shop", Severity: state.SeverityWarning, OpenedAgeS: 5400, ToldAgeS: seconds(5280)},
 			{Key: "host:disk", Subject: "disk", Severity: state.SeverityCritical, OpenedAgeS: 1800, Owed: true},
 			{Key: "peer:edge-provider", Subject: "public edge", Severity: state.SeverityWarning, OpenedAgeS: 1500},
-			{Key: "peer:web2", Subject: "web2", Severity: state.SeverityCritical, OpenedAgeS: 1200, ToldAgeS: seconds(1140), Owed: true},
+			{Key: "peer:web2", Subject: "web2", Severity: state.SeverityCritical, OpenedAgeS: 1200, ToldAgeS: seconds(1140),
+				Tells: []SummaryTell{{Severity: state.SeverityWarning, AgeS: 1200}, {Severity: state.SeverityCritical, AgeS: 1140}}, Owed: true},
 			{Key: "peer:web4", Subject: "web4", Severity: state.SeverityWarning, OpenedAgeS: 600}},
 		Sending: []string{"peer:web2"},
 		Backups: []SummaryBackup{
@@ -169,6 +172,35 @@ func TestSummaryReports(t *testing.T) {
 	for _, kept := range []string{failure, "smtp.example.test", "has a problem", "ops@example.test", mesh, w.keys["web2"]} {
 		if strings.Contains(raw, kept) {
 			t.Fatalf("the summary carries %q: %s", kept, raw)
+		}
+	}
+}
+
+// A peer incident's tells count each at its own severity, so a warning
+// told still reads as told to an observer that sees a warning, and never
+// to one that sees the outage. A summary from a version before tells
+// reads as it did: its told age is a tell at the incident's severity or
+// graver.
+func TestATellCountsAtItsOwnSeverity(t *testing.T) {
+	for _, c := range []struct {
+		incident                string
+		warning, critical       int64
+		toldWarning, toldOutage bool
+	}{
+		{`{"severity":"critical","told_age_s":60}`, 60, 60, true, true},
+		{`{"severity":"critical"}`, 0, 0, false, false},
+		{`{"severity":"warning","told_age_s":60}`, 60, 0, true, false},
+		{`{"severity":"critical","tells":[{"severity":"warning","age_s":300}]}`, 300, 0, true, false},
+		{`{"severity":"critical","told_age_s":60,"tells":[{"severity":"warning","age_s":300},{"severity":"critical","age_s":60}]}`, 60, 60, true, true},
+	} {
+		var i SummaryIncident
+		if err := json.Unmarshal([]byte(c.incident), &i); err != nil {
+			t.Fatal(err)
+		}
+		warning, toldWarning := i.toldAge(state.SeverityWarning)
+		critical, toldOutage := i.toldAge(state.SeverityCritical)
+		if warning != c.warning || toldWarning != c.toldWarning || critical != c.critical || toldOutage != c.toldOutage {
+			t.Errorf("%s reads as told %ds ago %v as a warning and %ds ago %v as critical", c.incident, warning, toldWarning, critical, toldOutage)
 		}
 	}
 }

@@ -176,21 +176,24 @@ delivered something in 8 days, the one with the lowest name. Never the peer
 the alert is about, and never the Mac. If no server qualifies on its alerts,
 that rule is dropped; if none qualifies still, each server sends its own.
 
-The others wait, and once the sender has told it, they record who did. If
-the sender hasn't told it within 5 minutes, or every way it sends alerts
-failed, a waiting server sends it through its own ways; while the sender is
-still sending it, they wait up to 5 minutes more. A server that can't be
-reached is never elected, so then the page goes out at once. Every machine's
-alert about one peer carries the same Pushover tag, so a recovery from any of
-them stops the ringing any of them started. The recovery goes once, from the
-machine that first sent the alert at its worst severity. Another server waits
-for that machine to send it for as long as that machine's summary still lists
-the alert open, since it sends the recovery when its own alert closes. Once
-that machine has been out of reach for 5 minutes, the waiting server sends the
-recovery itself. A server's log notes each wait once, as
-`alert held: web2: web1 is to send this`. A server that has lost its record of
-who sent an alert, because its peer state file was lost or it stopped before
-keeping it, sends the recovery itself and logs
+The others wait, and once the sender has told it, they record who did. Each
+counts only an alert told at least as gravely as it sees the problem, so a
+warning the sender told still counts for a server that sees a warning after
+the sender's alert has grown critical, but never stands in for the page of an
+outage. If the sender hasn't told it within 5 minutes, or every way it sends
+alerts failed, a waiting server sends it through its own ways; while the
+sender is still sending it, they wait up to 5 minutes more. A server that
+can't be reached is never elected, so then the page goes out at once. Every
+machine's alert about one peer carries the same Pushover tag, so a recovery
+from any of them stops the ringing any of them started. The recovery goes
+once, from the machine that first sent the alert at its worst severity.
+Another server waits for that machine to send it for as long as that machine's
+summary still lists the alert open, since it sends the recovery when its own
+alert closes. Once that machine has been out of reach for 5 minutes, the
+waiting server sends the recovery itself. A server's log notes each wait once,
+as `alert held: web2: web1 is to send this`. A server that has lost its record
+of who sent an alert, because its peer state file was lost or it stopped
+before keeping it, sends the recovery itself and logs
 `peer state: no record of who told peer:web2; its recovery goes from here`.
 That recovery may then arrive twice. A machine that sent an alert and was down
 or cut off while another server sent its recovery sends no second recovery

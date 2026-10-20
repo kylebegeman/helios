@@ -269,10 +269,14 @@ func (s *Source) toldElsewhere(n watch.Notice) (by string, at time.Time, ok bool
 	closed, recovered := s.recovery(n.Key)
 	for name, summary := range s.seen {
 		for _, i := range summary.Incidents {
-			if i.Key != n.Key || i.ToldAgeS == nil || rank(i.Severity) < rank(n.Severity) {
+			if i.Key != n.Key {
 				continue
 			}
-			told := s.last.Looked.Add(-elapsed(*i.ToldAgeS))
+			ago, found := i.toldAge(n.Severity)
+			if !found {
+				continue
+			}
+			told := s.last.Looked.Add(-elapsed(ago))
 			if recorded && !told.After(last.At.Add(sameTell)) || recovered && !told.After(closed.At.Add(sameTell)) {
 				continue
 			}

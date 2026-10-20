@@ -62,10 +62,45 @@ type SummaryIncident struct {
 	// reads as a page to a third, and only at its severity or graver, so
 	// a warning told never reads as the page of an outage.
 	ToldAgeS *int64 `json:"told_age_s,omitempty"`
+	// Tells are how long ago this machine last sent a peer incident's
+	// notice itself at each severity, the least grave first, so an
+	// observer that sees the incident as a warning finds the warning told
+	// though the incident has grown critical since. Left out when it never
+	// sent one; a reader from before Tells ignores them and goes by
+	// ToldAgeS.
+	Tells []SummaryTell `json:"tells,omitempty"`
 	// Owed is a notice that failed to go out, and never one held while
 	// another observer is to send it. Why is never said: a mail server's
 	// error can name hosts.
 	Owed bool `json:"owed"`
+}
+
+// SummaryTell is the last notice of one severity a machine sent about
+// an incident, and how long ago.
+type SummaryTell struct {
+	Severity string `json:"severity"`
+	AgeS     int64  `json:"age_s"`
+}
+
+// toldAge is how long ago the summary's machine last told the incident
+// at severity or graver. A summary without Tells, from a version before
+// them, goes by ToldAgeS alone: a tell at the incident's own severity or
+// graver.
+func (i SummaryIncident) toldAge(severity string) (int64, bool) {
+	if len(i.Tells) == 0 {
+		if i.ToldAgeS == nil || rank(i.Severity) < rank(severity) {
+			return 0, false
+		}
+		return *i.ToldAgeS, true
+	}
+	var age int64
+	ok := false
+	for _, t := range i.Tells {
+		if rank(t.Severity) >= rank(severity) && (!ok || t.AgeS < age) {
+			age, ok = t.AgeS, true
+		}
+	}
+	return age, ok
 }
 
 // SummaryRecovery is the last recovery of one key a machine sent, and
@@ -139,6 +174,26 @@ func (l Last) told(i state.Incident) time.Time {
 	return at
 }
 
+// tells is when this machine last sent a notice about the incident
+// itself at each severity, as of now, the least grave first.
+func (l Last) tells(i state.Incident, now time.Time) []SummaryTell {
+	at := map[string]time.Time{}
+	for _, t := range l.Sent {
+		if t.IncidentID == i.ID {
+			at[t.Severity] = later(at[t.Severity], t.At)
+		}
+	}
+	var out []SummaryTell
+	for severity, t := range at {
+		out = append(out, SummaryTell{Severity: severity, AgeS: age(now, t)})
+	}
+	sort.Slice(out, func(a, b int) bool {
+		ra, rb := rank(out[a].Severity), rank(out[b].Severity)
+		return ra < rb || ra == rb && out[a].Severity < out[b].Severity
+	})
+	return out
+}
+
 // recovered is the last recovery of each key this machine sent itself,
 // as of now, in key order.
 func (l Last) recovered(now time.Time) []SummaryRecovery {
@@ -194,12 +249,13 @@ func Build(ctx context.Context, d Deps, name string) (Summary, error) {
 	}
 	for _, i := range open {
 		told, owed := i.NotifiedAt, i.NotifyError != ""
+		var tells []SummaryTell
 		if gated(i.Key) {
 			_, held := deferredTo(i.NotifyError)
-			told, owed = last.told(i), owed && !held
+			told, owed, tells = last.told(i), owed && !held, last.tells(i, now)
 		}
 		s.Incidents = append(s.Incidents, SummaryIncident{Key: i.Key, Subject: i.Subject, Severity: i.Severity,
-			OpenedAgeS: age(now, i.OpenedAt), ToldAgeS: ageIf(now, told), Owed: owed})
+			OpenedAgeS: age(now, i.OpenedAt), ToldAgeS: ageIf(now, told), Tells: tells, Owed: owed})
 	}
 	if s.Backups, err = backups(ctx, d.Store, now); err != nil {
 		return Summary{}, err

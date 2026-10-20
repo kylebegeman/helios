@@ -466,6 +466,38 @@ func TestAHeldRecoveryWaitsWhileTheSenderListsIt(t *testing.T) {
 	}
 }
 
+// An observer that sees a peer's problem as a warning stands down on the
+// warning another observer told, though that observer's incident has
+// since grown critical and its critical went out on no leg: its summary
+// lists the incident critical and owed, with the warning told.
+func TestAWarningToldElsewhereIsNotRepeated(t *testing.T) {
+	web1 := watchingAs(t, "web1", peerNamed("web2"), peerNamed("web3"))
+	toldAt := web1.clock
+	id := opened(t, web1.store, state.Incident{Key: "peer:web3", Subject: "web3", Severity: state.SeverityCritical,
+		OpenedAt: toldAt.Add(-10 * time.Minute), NotifiedAt: toldAt, NotifyError: "pushover: refused"})
+	last := Last{Sent: []Told{{IncidentID: id, Key: "peer:web3", Transition: watch.TransitionOpen, Severity: state.SeverityWarning, By: "web1", At: toldAt}}}
+	p := paging(t)
+	p.fail("web3", pathSummary, syscall.ECONNREFUSED)
+	p.fail("web3", pathTLS, syscall.ECONNREFUSED)
+	for range watch.DefaultOpenAfter + handoff + 2 {
+		s, err := Build(context.Background(), Deps{Store: web1.store, Secrets: web1.secrets, Root: t.TempDir(),
+			Now: func() time.Time { return p.clock }, Last: func() Last { return last }}, "web1")
+		if err != nil {
+			t.Fatal(err)
+		}
+		s.LastRoundAgeS, s.SelfCheck = 30, true
+		s.Findings = []Finding{{Key: "peer:web3", Severity: state.SeverityCritical}}
+		p.says("web1", s)
+		p.rounds(t, 1)
+	}
+	if inc := p.open(t, "peer:web3"); inc.Severity != state.SeverityWarning || inc.NotifiedAt.IsZero() || inc.NotifyError != "" {
+		t.Fatalf("web2's incident isn't a warning told elsewhere: %+v", inc)
+	}
+	if got := p.told("peer:web3"); got != nil {
+		t.Fatalf("web2 repeated the warning web1 told: sent %v", got)
+	}
+}
+
 // Nobody heard an incident opened that was held for its sender and never
 // told, so nobody hears it recovered.
 func TestNoRecoveryWhenNobodyToldTheOpen(t *testing.T) {
