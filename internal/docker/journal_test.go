@@ -254,13 +254,19 @@ func fakeJournalctl(t *testing.T, script string) {
 	t.Setenv("PATH", dir)
 }
 
+// journalctl printing JSON is as quiet as with --quiet. Kept from the
+// system journal but able to open the user's own, it prints nothing and
+// exits 0; only printing for a person does it give its hint.
 func TestAJournalThatCantBeReadSaysWhatToDo(t *testing.T) {
 	q := JournalQuery{Names: []string{"bedrock-hello-web-r1"}}
 	permission := "journalctl cannot read the system journal; run as root or join systemd-journal"
+	empty := "case \"$*\" in\n*--output=json*) ;;\n*) echo '-- No entries --'; %s ;;\nesac\n"
+	hint := `printf '%s\n' "Hint: You are currently not seeing messages from other users and the system." "      Users in groups 'adm', 'systemd-journal' can see all messages." "      Pass -q to turn off this notice." >&2`
 	for _, c := range []struct{ name, script, want string }{
 		{"not installed", "", "journalctl is not installed"},
 		{"no journal files", "echo 'No journal files were opened due to insufficient permissions.' >&2\nexit 1\n", permission},
-		{"only the user's own", "echo 'Hint: You are currently not seeing messages from other users and the system.' >&2\n", permission},
+		{"only the user's own", fmt.Sprintf(empty, hint), permission},
+		{"nothing in it", fmt.Sprintf(empty, "true"), ""},
 		{"failed", "echo 'Failed to parse timestamp: @x' >&2\nexit 1\n", "journalctl: Failed to parse timestamp: @x"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
@@ -269,9 +275,12 @@ func TestAJournalThatCantBeReadSaysWhatToDo(t *testing.T) {
 			} else {
 				fakeJournalctl(t, c.script)
 			}
-			_, err := Journal{}.Read(context.Background(), q)
-			if err == nil || err.Error() != c.want {
-				t.Fatalf("err %v, want %q", err, c.want)
+			got := ""
+			if _, err := (Journal{}).Read(context.Background(), q); err != nil {
+				got = err.Error()
+			}
+			if got != c.want {
+				t.Fatalf("err %q, want %q", got, c.want)
 			}
 		})
 	}

@@ -46,7 +46,7 @@ var journalFields = []string{
 
 // Args are journalctl's arguments for the query. Matches on the same
 // field are alternatives and matches on different fields all have to
-// hold. There is no --quiet, so a permission hint reaches stderr.
+// hold.
 func (q JournalQuery) Args() []string {
 	args := []string{"--no-pager", "--all", "--output=json", "--output-fields=" + strings.Join(journalFields, ",")}
 	args = append(args, journalWindow(q.Since, q.Until)...)
@@ -270,7 +270,8 @@ func (j Journal) read(ctx context.Context, q JournalQuery, limit int64, headless
 // run starts journalctl and hands each entry it prints to each, reading
 // at most limit bytes when limit is above 0, and reports whether it
 // stopped there. Lines that aren't JSON, such as "-- No entries --", are
-// skipped, as is one cut short by the limit.
+// skipped, as is one cut short by the limit. When journalctl prints no
+// entry, run asks it whether it was kept from the system journal.
 func (j Journal) run(ctx context.Context, args []string, limit int64, each func(journalEntry) error) (bool, error) {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
@@ -287,10 +288,12 @@ func (j Journal) run(ctx context.Context, args []string, limit int64, each func(
 	}
 	r := bufio.NewReader(src)
 	var eachErr error
+	printed := false
 	for {
 		b, readErr := r.ReadBytes('\n')
 		cut := readErr != nil && lr != nil && lr.N == 0
 		if e, ok := parseJournalEntry(b); ok && !cut {
+			printed = true
 			if eachErr = each(e); eachErr != nil {
 				break
 			}
@@ -313,7 +316,24 @@ func (j Journal) run(ctx context.Context, args []string, limit int64, each func(
 		}
 		return false, ctxErr
 	}
+	if err == nil && !printed && j.denied(ctx) {
+		return false, errJournalPermission
+	}
 	return false, err
+}
+
+// denied reports whether journalctl says it can't read the system
+// journal. Printing JSON makes it as quiet as --quiet: able to open
+// the user's own journal but not the system's, it prints nothing and
+// exits 0. Asked for no lines of its plain output, it gives its hint.
+func (j Journal) denied(ctx context.Context) bool {
+	out, wait, err := j.start(ctx, []string{"--no-pager", "--output=short", "--lines=0"})
+	if err != nil {
+		return false
+	}
+	defer out.Close()
+	_, _ = io.Copy(io.Discard, out)
+	return errors.Is(wait(), errJournalPermission)
 }
 
 // journalEntry is one record as journalctl prints it in JSON: each value
@@ -381,8 +401,13 @@ func (e journalEntry) line() JournalLine {
 }
 
 // journalPermission is journalctl's stderr when it can't read the system
-// journal: it either opens nothing or only the user's own journal.
+// journal: that it opened nothing, or, unless it prints JSON, the hint
+// that it opened only the user's own journal.
 var journalPermission = []string{"insufficient permissions", "not seeing messages from other users"}
+
+// errJournalPermission is what a read kept from the system journal
+// returns.
+var errJournalPermission = errors.New("journalctl cannot read the system journal; run as root or join systemd-journal")
 
 // journalctl runs the machine's journalctl.
 func journalctl(ctx context.Context, args []string) (io.ReadCloser, func() error, error) {
@@ -404,7 +429,7 @@ func journalctl(ctx context.Context, args []string) (io.ReadCloser, func() error
 		text := strings.TrimSpace(stderr.String())
 		for _, hint := range journalPermission {
 			if strings.Contains(text, hint) {
-				return errors.New("journalctl cannot read the system journal; run as root or join systemd-journal")
+				return errJournalPermission
 			}
 		}
 		if err == nil {
