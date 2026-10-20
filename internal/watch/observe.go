@@ -5,9 +5,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math"
 	"net"
 	"net/http"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -28,6 +30,21 @@ const (
 	// the disk is a problem; DiskFreePercentMin the same, as a share.
 	DiskFreeMin        = 5 << 30
 	DiskFreePercentMin = 10.0
+	// ForecastLongWindow is how far back the disk's trend reads the
+	// hourly samples the signals sampler keeps, and ForecastLongPoints how
+	// many it needs; ForecastShortWindow and ForecastShortPoints the same
+	// for the minute samples the prober keeps in memory.
+	ForecastLongWindow  = 7 * 24 * time.Hour
+	ForecastLongPoints  = 48
+	ForecastShortWindow = 6 * time.Hour
+	ForecastShortPoints = 60
+	// DiskFullWarn and DiskFullCritical are how soon the long trend may
+	// fill the disk before it is a warning and a critical problem.
+	// DiskFullFast is how soon the short trend may fill it, such as a
+	// runaway log, before it is critical.
+	DiskFullWarn     = 14 * 24 * time.Hour
+	DiskFullCritical = 48 * time.Hour
+	DiskFullFast     = 6 * time.Hour
 	// MemoryAvailableMin is the smallest share of memory that may be
 	// available.
 	MemoryAvailableMin = 5.0
@@ -77,6 +94,8 @@ type Prober struct {
 	Connect func(ctx context.Context) (*docker.Engine, error)
 	// Root is the filesystem whose free space matters.
 	Root string
+	// Disk reads a filesystem's free and total bytes; nil means DiskFree.
+	Disk func(path string) (free, total uint64, ok bool)
 	// CheckSecrets loads only the revision-bound credentials used by checks.
 	CheckSecrets func(app string, version int) (map[string]string, error)
 	// OriginPullTrust reads the CAs the edge's origin-pull hosts trust;
@@ -95,6 +114,9 @@ type Prober struct {
 	// dataMu guards data, the last walk of each container's volumes.
 	dataMu sync.Mutex
 	data   map[string]dataScan
+	// minutes holds the bytes in use on Root at each round of the last
+	// ForecastShortWindow. A restart starts it empty.
+	minutes []Point
 }
 
 // dataScan is one walk of one volume a container mounts.
@@ -119,7 +141,7 @@ func (p *Prober) Observe(ctx context.Context) []Condition {
 	}
 	p.forgetOldScans(p.Now())
 	var conditions []Condition
-	conditions = append(conditions, p.host()...)
+	conditions = append(conditions, p.host(ctx)...)
 	conditions = append(conditions, p.operationLock(ctx)...)
 	conditions = append(conditions, p.operatorHolds(ctx)...)
 	conditions = append(conditions, p.originPull(ctx)...)
@@ -680,12 +702,27 @@ func (p *Prober) watches(ctx context.Context) []Condition {
 }
 
 // host looks at disk and memory.
-func (p *Prober) host() []Condition {
+func (p *Prober) host(ctx context.Context) []Condition {
 	var out []Condition
-	if free, total, ok := DiskFree(p.Root); ok {
-		pct := float64(free) / float64(total) * 100
-		if free < DiskFreeMin || pct < DiskFreePercentMin {
-			out = append(out, Condition{Key: "host:disk", Subject: "disk", Severity: state.SeverityCritical, Message: fmt.Sprintf("only %s free of %s (%.0f%%) on %s", app.HumanBytes(int64(free)), app.HumanBytes(int64(total)), pct, p.Root)})
+	read := p.Disk
+	if read == nil {
+		read = DiskFree
+	}
+	if free, total, ok := read(p.Root); ok && total > 0 && free <= total {
+		now := p.Now()
+		p.minutes = append(p.minutes, Point{At: now, Used: float64(total - free)})
+		kept := 0
+		for kept < len(p.minutes) && !p.minutes[kept].At.After(now.Add(-ForecastShortWindow)) {
+			kept++
+		}
+		p.minutes = append(p.minutes[:0], p.minutes[kept:]...)
+		disk, forecast := diskConditions(p.Root, free, total, p.hourlyDisk(ctx, now), p.minutes)
+		if forecast != nil {
+			forecast.Message += p.fastestGrowing(ctx, now)
+			out = append(out, *forecast)
+		}
+		if disk != nil {
+			out = append(out, *disk)
 		}
 	}
 	if available, total, ok := Memory(); ok {
@@ -695,6 +732,122 @@ func (p *Prober) host() []Condition {
 		}
 	}
 	return out
+}
+
+// diskConditions judges the root filesystem from its free space now and
+// the bytes in use at each hour of the last ForecastLongWindow and each
+// round of the last ForecastShortWindow. Under DiskFreeMin is critical.
+// Under DiskFreePercentMin is critical too, unless the long trend has
+// enough points and says the disk lasts beyond DiskFullWarn, or isn't
+// filling: then it is a warning. The forecast is a problem of its own,
+// for how soon either trend fills the disk.
+func diskConditions(root string, free, total uint64, hourly, minutes []Point) (disk, forecast *Condition) {
+	long, longOK := Forecast(hourly, ForecastLongPoints, free)
+	short, shortOK := Forecast(minutes, ForecastShortPoints, free)
+	longDays := fmt.Sprintf("%d day", int(ForecastLongWindow/(24*time.Hour)))
+	shortHours := fmt.Sprintf("%d hour", int(ForecastShortWindow/time.Hour))
+
+	pct := float64(free) / float64(total) * 100
+	low := fmt.Sprintf("only %s free of %s (%.0f%%) on %s", app.HumanBytes(int64(free)), app.HumanBytes(int64(total)), pct, root)
+	switch {
+	case free < DiskFreeMin:
+		disk = &Condition{Key: "host:disk", Subject: "disk", Severity: state.SeverityCritical, Message: low}
+	case pct < DiskFreePercentMin && len(hourly) >= ForecastLongPoints && !longOK:
+		disk = &Condition{Key: "host:disk", Subject: "disk", Severity: state.SeverityWarning, Message: fmt.Sprintf("%s, but the %s trend isn't growing", low, longDays)}
+	case pct < DiskFreePercentMin && longOK && long.Full > DiskFullWarn:
+		disk = &Condition{Key: "host:disk", Subject: "disk", Severity: state.SeverityWarning, Message: fmt.Sprintf("%s, which lasts %s at %s a day (%s trend)", low, lasting(long.Full), app.HumanBytes(int64(long.PerSecond*86400)), longDays)}
+	case pct < DiskFreePercentMin:
+		disk = &Condition{Key: "host:disk", Subject: "disk", Severity: state.SeverityCritical, Message: low}
+	}
+
+	if longOK && long.Full <= DiskFullWarn {
+		severity := state.SeverityWarning
+		if long.Full <= DiskFullCritical {
+			severity = state.SeverityCritical
+		}
+		forecast = &Condition{Key: "host:disk-forecast", Subject: "disk forecast", Severity: severity,
+			Message: fmt.Sprintf("fills in %s at %s a day (%s trend), %s free", lasting(long.Full), app.HumanBytes(int64(long.PerSecond*86400)), longDays, app.HumanBytes(int64(free)))}
+	}
+	if shortOK && short.Full <= DiskFullFast && (forecast == nil || forecast.Severity != state.SeverityCritical || short.Full < long.Full) {
+		forecast = &Condition{Key: "host:disk-forecast", Subject: "disk forecast", Severity: state.SeverityCritical,
+			Message: fmt.Sprintf("fills in %s at %s an hour (%s trend), %s free", lasting(short.Full), app.HumanBytes(int64(short.PerSecond*3600)), shortHours, app.HumanBytes(int64(free)))}
+	}
+	return disk, forecast
+}
+
+// lasting says how long a forecast gives, roughly.
+func lasting(d time.Duration) string {
+	switch {
+	case d > 365*24*time.Hour:
+		return "over a year"
+	case d >= 48*time.Hour:
+		return fmt.Sprintf("about %d days", int(math.Round(d.Hours()/24)))
+	case d >= 2*time.Hour:
+		return fmt.Sprintf("about %d hours", int(math.Round(d.Hours())))
+	case d >= 90*time.Second:
+		return fmt.Sprintf("about %d minutes", int(math.Round(d.Minutes())))
+	default:
+		return "about a minute"
+	}
+}
+
+// hourlyDisk reads the largest bytes in use on the root filesystem in each
+// hour of the last ForecastLongWindow, as the signals sampler kept them.
+func (p *Prober) hourlyDisk(ctx context.Context, now time.Time) []Point {
+	rows, err := p.Store.Signals(ctx, manifest.ReservedApp, now.Add(-ForecastLongWindow))
+	if err != nil {
+		return nil
+	}
+	var points []Point
+	for _, r := range rows {
+		if r.Key == state.SignalHostDiskRoot && r.Metric == state.SignalHostDiskUsed {
+			points = append(points, Point{At: r.Hour, Used: r.Value})
+		}
+	}
+	return points
+}
+
+// fastestGrowing names the deployed app whose volumes and database grew
+// most over the last ForecastLongWindow, from their hourly disk samples,
+// or says nothing when none grew.
+func (p *Prober) fastestGrowing(ctx context.Context, now time.Time) string {
+	active, err := p.Store.ActiveRevisions(ctx)
+	if err != nil {
+		return ""
+	}
+	deployed := map[string]bool{}
+	for _, rev := range active {
+		deployed[rev.App] = true
+	}
+	rows, err := p.Store.MetricSignals(ctx, state.SignalDiskBytes, now.Add(-ForecastLongWindow))
+	if err != nil {
+		return ""
+	}
+	first, last := map[string]state.Signal{}, map[string]state.Signal{}
+	for _, r := range rows {
+		if !deployed[r.App] {
+			continue
+		}
+		if _, seen := first[r.App]; !seen {
+			first[r.App] = r
+		}
+		last[r.App] = r
+	}
+	names := make([]string, 0, len(first))
+	for name := range first {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	best, grew := "", 0.0
+	for _, name := range names {
+		if d := last[name].Value - first[name].Value; d > grew {
+			best, grew = name, d
+		}
+	}
+	if best == "" {
+		return ""
+	}
+	return fmt.Sprintf("; of the apps, %s grew most, by %s in %s", best, app.HumanBytes(int64(grew)), ago(first[best].Hour, last[best].Hour))
 }
 
 // operationLock reports the machine's operation lock when one operation has

@@ -1,7 +1,7 @@
 // Package signals keeps the numbers beside every app: requests, errors
 // and latency from the edge's per-host metrics, CPU and memory from the
-// containers, disk from the volumes. The daemon samples every minute and
-// keeps hourly rollups for 90 days.
+// containers, disk from the volumes and the machine's root filesystem.
+// The daemon samples every minute and keeps hourly rollups for 90 days.
 package signals
 
 import (
@@ -179,6 +179,9 @@ type Sampler struct {
 	Connect func(ctx context.Context) (*docker.Engine, error)
 	// DiskUsage measures a directory in bytes; nil skips disk.
 	DiskUsage func(ctx context.Context, path string) (int64, error)
+	// HostDisk reads the free and total bytes of the machine's root
+	// filesystem; nil skips it.
+	HostDisk func() (free, total uint64, ok bool)
 
 	mu          sync.Mutex
 	counters    map[string]float64
@@ -210,6 +213,11 @@ func (s *Sampler) Sample(ctx context.Context) error {
 	}
 	defer s.mu.Unlock()
 	now := s.Now()
+	if s.HostDisk != nil {
+		if free, total, ok := s.HostDisk(); ok && free <= total {
+			_ = s.Store.MaxSignal(ctx, state.Signal{Hour: now, App: manifest.ReservedApp, Key: state.SignalHostDiskRoot, Metric: state.SignalHostDiskUsed, Value: float64(total - free)})
+		}
+	}
 	active, err := s.Store.ActiveRevisions(ctx)
 	if err != nil {
 		return err

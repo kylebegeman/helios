@@ -647,6 +647,16 @@ A backup stops an app's writers for at most 30 minutes. A writer the backup
 stopped is not an alert until the pause has lasted 35 minutes, and then it is
 a critical one.
 
+A disk with under 5 GB free is critical. The daemon also keeps how much of the
+disk is in use each hour for 90 days, and each minute of the last 6 hours in
+memory. It fits a trend through each that one cleanup or one large temporary
+file can't swing. A disk the 7 day trend fills within 14 days is a warning,
+and within 48 hours it is critical. A disk the 6 hour trend fills within 6
+hours, as a runaway log does, is critical too. The alert says how fast the disk
+is filling and which app's data grew most. A disk with under 10% free is
+critical until there are 2 days of hourly samples. After that it is a warning
+while the 7 day trend lasts beyond 14 days or isn't growing.
+
 | Command | Shows |
 |---|---|
 | `helios alerts` | what is wrong now, and what was |
