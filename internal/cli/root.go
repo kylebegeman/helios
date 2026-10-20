@@ -111,7 +111,7 @@ func newRoot(stdout, stderr io.Writer) *cobra.Command {
 	root.PersistentFlags().StringVar(&a.stateDir, "state-dir", envOr("BEDROCK_STATE_DIR", defaultStateDir()), "where helios keeps its state")
 	root.PersistentFlags().StringVar(&a.socket, "socket", envOr("BEDROCK_SOCKET", daemon.DefaultSocket), "the daemon's socket; the local kernel is used when nothing answers")
 	root.PersistentFlags().BoolVar(&a.json, "json", false, "print JSON, one object per line")
-	root.AddCommand(newVersion(a), newCapabilities(a), newInit(a), newCheck(a), newDoctor(a), newHost(a), newUpgrade(a), newDeploy(a), newRollback(a), newLs(a), newStatus(a), newExposure(a), newDNS(a), newEdge(a), newPs(a), newLogs(a), newExec(a), newGC(a), newLaunch(a), newMove(a), newPreview(a), newSecret(a), newIntegration(a), newRun(a), newJobs(a), newCron(a), newPsql(a), newBackup(a), newBackups(a), newDrill(a), newRestore(a), newRecover(a), newRehearse(a), newAlerts(a), newWatch(a), newRemove(a), newGit(a), newReceive(a), newHistory(a), newKernel(a), newDaemon(a))
+	root.AddCommand(newVersion(a), newCapabilities(a), newInit(a), newCheck(a), newDoctor(a), newHost(a), newUpgrade(a), newDeploy(a), newRollback(a), newLs(a), newStatus(a), newExposure(a), newDNS(a), newEdge(a), newPs(a), newLogs(a), newExec(a), newGC(a), newLaunch(a), newMove(a), newPreview(a), newSecret(a), newIntegration(a), newRun(a), newJobs(a), newCron(a), newPsql(a), newBackup(a), newBackups(a), newDrill(a), newRestore(a), newRecover(a), newRehearse(a), newAlerts(a), newWatch(a), newPeer(a), newRemove(a), newGit(a), newReceive(a), newHistory(a), newKernel(a), newDaemon(a))
 	configureTargets(root, a)
 	return root
 }
