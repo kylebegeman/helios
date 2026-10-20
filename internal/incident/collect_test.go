@@ -187,14 +187,16 @@ func TestMessagesAreLeftOutWhenTheSecretsCantBeRead(t *testing.T) {
 }
 
 // An env value can be one of the words helios writes itself, such as a
-// status page's name, a severity, a signal's kind or a container's name.
+// status page's name, a severity, an operation's ID or kind, a signal's
+// kind or a container's name.
 // It is redacted where an app or a name it chose holds it, and finding it
 // in helios's own words is no leak, so the evidence keeps its logs.
 func TestAnEnvValueThatIsOneOfHeliosOwnWordsIsNoLeak(t *testing.T) {
 	ctx := context.Background()
 	store := openStore(t)
-	env := map[string]string{"DNS_PROVIDER": "cloudflare", "ALERT_LEVEL": "critical", "METRIC": "requests", "WORKER_HOST": "bedrock-web-worker-r7"}
+	env := map[string]string{"DNS_PROVIDER": "cloudflare", "ALERT_LEVEL": "critical", "METRIC": "requests", "WORKER_HOST": "bedrock-web-worker-r7", "DEPLOY_ID": "op-web-12", "HOOK_EVENT": apps.DeployKind}
 	saveRevision(t, store, "web", "r7", env, map[string]string{"web": "bedrock-web-web-r7", "worker": "bedrock-web-worker-r7"})
+	saveChange(t, store, "op-web-12", apps.DeployKind, "web", apps.DeployInput{Revision: "r7"}, opened.Add(-5*time.Minute), "migrated")
 	if err := store.AddSignal(ctx, state.Signal{Hour: opened.Add(-time.Hour), App: "web", Metric: "requests", Value: 120, Samples: 60}); err != nil {
 		t.Fatal(err)
 	}
@@ -202,6 +204,7 @@ func TestAnEnvValueThatIsOneOfHeliosOwnWordsIsNoLeak(t *testing.T) {
 		io.WriteString(w, `{"status":{"indicator":"none","description":"All Systems Operational"}}`)
 	}))
 	defer page.Close()
+	openIncident(t, store, "app:web", "web answered 502", opened.Add(-24*time.Hour))
 	inc := openIncident(t, store, "app:web", "web answers 502", opened)
 	journal := &recordingJournal{containers: []docker.JournalContainer{{ID: "c1", Name: "bedrock-web-web-r7", Workload: "web", Revision: "r7", Lines: []docker.JournalLine{{At: opened.Add(-time.Minute), Stream: "stderr", Text: "lookup through cloudflare timed out"}}}}}
 	engine := &fakeEngine{logs: map[string][]string{"bedrock-web-worker-r7": {strings.Repeat("c", docker.JournalReadLimit-25) + "\n", "short\n", "working\n", strings.Repeat("w", 25) + "\n"}}}
@@ -220,6 +223,12 @@ func TestAnEnvValueThatIsOneOfHeliosOwnWordsIsNoLeak(t *testing.T) {
 	if e.Incident.Severity != "critical" || len(e.Upstream) != 1 || e.Upstream[0].Name != "cloudflare" || len(e.History.Signals) != 1 || e.History.Signals[0].Kind != "requests" {
 		t.Fatalf("severity %q, upstream %+v, signals %+v", e.Incident.Severity, e.Upstream, e.History.Signals)
 	}
+	if len(e.History.Incidents) != 1 || e.History.Incidents[0].Severity != "critical" {
+		t.Fatalf("history %+v", e.History.Incidents)
+	}
+	if lc := e.LastChange; lc == nil || lc.Operation != "op-web-12" || lc.Kind != apps.DeployKind {
+		t.Fatalf("last change %+v", lc)
+	}
 	var logs []string
 	for _, l := range e.Logs {
 		for _, line := range l.Lines {
@@ -233,6 +242,45 @@ func TestAnEnvValueThatIsOneOfHeliosOwnWordsIsNoLeak(t *testing.T) {
 	if !slices.Equal(e.Truncated, []string{"logs: the engine read of [redacted WORKER_HOST] stopped at 8 MiB"}) {
 		t.Fatalf("truncated %q", e.Truncated)
 	}
+}
+
+// An env value such as a table's name can be a word of helios's notes on
+// what it cut short or of the name of a source it couldn't read, and
+// finding it there is no leak either.
+func TestAnEnvValueThatNamesWhatWasCutOrCouldntBeReadIsNoLeak(t *testing.T) {
+	ctx := context.Background()
+	src := func(store *state.Store, journal Journal) Sources {
+		return Sources{Store: store, Secrets: fakeSecrets{}, Journal: journal, Host: "web.example.test", CollectedBy: "test", Now: func() time.Time { return opened }}
+	}
+	t.Run("cut short", func(t *testing.T) {
+		store := openStore(t)
+		saveRevision(t, store, "web", "r7", map[string]string{"TABLE": "containers"}, map[string]string{"web": "bedrock-web-web-r7"})
+		journal := &recordingJournal{}
+		for i := range maxContainers + 1 {
+			journal.containers = append(journal.containers, docker.JournalContainer{ID: fmt.Sprint("c", i), Name: fmt.Sprint("bedrock-web-job-", i), Workload: "job", Revision: "r7", Lines: []docker.JournalLine{{At: opened.Add(-time.Duration(i+1) * time.Second), Stream: "stdout", Text: "done"}}})
+		}
+		e, err := Collect(ctx, openIncident(t, store, "app:web", "web answers 502", opened), src(store, journal))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if e.Redaction.Status != RedactionApplied || len(e.Logs) != maxContainers || !slices.Equal(e.Truncated, []string{fmt.Sprintf("logs: the %d containers that wrote last", maxContainers)}) {
+			t.Fatalf("redaction %q with %d logs, truncated %q", e.Redaction.Status, len(e.Logs), e.Truncated)
+		}
+	})
+	t.Run("couldn't be read", func(t *testing.T) {
+		store := openStore(t)
+		saveRevision(t, store, "web", "r7", map[string]string{"TABLE": "revisions"}, map[string]string{"web": "bedrock-web-web-r7"})
+		if err := store.SaveRevision(ctx, state.Revision{App: "web", ID: "r6", Status: state.RevisionRetired, Manifest: json.RawMessage(`{"workloads":"web"}`), CreatedAt: opened.Add(-2 * time.Hour)}); err != nil {
+			t.Fatal(err)
+		}
+		e, err := Collect(ctx, openIncident(t, store, "app:web", "web answers 502", opened), src(store, nil))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if e.Redaction.Status != RedactionLogsOmitted || len(e.Errors) != 1 || e.Errors[0].Source != "revisions" {
+			t.Fatalf("redaction %q, errors %+v", e.Redaction.Status, e.Errors)
+		}
+	})
 }
 
 // Redaction's own words can let a value survive it, as here, where a
