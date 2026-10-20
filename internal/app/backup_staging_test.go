@@ -271,6 +271,96 @@ func TestABackupStoppedWithItsDaemonLeavesItsRunToTheResumedAttempt(t *testing.T
 	}
 }
 
+// A stopped backup leaves its run for a resumed attempt that never comes
+// when its plan changes, or can't be rebuilt, before Recover finds it:
+// Recover ends the operation instead. So the run is closed then, as failed
+// and saying why, rather than left running for good. A daemon killed
+// between steps leaves its run open the same way.
+func TestABackupWhoseOperationRecoverEndsClosesTheRunItLeftOpen(t *testing.T) {
+	for _, stop := range []struct{ name, command, after string }{
+		{name: "opening the repository", command: "init"},
+		{name: "applying retention", command: "forget"},
+		{name: "killed between steps", after: "prepare"},
+	} {
+		for _, end := range []struct{ name, why string }{
+			{"the plan changed", "interrupted, and the plan changed since it started"},
+			{"the plan can't be rebuilt", "interrupted, and the plan can't be rebuilt: plan app.backup: backups need the storage integration"},
+		} {
+			for _, machine := range []bool{false, true} {
+				t.Run(stop.name+"/"+end.name+"/"+map[bool]string{false: "app", true: "machine"}[machine], func(t *testing.T) {
+					b, raw := backupIdentityFixture(t, machine)
+					owner := map[bool]string{false: "hello", true: manifest.ReservedApp}[machine]
+					ctx, cancel := context.WithCancel(context.Background())
+					defer cancel()
+					at := time.Now().UTC().Truncate(time.Second)
+					summary, _ := json.Marshal(struct {
+						Type string `json:"message_type"`
+						restic.Summary
+					}{"summary", restic.Summary{SnapshotID: strings.Repeat("e", 64), BackupStart: at, BackupEnd: at.Add(time.Second), TotalFiles: 3, TotalBytes: 30}})
+					fake := dockertest.New(t)
+					fake.OnCreate = func(c dockertest.Container) {
+						fake.Update(c.Name, func(c *dockertest.Container) {
+							c.ExitAfter = 1
+							switch c.Cmd[0] {
+							case "init":
+								c.ExitCode, c.Logs = 1, `{"message_type":"exit_error","code":1,"message":"Fatal: config file already exists"}`
+							case "backup":
+								c.Logs = string(summary)
+							}
+							if c.Cmd[0] == stop.command {
+								c.ExitAfter = 0
+								cancel()
+							}
+						})
+					}
+					reg := kernel.Registry{}
+					reg.Add(b)
+					_, err := kernel.New(b.Store, reg, "old-daemon", kernel.WithClock(func() time.Time { return at })).Run(ctx, BackupKind, raw, func(ev kernel.Event) {
+						if ev.Type == kernel.EventStepFinished && ev.Step.Name == stop.after && ev.Step.Status == state.StepSucceeded {
+							cancel()
+						}
+					})
+					if err == nil {
+						t.Fatal("the backup was not stopped")
+					}
+					stopped := runOpen(t, b.Store, owner)
+
+					switch {
+					case end.name == "the plan can't be rebuilt":
+						if _, err := integration.Remove(b.Secrets, integration.StorageName); err != nil {
+							t.Fatal(err)
+						}
+					case machine:
+						b.Hostname = func() string { return "new-host" }
+						reg.Add(b)
+					default:
+						next, err := b.Store.RevisionWithStatus(context.Background(), owner, state.RevisionActive)
+						if err != nil {
+							t.Fatal(err)
+						}
+						next.ID = "next-code"
+						if err := b.Store.SaveRevision(context.Background(), *next); err != nil {
+							t.Fatal(err)
+						}
+						if err := b.Store.Activate(context.Background(), owner, next.ID, time.Now().UTC()); err != nil {
+							t.Fatal(err)
+						}
+					}
+					recovered := kernel.New(b.Store, reg, "new-daemon", kernel.WithClock(func() time.Time { return at.Add(time.Minute) }))
+					if n, err := recovered.Recover(context.Background(), func(kernel.Event) {}); err != nil || n != 1 {
+						t.Fatalf("recovered %d operation(s): %v", n, err)
+					}
+					runs, err := b.Store.BackupRuns(context.Background(), owner, state.BackupRunBackup, 10)
+					if err != nil || len(runs) != 1 || runs[0].ID != stopped.ID {
+						t.Fatalf("the backup's runs are %+v, want the stopped one alone: %v", runs, err)
+					}
+					lastRunFailed(t, b.Store, owner, end.why)
+				})
+			}
+		}
+	}
+}
+
 // repositoryWhoseBackup answers restic as an existing repository would,
 // with each backup doing what backup says to its container.
 func repositoryWhoseBackup(t *testing.T, backup func(c *dockertest.Container)) {

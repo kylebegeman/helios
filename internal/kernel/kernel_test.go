@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -400,6 +401,87 @@ func TestRecoveryRenewsLeaseWhilePlanningAndCompensating(t *testing.T) {
 			}
 			if !errors.Is(claimErr, state.ErrLeased) {
 				t.Fatalf("recovery lost its lease during %s: %v", phase, claimErr)
+			}
+		})
+	}
+}
+
+// abandoning plans two steps, or fails to plan when broken, or plans other
+// steps when changed, and keeps what Recover tells it it abandons, with the
+// operation's status at the time.
+type abandoning struct {
+	broken, changed bool
+	store           *state.Store
+	told            *[]string
+}
+
+func (abandoning) Kind() string { return "test.abandon" }
+func (d abandoning) Plan(context.Context, json.RawMessage) (*Plan, error) {
+	if d.broken {
+		return nil, errors.New("its input is gone")
+	}
+	first := "first"
+	if d.changed {
+		first = "another"
+	}
+	apply := func(context.Context, io.Writer) error { return nil }
+	return &Plan{Target: "here", Steps: []Step{{Name: first, Apply: apply}, {Name: "second", Apply: apply}}}, nil
+}
+func (d abandoning) Abandon(ctx context.Context, operation, reason string) {
+	op, _, err := d.store.Get(ctx, operation)
+	if err != nil {
+		*d.told = append(*d.told, err.Error())
+		return
+	}
+	*d.told = append(*d.told, fmt.Sprintf("%s %s: %s", operation, op.Status, reason))
+}
+
+// An operation Recover ends without applying it again may have left
+// something open for its resumed attempt, so its definition is told, while
+// the operation is still applying, and nothing is told when it resumes.
+func TestRecoverTellsADefinitionWhenItEndsAnOperationWithoutResumingIt(t *testing.T) {
+	for _, c := range []struct {
+		name            string
+		broken, changed bool
+		reason          string
+	}{
+		{name: "resumed"},
+		{name: "the plan changed", changed: true, reason: "interrupted, and the plan changed since it started"},
+		{name: "the plan can't be rebuilt", broken: true, reason: "interrupted, and the plan can't be rebuilt: plan test.abandon: its input is gone"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			ctx := context.Background()
+			store := newStore(t)
+			var told []string
+			reg := Registry{}
+			reg.Add(abandoning{store: store, told: &told})
+			t0 := time.Date(2026, 9, 19, 12, 0, 0, 0, time.UTC)
+			first := New(store, reg, "daemon-a", WithLeaseTTL(time.Minute), WithClock(func() time.Time { return t0 }))
+			first.crashAfterStep = func(i int) bool { return i == 0 }
+			if _, err := first.Run(ctx, "test.abandon", nil, func(Event) {}); !errors.Is(err, errCrashed) {
+				t.Fatalf("want the simulated crash, got %v", err)
+			}
+			ops, _ := store.List(ctx, 1)
+			reg.Add(abandoning{broken: c.broken, changed: c.changed, store: store, told: &told})
+			later := New(store, reg, "daemon-b", WithLeaseTTL(time.Minute), WithClock(func() time.Time { return t0.Add(2 * time.Minute) }))
+			if n, err := later.Recover(ctx, func(Event) {}); err != nil || n != 1 {
+				t.Fatalf("recover: n=%d err=%v", n, err)
+			}
+			receipt, err := later.ReceiptOf(ctx, ops[0].ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if c.reason == "" {
+				if receipt.Status != state.Succeeded || len(told) != 0 {
+					t.Fatalf("a resumed operation must finish and tell nothing: %s, told %q", receipt.Status, told)
+				}
+				return
+			}
+			if receipt.Status != state.Failed || receipt.Error != c.reason {
+				t.Fatalf("receipt: %s %q, want failed with %q", receipt.Status, receipt.Error, c.reason)
+			}
+			if want := []string{ops[0].ID + " " + string(state.Applying) + ": " + c.reason}; strings.Join(told, "\n") != strings.Join(want, "\n") {
+				t.Fatalf("told %q, want %q", told, want)
 			}
 		})
 	}

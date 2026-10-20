@@ -285,6 +285,37 @@ func (x *backingUp) readReceipt(ctx context.Context) (*backupSnapshotReceipt, er
 	return &receipt, nil
 }
 
+// Abandon implements kernel.Abandoner. A stopped backup leaves its run open
+// for its resumed attempt to close, and when Recover ends its operation
+// instead, the run its receipt names is closed here as failed, saying why.
+// The receipt is found by its operation, since what names its path, such
+// as the machine's host name, may be what changed. An operation writes one.
+func (b Backup) Abandon(ctx context.Context, operation, reason string) {
+	if b.Store == nil || b.StateDir == "" {
+		return
+	}
+	dir := filepath.Join(b.StateDir, "backups", ".receipts")
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return
+	}
+	for _, entry := range entries {
+		if !entry.Type().IsRegular() || filepath.Ext(entry.Name()) != ".json" {
+			continue
+		}
+		data, err := os.ReadFile(filepath.Join(dir, entry.Name()))
+		var receipt backupSnapshotReceipt
+		if err != nil || json.Unmarshal(data, &receipt) != nil || receipt.Operation != operation {
+			continue
+		}
+		run, err := b.Store.BackupRun(ctx, receipt.RunID)
+		if err == nil && !run.Finished() && run.App == receipt.Owner && run.Kind == receipt.Kind && run.StartedAt.Equal(receipt.RunStarted) {
+			_ = (&backupRun{store: b.Store, id: run.ID}).fail(errors.New(reason))
+		}
+		return
+	}
+}
+
 func (x *backingUp) beginBackup(ctx context.Context) error {
 	if x.receiptDir == "" {
 		return x.run.begin(ctx)
