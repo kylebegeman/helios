@@ -54,6 +54,37 @@ func migrationHandoff(rev *state.Revision, m *manifest.Manifest, in MoveCaptureI
 
 func (MoveCapture) Kind() string { return MoveCaptureKind }
 
+func (c MoveCapture) stateDir() string {
+	if c.Backup.StateDir != "" {
+		return c.Backup.StateDir
+	}
+	return filepath.Dir(c.Backup.Store.Path())
+}
+
+// run is the record of app's capture. No backup receipt names it, so a file
+// beside the capture's staging binds it to the operation that began it.
+func (c MoveCapture) run(app string) *backupRun {
+	return &backupRun{store: c.Backup.Store, app: app, kind: state.BackupRunBackup, record: filepath.Join(c.stateDir(), "moves", app, "capture.run.json")}
+}
+
+// Abandon implements kernel.Abandoner. A capture stopped with its daemon
+// leaves its run open for its resumed steps to take up, and when Recover
+// ends its operation instead, that run is closed here as failed, saying why.
+func (c MoveCapture) Abandon(ctx context.Context, operation, reason string) {
+	if c.Backup.Store == nil {
+		return
+	}
+	op, _, err := c.Backup.Store.Get(ctx, operation)
+	if err != nil || op == nil {
+		return
+	}
+	var in MoveCaptureInput
+	if json.Unmarshal(op.Input, &in) != nil || !manifest.ValidApp(in.App) {
+		return
+	}
+	c.run(in.App).abandon(ctx, operation, reason)
+}
+
 func (c MoveCapture) Plan(ctx context.Context, raw json.RawMessage) (*kernel.Plan, error) {
 	var in MoveCaptureInput
 	if err := json.Unmarshal(raw, &in); err != nil {
@@ -124,12 +155,7 @@ func (c MoveCapture) Plan(ctx context.Context, raw json.RawMessage) (*kernel.Pla
 			}})
 	}
 	if h.HasData {
-		stateDir := c.Backup.StateDir
-		if stateDir == "" {
-			stateDir = filepath.Dir(c.Backup.Store.Path())
-		}
-		x := &backingUp{b: c.Backup, owner: in.App, target: in.App, staging: filepath.Join(stateDir, "moves", in.App, "capture"), bucket: h.Bucket,
-			run: &backupRun{store: c.Backup.Store, app: in.App, kind: state.BackupRunBackup}}
+		x := &backingUp{b: c.Backup, owner: in.App, target: in.App, staging: filepath.Join(c.stateDir(), "moves", in.App, "capture"), bucket: h.Bucket, run: c.run(in.App)}
 		prepare := x.appPrepareStep(rev, m)
 		prepare.Change += " for " + identity
 		plan.Steps = append(plan.Steps, prepare)
@@ -159,7 +185,7 @@ func (c MoveCapture) Plan(ctx context.Context, raw json.RawMessage) (*kernel.Pla
 					}
 					defer func() {
 						if captureErr != nil {
-							captureErr = x.run.fail(captureErr)
+							captureErr = x.run.stop(ctx, captureErr)
 						}
 					}()
 					record, err := readMigration(c.Backup.Store.Path(), in.App)

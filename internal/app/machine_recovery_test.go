@@ -493,6 +493,9 @@ func TestRecoveryMachineCatalogArchivesImmutableLoadedImageIDs(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	// The images are sized through the Engine API.
+	dockertest.New(t)
+	roomToRestore(t)
 	b := Backup{Store: r.Store, Secrets: r.Secrets, StateDir: r.StateDir}
 	if err := b.prepareMachineRecoveryCatalog(context.Background(), "old-host", stage, io.Discard); err != nil {
 		t.Fatal(err)

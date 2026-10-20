@@ -615,18 +615,18 @@ the other machine first; see [safe moves](docs/features/safe-moves.md).
 
 The daemon watches every app and the machine once a minute: containers
 running, health paths and checks answering through the edge, certificates
-valid and renewing, disk and memory, backups fresh and drills passing, each
-workload able to write the volumes it mounts (checked hourly), an operation
-holding the machine's operation lock for over 4 hours (backups, drills and
-deploys wait behind it), backup retention deferred for over 3 days, and any
-URL added with `helios watch add` (the other machine's sites, say). A
-problem has to hold for three rounds before it becomes an alert, one alert
-per app, and you hear once when it starts, once a day while it lasts, and
-once when it recovers. An alert that grows graver, a warning that becomes an
-outage, is told as soon as the graver state has held three rounds too, rather
-than at the next daily repeat. One that eases, an outage back to a warning,
-stays the outage until the milder state has held two rounds, so an outage that
-flaps is told once.
+valid and renewing, disk and memory, backups fresh (the machine's own too) and
+drills passing, each workload able to write the volumes it mounts (checked
+hourly), an operation holding the machine's operation lock for over 4 hours
+(backups, drills and deploys wait behind it), backup retention deferred for
+over 3 days, and any URL added with `helios watch add` (the other machine's
+sites, say). A problem has to hold for three rounds before it becomes an
+alert, one alert per app, and you hear once when it starts, once a day while
+it lasts, and once when it recovers. An alert that grows graver, a warning
+that becomes an outage, is told as soon as the graver state has held three
+rounds too, rather than at the next daily repeat. One that eases, an outage
+back to a warning, stays the outage until the milder state has held two
+rounds, so an outage that flaps is told once.
 
 Alerts go out every way that is set up, all at once. Email goes through the
 `email` mail server, and through `email2` only when the first one fails, so the
@@ -689,23 +689,26 @@ with no database fails validation; to back up none of it, set `backup.off:
 true` instead.
 
 Every restic call a backup makes has a limit, so one stuck call can't hold the
-machine's operations: opening the repository and clearing stale locks 5
-minutes each, a machine backup's upload 2 hours, forgetting old snapshots 15
-minutes and the prune that follows 1 hour. A machine backup also copies each
-data app's pinned snapshot in with a 2 hour limit per app and archives the
-workload images with a 1 hour limit. A call that runs out of time is stopped,
-and restic gets a minute to release its repository lock. When retention fails
-or runs out of time after a snapshot was taken, the snapshot is kept and the
-backup still counts as good: `helios backups` shows "retention deferred" with
-the reason (so does `helios status <app>` for an app's last good backup), and
-the next backup applies retention again. Every backup prunes, even when it
-forgot nothing, and one prune rewrites at most 2 GB, so a repository with a lot
-to reclaim catches up over several backups. Retention deferred on every backup
-for over 3 days raises an alert. Before each backup Helios runs `restic
-unlock`, which removes only locks restic considers stale (not refreshed for 30
-minutes). It never removes a live lock, so if a stopped call couldn't release
-its lock, a backup started within the next 30 minutes can still find the
-repository locked and fail; the next scheduled run goes through.
+machine's operations: opening the repository and clearing stale locks 5 minutes
+each, a machine backup's upload 2 hours, forgetting old snapshots 15 minutes
+and the prune that follows 1 hour. A machine backup also copies each data app's
+pinned snapshot in with a 2 hour limit per app and archives the workload images
+with a 1 hour limit. In the step that copies them, connecting to Docker, and
+resolving and sizing the workload images, have a 2 minute limit each. A call
+that runs out of time is stopped, and restic gets a minute to release its
+repository lock. When retention fails or runs out of time after a snapshot was
+taken, the snapshot is kept and the backup still counts as good:
+`helios backups` shows "retention deferred" with the reason (so does
+`helios status <app>` for an app's last good backup), and the next backup
+applies retention again. Every backup prunes, even when it forgot nothing, and
+one prune rewrites at most 2 GB, so a repository with a lot to reclaim catches
+up over several backups. Retention deferred on every backup for over 3 days
+raises an alert. No successful machine backup for 36 hours raises a warning.
+Before each backup Helios runs `restic unlock`, which removes only locks restic
+considers stale (not refreshed for 30 minutes). It never removes a live lock,
+so if a stopped call couldn't release its lock, a backup started within the
+next 30 minutes can still find the repository locked and fail; the next
+scheduled run goes through.
 
 | Command | What it does |
 |---|---|
@@ -724,8 +727,9 @@ database copied in by hand as root: that app would answer its health check and
 then fail its first save.
 
 Before it restores anything, a drill checks that the snapshot fits with 5 GB
-to spare, the floor `helios watch` warns at, on every disk it writes to: its
-working directory, each scratch volume and the scratch database's volume. The
+or a tenth of the disk to spare, whichever is larger: the floors
+`helios watch` warns at. It checks every disk it writes to: its working
+directory, each scratch volume and the scratch database's volume. The
 size is what the snapshot's backup read, or restic's own count when the
 snapshot doesn't record it, plus a 4 KB block for each file, so a volume of many
 small files can't fill a disk its bytes alone would fit. A drill whose restore
@@ -737,6 +741,27 @@ of each app's data in `helios backup helios` keep the same reserve.
 `helios restore`, a move's restore and a release rollback refuse only a
 snapshot that can't fit at all, say how much the disk keeps free, and go ahead
 without a check when restic can't count the snapshot.
+
+Before it copies any app data, `helios backup helios` adds up every data app's
+pinned snapshot, as its backup recorded it, and the workload images. It checks
+the total fits in `backups/machine` with that reserve, and refuses a pin whose
+backup finished before the app's active revision. A backup of an app or the
+machine that fails while it prepares or snapshots removes what it staged. One
+that is stopped keeps it for its operation to resume: a resumed prepare stages
+it again from nothing, and a resumed snapshot snapshots the copy it kept, or
+fails and removes it if the stopped one had begun its upload. A failure after
+the upload began first stops any restic helper still reading the copy, such as
+one a killed daemon left running, and keeps the copy, saying so, while it
+can't. The next backup of that app or the machine replaces anything left there
+once it has stopped any such helper, and refuses the same way while it can't.
+A stopped backup's run shows as running in `helios backups` until the
+resumed attempt closes it with its own result. When its operation ends without
+resuming instead, because the plan changed or can't be rebuilt in the
+meantime, the run is closed as failed with that reason, as is one a killed
+daemon left. A move's capture records the run it began beside its staging, in
+`moves/<app>/capture.run.json`, so its steps, resumed or not, take up that run
+and never one another backup or capture left open, and its run is closed the
+same way when its operation ends without resuming.
 
 `helios drill <app> --skip-next --reason <text>` skips the next scheduled
 drill when you know it can't run, such as while a disk is being resized. Its

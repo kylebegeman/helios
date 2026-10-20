@@ -12,6 +12,8 @@ import (
 	"strings"
 	"testing"
 
+	"golang.org/x/sys/unix"
+
 	"github.com/kylebegeman/helios/internal/docker"
 	"github.com/kylebegeman/helios/internal/docker/dockertest"
 	"github.com/kylebegeman/helios/internal/kernel"
@@ -81,6 +83,67 @@ func TestARestoreThatWontFitNamesThePathWhatItNeedsAndWhatIsFree(t *testing.T) {
 	}
 }
 
+// helios watch warns below 5 GB free or below a tenth of the disk, so on
+// a disk over 50 GB a restore that keeps a reserve keeps the tenth. One
+// that keeps none still keeps none.
+func TestARestoreKeepsATenthOfABigDiskFree(t *testing.T) {
+	const path = "/var/lib/helios/drills/hello"
+	onDisks(t, func(string) (disk, error) { return disk{dev: 1, free: 30 << 30, total: 200 << 30}, nil })
+	err := checkRestoreSpace([]string{path}, 11<<30, 5<<30)
+	var space *SpaceError
+	if !errors.As(err, &space) || space.Need != 11<<30 || space.Reserve != 200<<30/100*10+10 || space.Free != 30<<30 {
+		t.Fatalf("a restore into the disk's last tenth wasn't refused: %#v", err)
+	}
+	if want := "restoring needs 11.0 GB plus a 20.0 GB reserve on " + path + ", which has 30.0 GB free"; err.Error() != want {
+		t.Errorf("got %q, want %q", err, want)
+	}
+	if err := checkRestoreSpace([]string{path}, 9<<30, 5<<30); err != nil {
+		t.Fatalf("a restore that leaves a tenth free was refused: %v", err)
+	}
+	if err := checkRestoreSpace([]string{path}, 30<<30, 0); err != nil {
+		t.Fatalf("a restore without a reserve kept one: %v", err)
+	}
+
+	// A disk whose size a hundred doesn't divide still keeps a whole tenth:
+	// the largest restore that fits leaves at least that.
+	const total, free int64 = 200<<30 + 99, 30 << 30
+	onDisks(t, func(string) (disk, error) { return disk{dev: 1, free: free, total: total}, nil })
+	reserve := reserveOn(disk{total: total}, 5<<30)
+	if reserve*10 < total {
+		t.Fatalf("a reserve of %d leaves under a tenth of %d free", reserve, total)
+	}
+	if err := checkRestoreSpace([]string{path}, free-reserve, 5<<30); err != nil {
+		t.Fatalf("the largest restore that fits was refused: %v", err)
+	}
+	if err := checkRestoreSpace([]string{path}, free-reserve+1, 5<<30); err == nil {
+		t.Fatal("a restore one byte into the disk's last tenth was taken")
+	}
+
+	// On a small disk a tenth is less than 5 GB, and the 5 GB stays.
+	onDisks(t, func(string) (disk, error) { return disk{dev: 1, free: 8 << 30, total: 20 << 30}, nil })
+	err = checkRestoreSpace([]string{path}, 4<<30, 5<<30)
+	if !errors.As(err, &space) || space.Reserve != 5<<30 {
+		t.Fatalf("a small disk didn't keep the 5 GB reserve: %#v", err)
+	}
+	if err := checkRestoreSpace([]string{path}, 3<<30, 5<<30); err != nil {
+		t.Fatalf("a restore that leaves 5 GB of a small disk was refused: %v", err)
+	}
+
+	// Each disk keeps a tenth of itself: a small disk checked first
+	// doesn't set the reserve for a big one after it.
+	const volume = "/var/lib/docker/volumes/x/_data"
+	onDisks(t, func(p string) (disk, error) {
+		if p == path {
+			return disk{dev: 1, free: 40 << 30, total: 50 << 30}, nil
+		}
+		return disk{dev: 2, free: 30 << 30, total: 200 << 30}, nil
+	})
+	err = checkRestoreSpace([]string{path, volume}, 11<<30, 5<<30)
+	if !errors.As(err, &space) || space.Path != volume || space.Reserve != 200<<30/100*10+10 || space.Free != 30<<30 {
+		t.Fatalf("the big disk didn't keep its own tenth: %#v", err)
+	}
+}
+
 func TestTheFreeSpaceOfARealDirectoryIsReadFromItsFilesystem(t *testing.T) {
 	dir := t.TempDir()
 	a, err := statDisk(dir)
@@ -91,8 +154,17 @@ func TestTheFreeSpaceOfARealDirectoryIsReadFromItsFilesystem(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if a.free <= 0 || a.dev != b.dev {
+	if a.free <= 0 || a.total <= 0 || a.total < a.free || a.dev != b.dev {
 		t.Fatalf("a temporary directory and its parent: %+v, %+v", a, b)
+	}
+	// The size is the whole filesystem's, not what is free on it: the
+	// reserve is a tenth of it.
+	var fs unix.Statfs_t
+	if err := unix.Statfs(dir, &fs); err != nil {
+		t.Fatal(err)
+	}
+	if want := int64(uint64(fs.Blocks) * uint64(fs.Bsize)); a.total != want {
+		t.Fatalf("the disk's size is %d, its filesystem says %d", a.total, want)
 	}
 	if _, err := statDisk(filepath.Join(dir, "missing")); err == nil {
 		t.Fatal("a missing path has no disk")

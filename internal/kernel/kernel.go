@@ -66,6 +66,16 @@ type Definition interface {
 	Plan(ctx context.Context, input json.RawMessage) (*Plan, error)
 }
 
+// An Abandoner is told when Recover ends one of its operations without
+// applying it again, because its plan can't be rebuilt or has changed since
+// it started, so it can close what the operation left open for a resumed
+// attempt that now never comes. It is told before the operation finishes,
+// so a daemon killed in between tells it again, and nothing it does changes
+// how the operation ends. A definition that wraps another passes it on.
+type Abandoner interface {
+	Abandon(ctx context.Context, operation, reason string)
+}
+
 // Registry maps kinds to definitions.
 type Registry map[string]Definition
 
@@ -336,9 +346,9 @@ func (e *Engine) recoverOperation(ctx context.Context, op *state.Operation, emit
 	plan, view, planErr := e.plan(ctx, op.Kind, op.Input)
 	switch {
 	case planErr != nil:
-		return e.finish(ctx, op.ID, state.Failed, "interrupted, and the plan can't be rebuilt: "+planErr.Error(), emit)
+		return e.abandon(ctx, op, "interrupted, and the plan can't be rebuilt: "+planErr.Error(), emit)
 	case view.Digest != op.PlanDigest:
-		return e.finish(ctx, op.ID, state.Failed, "interrupted, and the plan changed since it started", emit)
+		return e.abandon(ctx, op, "interrupted, and the plan changed since it started", emit)
 	}
 	emit(Event{Type: EventResumed, Operation: op.ID, At: e.now(), Plan: view,
 		Message: fmt.Sprintf("interrupted %d time(s); %s", op.Interruptions, describeRecovery(plan.Recovery))})
@@ -348,6 +358,15 @@ func (e *Engine) recoverOperation(ctx context.Context, op *state.Operation, emit
 	}
 	_, err := e.apply(ctx, op, plan, view, emit)
 	return err
+}
+
+// abandon ends a recovered operation as failed without applying it again,
+// telling its definition first when it is an Abandoner.
+func (e *Engine) abandon(ctx context.Context, op *state.Operation, reason string, emit func(Event)) error {
+	if a, ok := e.registry[op.Kind].(Abandoner); ok {
+		a.Abandon(ctx, op.ID, reason)
+	}
+	return e.finish(ctx, op.ID, state.Failed, reason, emit)
 }
 
 func describeRecovery(r Recovery) string {

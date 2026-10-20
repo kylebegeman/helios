@@ -15,6 +15,39 @@ Before losing the source, record its machine snapshot IDs with
 `helios backups bedrock --json` on that source machine and keep the inventory
 with your recovery materials. This command reads local backup history.
 
+The machine backup stages all of this on the machine's own disk, under
+`backups/machine` in the state directory, before uploading it: the state copy
+and secrets, each data app's pinned snapshot and the workload image archive.
+Before it copies any app data, it adds up the pinned snapshots, as their
+backups recorded them, and the room saving the images takes, with more for the
+archive's framing. On the containerd image store that is each image's
+compressed content, often a quarter of the size `docker image ls` shows. A
+graph driver store first copies the whole archive into Docker's own data
+directory, so there it is twice the images' size. Layers that images share
+count once for each. It refuses unless the total fits with the reserve
+`helios watch` keeps: 5 GB or a tenth of the disk, whichever is larger. It also
+refuses, before copying, a pin whose backup finished before the app's active
+revision. A machine backup that fails while it prepares or snapshots removes
+everything it staged there. One that is stopped keeps it for its operation to
+resume, which stages it again or snapshots the copy it kept, or fails and
+removes it if the stopped one had begun its upload. A failure after the upload
+began first stops any restic helper still reading the copy, such as one a
+killed daemon left running, since restic saves what it read of a vanishing
+tree as a snapshot. While it can't stop one, it keeps the copy and says so. The
+next machine backup replaces anything left there once it has stopped any such
+helper, and refuses the same way while it can't.
+
+A machine that goes 36 hours without a successful machine backup raises a
+warning about machine backups in `helios alerts`, as does one whose machine
+backups have only ever failed. When the last machine backup to finish failed,
+the warning quotes the first line of its error, so a backup refused for space
+is told even when no operation is stuck. A recovered machine counts the 36
+hours from its recovery until a machine backup finishes on it, since the
+backup it was recovered from is recorded as interrupted on the source. One that
+fails on it ends that grace, and is told at once unless the source's last good
+machine backup is under 36 hours old. As on any machine, a good backup keeps
+the warning quiet until it is 36 hours old.
+
 The backup omits the machine's private identity. Keep the source recovery
 identity and storage backup password separately. Workload images are archived
 by their immutable image IDs, including images built in the source machine's

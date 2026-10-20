@@ -280,3 +280,13 @@ func (s *Store) MachineRecoveryImported(ctx context.Context, recoveryID string) 
 	err := s.db.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM machine_recoveries WHERE id=?)", recoveryID).Scan(&exists)
 	return exists, err
 }
+
+// LastMachineRecoveryImportedAt is when this store last imported a machine
+// recovery, or the zero time when it never has.
+func (s *Store) LastMachineRecoveryImportedAt(ctx context.Context) (time.Time, error) {
+	var at sql.NullInt64
+	if err := s.db.QueryRowContext(ctx, "SELECT MAX(imported_at) FROM machine_recoveries").Scan(&at); err != nil {
+		return time.Time{}, err
+	}
+	return fromUnix(at.Int64), nil
+}

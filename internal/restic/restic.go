@@ -334,6 +334,61 @@ func finish(e *docker.Engine, spec docker.Spec, grace time.Duration) ([]string, 
 	return strings.Split(strings.TrimSpace(buf.String()), "\n"), errors.Join(errs...)
 }
 
+// StopHelpersReading stops and removes owner's restic helpers that mount
+// dir or a path under it. A helper outlives the daemon that started it,
+// and one that loses files it is reading still saves its snapshot, only
+// marked incomplete, which then reads as the latest. So a caller removing
+// a backup's staging stops them first, giving each stopGrace, as a helper
+// whose call ran out of time gets. An error means one may still read dir.
+func StopHelpersReading(ctx context.Context, e *docker.Engine, owner, dir string) error {
+	list, cancel := context.WithTimeout(ctx, 30*time.Second)
+	helpers, err := e.Owned(list)
+	cancel()
+	if err != nil {
+		return fmt.Errorf("list restic helpers: %w", err)
+	}
+	var errs []error
+	for _, h := range helpers {
+		if h.Labels[docker.LabelApp] != owner || h.Labels[docker.LabelWorkload] != "backup" {
+			continue
+		}
+		// Listing doesn't say what a container mounts.
+		inspect, cancel := context.WithTimeout(ctx, 30*time.Second)
+		info, err := e.Inspect(inspect, h.ID)
+		cancel()
+		if docker.IsNotFound(err) {
+			continue
+		}
+		if err != nil {
+			errs = append(errs, fmt.Errorf("inspect restic helper %s: %w", h.Name, err))
+			continue
+		}
+		if !bindsUnder(info.Binds, dir) {
+			continue
+		}
+		cleanup, stop := context.WithTimeout(ctx, stopGrace+25*time.Second)
+		err = e.Remove(cleanup, info.ID, stopGrace)
+		stop()
+		if err != nil {
+			errs = append(errs, fmt.Errorf("remove restic helper %s: %w", info.Name, err))
+		}
+	}
+	return errors.Join(errs...)
+}
+
+// bindsUnder says whether any of binds mounts dir or a path under it.
+func bindsUnder(binds []string, dir string) bool {
+	dir = filepath.Clean(dir)
+	for _, b := range binds {
+		source, _, _ := strings.Cut(b, ":")
+		source = filepath.Clean(source)
+		if source == dir || strings.HasPrefix(source, dir+string(filepath.Separator)) {
+			return true
+		}
+	}
+	return false
+}
+
 type nopWriter struct{}
 
 func (nopWriter) Write(p []byte) (int, error) { return len(p), nil }
