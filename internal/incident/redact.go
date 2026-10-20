@@ -23,6 +23,17 @@ const (
 	minEnvValue    = 8
 )
 
+// maxFolds is the most times text is read over for escapes, each reading
+// undoing one escaping, as JSON in a JSON string or a URL in a URL's
+// query needs. Text still escaped after that is replaced whole by
+// escapedTooOften, since a value in it can't be found, and the leak check
+// names any it meets escapedTooOftenLeak.
+const (
+	maxFolds            = 8
+	escapedTooOften     = "[escaped too many times to read]"
+	escapedTooOftenLeak = "text escaped too many times to read"
+)
+
 // redactor replaces known values, and the shapes of credentials and
 // private addresses, in text. Its zero value knows no values and still
 // replaces the shapes.
@@ -31,7 +42,8 @@ type redactor struct {
 	// URLs escape it.
 	raw forms
 	// folded are those forms as fold reads them, with and without
-	// base64's padding, which find a value another encoder escaped.
+	// base64's padding, which find a value another encoder escaped, in
+	// each reading folds gives of text escaped again and again.
 	folded forms
 }
 
@@ -116,7 +128,8 @@ func jsonEscape(v string, html bool) string {
 // fold reads s as the same text however an encoder escaped it: it
 // decodes JSON's escapes, including \/ and \u in either case, and URL
 // escapes in either case, and reads base64's URL alphabet as its standard
-// one. A value and text folded alike can be compared.
+// one. A value and text folded alike can be compared. It undoes one
+// escaping; folds undoes the rest.
 func fold(s string) string {
 	if !strings.ContainsAny(s, `\%-_`) {
 		return s
@@ -129,6 +142,24 @@ func fold(s string) string {
 		s = s[n:]
 	}
 	return b.String()
+}
+
+// folds is s and each reading fold gives of the one before, up to the
+// first that fold reads as itself, so text escaped any number of times is
+// read through. It says false when maxFolds readings still leave text
+// escaped.
+func folds(s string) ([]string, bool) {
+	levels := []string{s, fold(s)}
+	for len(levels) <= maxFolds {
+		last := levels[len(levels)-1]
+		f := fold(last)
+		if f == last {
+			return levels, true
+		}
+		levels = append(levels, f)
+	}
+	last := levels[len(levels)-1]
+	return levels, fold(last) == last
 }
 
 // unescape reads the escape or byte s starts with as fold does, and says
@@ -220,11 +251,16 @@ func (r *redactor) String(s string) string {
 		s = strings.ReplaceAll(s, form, "[redacted "+r.raw.names[form]+"]")
 	}
 	if len(r.folded.list) > 0 {
-		f := fold(s)
+		levels, ok := folds(s)
+		if !ok {
+			return escapedTooOften
+		}
 		for _, form := range r.folded.list {
-			if strings.Contains(f, form) {
-				s = replaceFolded(s, f, form, "[redacted "+r.folded.names[form]+"]")
-				f = fold(s)
+			if spans := foldedSpans(levels, form); len(spans) > 0 {
+				s = replaceSpans(s, spans, "[redacted "+r.folded.names[form]+"]")
+				// A replacement adds no escape, so s reads through as
+				// before.
+				levels, _ = folds(s)
 			}
 		}
 	}
@@ -349,39 +385,74 @@ func addressLabel(text string) string {
 	return ""
 }
 
-// replaceFolded replaces with repl the bytes of s that each form in f,
-// s as fold reads it, was read from. Where two meet inside one escape,
-// each is replaced whole.
-func replaceFolded(s, f, form, repl string) string {
-	var matches []int
-	for at := 0; ; {
-		i := strings.Index(f[at:], form)
-		if i < 0 {
-			break
+// span is the bytes of a string from start up to end.
+type span struct{ start, end int }
+
+// foldedSpans is the spans of levels[0] that form, found in any later
+// reading of it folds gave, was read from, in order and apart.
+func foldedSpans(levels []string, form string) []span {
+	var all []span
+	for i := 1; i < len(levels); i++ {
+		var spans []span
+		for at := 0; ; {
+			j := strings.Index(levels[i][at:], form)
+			if j < 0 {
+				break
+			}
+			spans = append(spans, span{at + j, at + j + len(form)})
+			at += j + len(form)
 		}
-		matches = append(matches, at+i, at+i+len(form))
-		at += i + len(form)
+		for k := i - 1; k >= 0 && len(spans) > 0; k-- {
+			spans = unfold(levels[k], spans)
+		}
+		all = append(all, spans...)
 	}
-	var b strings.Builder
-	start, done := -1, 0
-	for read, at := 0, 0; read < len(s) && len(matches) > 0; {
-		out, n := unescape(s[read:])
-		end := at + len(out)
-		if start < 0 && end > matches[0] {
+	slices.SortFunc(all, func(a, b span) int { return a.start - b.start })
+	var joined []span
+	for _, sp := range all {
+		if n := len(joined); n > 0 && sp.start < joined[n-1].end {
+			joined[n-1].end = max(joined[n-1].end, sp.end)
+			continue
+		}
+		joined = append(joined, sp)
+	}
+	return joined
+}
+
+// unfold maps spans of fold(s), in order and apart, to the bytes of s
+// each was read from. A span that starts or ends inside an escape takes
+// it whole, and spans that meet inside one escape are joined.
+func unfold(s string, spans []span) []span {
+	var out []span
+	start := -1
+	for read, at := 0, 0; read < len(s) && len(spans) > 0; {
+		text, n := unescape(s[read:])
+		end := at + len(text)
+		if start < 0 && end > spans[0].start {
 			start = read
 		}
-		if start >= 0 && end >= matches[1] {
-			b.WriteString(s[done:start])
-			b.WriteString(repl)
-			done, start = read+n, -1
-			for len(matches) > 0 && matches[1] <= end {
-				matches = matches[2:]
+		if start >= 0 && end >= spans[0].end {
+			for len(spans) > 0 && spans[0].end <= end {
+				spans = spans[1:]
 			}
-			if len(matches) > 0 && matches[0] < end {
-				start = done
+			if len(spans) == 0 || spans[0].start >= end {
+				out = append(out, span{start, read + n})
+				start = -1
 			}
 		}
 		read, at = read+n, end
+	}
+	return out
+}
+
+// replaceSpans replaces each of spans, in order and apart, in s with repl.
+func replaceSpans(s string, spans []span, repl string) string {
+	var b strings.Builder
+	done := 0
+	for _, sp := range spans {
+		b.WriteString(s[done:sp.start])
+		b.WriteString(repl)
+		done = sp.end
 	}
 	b.WriteString(s[done:])
 	return b.String()
@@ -431,11 +502,12 @@ func (r *redactor) change(c *Change) {
 	}
 }
 
-// leaks names the values still found in e's JSON, sorted, however they
-// were escaped. It reads the JSON's string values, not its keys, numbers
-// or times, which can't carry a secret but which a short value such as
-// 2026 would match, and not helios's own words, which an env value such
-// as cloudflare or critical can be.
+// leaks names the values still found in e's JSON, sorted, however many
+// times they were escaped, and any text escaped too many times to read as
+// escapedTooOftenLeak. It reads the JSON's string values, not its keys,
+// numbers or times, which can't carry a secret but which a short value
+// such as 2026 would match, and not helios's own words, which an env value
+// such as cloudflare or critical can be.
 func (r *redactor) leaks(e *Evidence) []string {
 	if len(r.raw.list) == 0 {
 		return nil
@@ -469,10 +541,15 @@ func (r *redactor) leaks(e *Evidence) []string {
 					found[r.raw.names[form]] = true
 				}
 			}
-			folded := fold(v)
-			for _, form := range r.folded.list {
-				if strings.Contains(folded, form) {
-					found[r.folded.names[form]] = true
+			levels, ok := folds(v)
+			if !ok {
+				found[escapedTooOftenLeak] = true
+			}
+			for _, folded := range levels[1:] {
+				for _, form := range r.folded.list {
+					if strings.Contains(folded, form) {
+						found[r.folded.names[form]] = true
+					}
 				}
 			}
 		}

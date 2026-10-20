@@ -2,6 +2,7 @@ package incident
 
 import (
 	"encoding/json"
+	"net/url"
 	"slices"
 	"testing"
 )
@@ -91,6 +92,42 @@ func TestAValueIsFoundHoweverItsEncoderEscapedIt(t *testing.T) {
 	e.Logs[0].Lines[0].Text = `config {"session":"fake\u002Bb64\/secret\u002Bvalue\/AbCd\u003D"}`
 	if leaked := r.leaks(e); !slices.Equal(leaked, []string{"SESSION_SECRET"}) {
 		t.Fatalf("leaked %q", leaked)
+	}
+}
+
+// Text can be escaped again each time something carries it: JSON in a
+// JSON log line, or a URL in a URL's query. Text escaped more times than
+// are read is left out, since a value in it can't be found.
+func TestAValueIsFoundHoweverManyTimesItWasEscaped(t *testing.T) {
+	var r redactor
+	r.add("SESSION_SECRET", "fake+b64/secret+value/AbCd=", minSecretValue)
+	escaped := func(times int) string {
+		v := "fake+b64/secret+value/AbCd="
+		for range times {
+			v = url.QueryEscape(v)
+		}
+		return "GET /cb?next=" + v + " 302"
+	}
+	for _, c := range []struct{ in, want string }{
+		{`{"msg":"outgoing {\"session\":\"fake+b64\\\/secret+value\\\/AbCd=\"}","level":"info"}`, `{"msg":"outgoing {\"session\":\"[redacted SESSION_SECRET]\"}","level":"info"}`},
+		{`{"message":"request {\"session\":\"fake+b64\\/secret+value\\/AbCd=\"}"}`, `{"message":"request {\"session\":\"[redacted SESSION_SECRET]\"}"}`},
+		{`{"msg":"payload {\"session\":\"fake\\u002Bb64/secret\\u002Bvalue/AbCd\\u003D\"}"}`, `{"msg":"payload {\"session\":\"[redacted SESSION_SECRET]\"}"}`},
+		{"GET /login?next=%2Fcb%3Fsession%3Dfake%252Bb64%252Fsecret%252Bvalue%252FAbCd%253D 302", "GET /login?next=%2Fcb%3Fsession%3D[redacted SESSION_SECRET] 302"},
+		{escaped(maxFolds), "GET /cb?next=[redacted SESSION_SECRET] 302"},
+		{escaped(maxFolds + 1), escapedTooOften},
+	} {
+		if got := r.String(c.in); got != c.want {
+			t.Errorf("%q became %q, want %q", c.in, got, c.want)
+		}
+	}
+	e := full()
+	e.Logs[0].Lines[0].Text = `{"msg":"outgoing {\"session\":\"fake+b64\\\/secret+value\\\/AbCd=\"}"}`
+	if leaked := r.leaks(e); !slices.Equal(leaked, []string{"SESSION_SECRET"}) {
+		t.Errorf("leaked %q", leaked)
+	}
+	e.Logs[0].Lines[0].Text = escaped(maxFolds + 1)
+	if leaked := r.leaks(e); !slices.Equal(leaked, []string{escapedTooOftenLeak}) {
+		t.Errorf("leaked %q", leaked)
 	}
 }
 

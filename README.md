@@ -735,8 +735,9 @@ last deploy or rollback and its steps, the logs from the 10 minutes before
 the incident opened, and the app's signals over 6 hours. For the machine, it
 is the deploys and rollbacks in the hour before. Both get the key's earlier
 incidents and the status of Cloudflare and GitHub. Secrets, credentials, and
-private and mesh addresses are redacted, and logs, step notes and incident
-messages are left out when the secrets can't be read. The daemon keeps this evidence when it
+private and mesh addresses are redacted, and text escaped too many times to
+search for a secret is left out. Logs, step notes and incident messages are
+left out when the secrets can't be read. The daemon keeps this evidence when it
 sends an incident to Loom, in `/var/lib/bedrock/incidents/<id>/`, at most
 256 KiB. Otherwise it is collected and kept the first time you ask, and by
 then logs older than the journal keeps are gone. `--json` prints the
