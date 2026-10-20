@@ -76,20 +76,31 @@ type backupRun struct {
 	app   string
 	kind  string
 	id    int64
-	// receipts is set for a record no receipt names, such as a move's
-	// capture, to where backups keep theirs. A run one of them names is
-	// that backup's to close, even when its daemon stopped and left it
-	// open, so begin passes over it.
-	receipts string
+	// record is set for a run no backup receipt names, such as a move's
+	// capture's, to the file binding the run to the operation that began
+	// it, so that its steps, resumed after a restart or not, take up that
+	// run and no other.
+	record string
+}
+
+// runRecord binds a run to the operation that began it.
+type runRecord struct {
+	Operation  string    `json:"operation"`
+	RunID      int64     `json:"run_id"`
+	RunStarted time.Time `json:"run_started"`
 }
 
 // begin starts a run record, or adopts one a previous attempt left open:
-// the newest of its app and kind, passing over the runs receipts name.
+// with a record, the run it binds to this operation, and otherwise the
+// newest of its app and kind.
 func (r *backupRun) begin(ctx context.Context) error {
 	if r.id != 0 {
 		return nil
 	}
-	if last, err := r.last(ctx); err == nil && last != nil && !last.Finished() {
+	if r.record != "" {
+		return r.beginRecorded(ctx)
+	}
+	if last, err := r.store.LastBackupRun(ctx, r.app, r.kind); err == nil && last != nil && !last.Finished() {
 		r.id = last.ID
 		return nil
 	}
@@ -98,34 +109,61 @@ func (r *backupRun) begin(ctx context.Context) error {
 	return err
 }
 
-// last returns the newest run of the record's app and kind that no receipt
-// in receipts names, or nil. A receipt it can't read may name any run, so
-// it adopts none.
-func (r *backupRun) last(ctx context.Context) (*state.BackupRun, error) {
-	if r.receipts == "" {
-		return r.store.LastBackupRun(ctx, r.app, r.kind)
+// beginRecorded adopts the run the record binds to this operation while it
+// is open, and otherwise starts a run and records it.
+func (r *backupRun) beginRecorded(ctx context.Context) error {
+	operation := kernel.OperationID(ctx)
+	run, err := r.recorded(ctx, operation)
+	if err != nil {
+		return err
 	}
-	receipts, err := backupReceipts(r.receipts)
+	if run != nil && !run.Finished() {
+		r.id = run.ID
+		return nil
+	}
+	started := time.Now().UTC().Truncate(time.Millisecond)
+	id, err := r.store.StartBackupRun(ctx, r.app, r.kind, started)
+	if err != nil {
+		return err
+	}
+	r.id = id
+	if err := writeRecoveryJSON(r.record, runRecord{Operation: operation, RunID: id, RunStarted: started}); err != nil {
+		return r.fail(fmt.Errorf("record backup run: %w", err))
+	}
+	return nil
+}
+
+// recorded returns the run the record binds to operation, or nil. A record
+// that is missing, can't be read or names another operation binds none.
+func (r *backupRun) recorded(ctx context.Context, operation string) (*state.BackupRun, error) {
+	data, err := os.ReadFile(r.record)
+	if err != nil {
+		return nil, nil
+	}
+	var record runRecord
+	if json.Unmarshal(data, &record) != nil || record.Operation != operation || record.RunID <= 0 {
+		return nil, nil
+	}
+	run, err := r.store.BackupRun(ctx, record.RunID)
+	if errors.Is(err, state.ErrNotFound) {
+		return nil, nil
+	}
 	if err != nil {
 		return nil, err
 	}
-	named := map[int64]bool{}
-	for _, receipt := range receipts {
-		if receipt.Owner == r.app && receipt.Kind == r.kind {
-			named[receipt.RunID] = true
-		}
+	if run.App != r.app || run.Kind != r.kind || !run.StartedAt.Equal(record.RunStarted) {
+		return nil, nil
 	}
-	// No more than the named runs come before the newest one unnamed.
-	runs, err := r.store.BackupRuns(ctx, r.app, r.kind, len(named)+1)
-	if err != nil {
-		return nil, err
+	return &run, nil
+}
+
+// abandon closes the run the record binds to operation, if it is still
+// open, as failed for reason.
+func (r *backupRun) abandon(ctx context.Context, operation, reason string) {
+	if run, err := r.recorded(ctx, operation); err == nil && run != nil && !run.Finished() {
+		r.id = run.ID
+		_ = r.fail(errors.New(reason))
 	}
-	for i := range runs {
-		if !named[runs[i].ID] {
-			return &runs[i], nil
-		}
-	}
-	return nil, nil
 }
 
 // fail records a failed run and returns the error.

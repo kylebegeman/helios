@@ -149,3 +149,39 @@ func TestRecoverThroughTheDaemonsRegistryClosesTheRunOfABackupItEnds(t *testing.
 		})
 	}
 }
+
+// No backup receipt names a move's capture's run, so the capture records it
+// beside its staging. A capture stopped with its daemon leaves that run open
+// for its resumed steps, and when Recover ends the operation instead, its
+// abandon, reaching the capture through the recovery guard, closes the run.
+func TestRecoverThroughTheDaemonsRegistryClosesTheRunOfACaptureItEnds(t *testing.T) {
+	for _, end := range []struct {
+		name, why string
+		change    func(t *testing.T, d *stoppedDaemon)
+	}{
+		{"the plan changed", "interrupted, and the plan changed since it started", func(t *testing.T, d *stoppedDaemon) {
+			if _, _, err := integration.Set(d.sec, integration.StorageName, map[string]string{"kind": "s3", "endpoint": "https://storage.example.test", "key_id": "key-id", "key": "storage-key", "bucket_prefix": "second", "password": "backup-password"}); err != nil {
+				t.Fatal(err)
+			}
+		}},
+		{"the plan can't be rebuilt", "interrupted, and the plan can't be rebuilt: plan app.move.capture: hello's running revision changed", func(t *testing.T, d *stoppedDaemon) {
+			d.activate(t, "next-code")
+		}},
+	} {
+		t.Run(end.name, func(t *testing.T) {
+			d := newStoppedDaemon(t)
+			input, err := app.MoveCaptureInputFor(context.Background(), d.store, "hello", "source", "target", false)
+			if err != nil {
+				t.Fatal(err)
+			}
+			d.stop(t, app.MoveCaptureKind, input)
+			run, err := d.store.LastBackupRun(context.Background(), "hello", state.BackupRunBackup)
+			if err != nil || run == nil || run.Finished() {
+				t.Fatalf("the stopped capture must leave its run open: %+v %v", run, err)
+			}
+			end.change(t, d)
+			d.recover(t, end.why)
+			d.runClosedWith(t)
+		})
+	}
+}

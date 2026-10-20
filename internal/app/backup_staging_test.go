@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -487,11 +488,12 @@ func TestAMovesCaptureThatFailsLeavesItsStagingToTheMove(t *testing.T) {
 	lastRunFailed(t, store, m.App, "docker isn't answering")
 }
 
-// A move's capture keeps no receipt naming its run, so each of its steps,
-// and its steps resumed after a restart, find the run as the app's newest
-// one still open. A backup stopped with its daemon leaves its run open
-// too, for its own resumed attempt, and a capture must never take that
-// one, whether it was left before the capture began or while it ran.
+// No backup receipt names a move's capture's run, so the capture records
+// the run it began beside its staging, and each of its steps, and its
+// steps resumed after a restart with the plan built again, take up that
+// run. A backup stopped with its daemon leaves its run open too, for its
+// own resumed attempt, and a capture must never take that one, whether it
+// was left before the capture began or while it ran.
 func TestAMovesCaptureNeverTakesTheRunAStoppedBackupLeftOpen(t *testing.T) {
 	for _, when := range []string{"before the capture began", "while the capture ran"} {
 		t.Run(when, func(t *testing.T) {
@@ -565,6 +567,158 @@ func TestAMovesCaptureNeverTakesTheRunAStoppedBackupLeftOpen(t *testing.T) {
 			}
 		})
 	}
+}
+
+// captureRaw is a rehearsal capture of hello from source to target, as its
+// operation's input.
+func captureRaw(t *testing.T, store *state.Store) json.RawMessage {
+	t.Helper()
+	input, err := MoveCaptureInputFor(context.Background(), store, "hello", "source", "target", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, _ := json.Marshal(input)
+	return raw
+}
+
+// stopCapture runs a capture of hello through the kernel until its prepare
+// has succeeded, then stops it as its daemon stopping would, and returns
+// the run it left open.
+func stopCapture(t *testing.T, b backupIdentityDefinition, reg kernel.Registry, at time.Time) state.BackupRun {
+	t.Helper()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	_, err := kernel.New(b.Store, reg, "old-daemon", kernel.WithClock(func() time.Time { return at })).Run(ctx, MoveCaptureKind, captureRaw(t, b.Store), func(ev kernel.Event) {
+		if ev.Type == kernel.EventStepFinished && ev.Step.Name == "prepare" && ev.Step.Status == state.StepSucceeded {
+			cancel()
+		}
+	})
+	if err == nil {
+		t.Fatal("the capture was not stopped")
+	}
+	last, err := b.Store.LastBackupRun(context.Background(), "hello", state.BackupRunBackup)
+	if err != nil || last == nil || last.Finished() {
+		t.Fatalf("the stopped capture must leave its run open: %+v %v", last, err)
+	}
+	return *last
+}
+
+// resumeCapture recovers the stopped capture once its daemon's lease is
+// over, with Docker gone, so its resumed snapshot fails and closes the run
+// it takes up.
+func resumeCapture(t *testing.T, b backupIdentityDefinition, reg kernel.Registry, at time.Time) {
+	t.Helper()
+	dockerDown(t)
+	recovered := kernel.New(b.Store, reg, "new-daemon", kernel.WithClock(func() time.Time { return at.Add(time.Minute) }))
+	if n, err := recovered.Recover(context.Background(), func(kernel.Event) {}); err != nil || n != 1 {
+		t.Fatalf("recovered %d operation(s): %v", n, err)
+	}
+}
+
+// captureRunFailed fails a test unless hello's runs are the one the
+// capture began, closed as failed without Docker, and those open, still
+// open.
+func captureRunFailed(t *testing.T, store *state.Store, began state.BackupRun, open ...int64) {
+	t.Helper()
+	runs, err := store.BackupRuns(context.Background(), "hello", state.BackupRunBackup, 10)
+	if err != nil || len(runs) != 1+len(open) {
+		t.Fatalf("the runs are %+v, want the capture's and %d other(s): %v", runs, len(open), err)
+	}
+	for _, run := range runs {
+		switch {
+		case run.ID == began.ID:
+			if !run.Finished() || run.OK || !strings.Contains(run.Error, "docker isn't answering") {
+				t.Errorf("the run the capture began must be closed with its failure: %+v", run)
+			}
+		case !slices.Contains(open, run.ID):
+			t.Errorf("a run nobody began: %+v", run)
+		case run.Finished():
+			t.Errorf("a run the capture didn't begin must be left open: %+v", run)
+		}
+	}
+}
+
+// A capture takes up only the run its own operation began. An earlier
+// capture whose operation never finished can leave its run open behind
+// any number of completed backups, each named by its receipt, and a new
+// capture must start a run of its own rather than record its result on
+// that one, under the earlier capture's start.
+func TestANewCaptureNeverTakesTheRunAnEarlierCaptureLeftOpen(t *testing.T) {
+	b, raw := backupIdentityFixture(t, false)
+	snapshots := 0
+	repositoryWhoseBackup(t, func(c *dockertest.Container) {
+		snapshots++
+		at := time.Now().UTC().Truncate(time.Second)
+		body, _ := json.Marshal(struct {
+			Type string `json:"message_type"`
+			restic.Summary
+		}{"summary", restic.Summary{SnapshotID: strings.Repeat(string(rune('a'+snapshots)), 64), BackupStart: at, BackupEnd: at.Add(time.Second), TotalFiles: 3, TotalBytes: 30}})
+		c.Logs = string(body)
+	})
+	reg := kernel.Registry{}
+	reg.Add(b)
+	reg.Add(MoveCapture{Backup: b.Backup})
+	earlier := stopCapture(t, b, reg, time.Now().UTC().Truncate(time.Second))
+	for i := 0; i < 2; i++ {
+		receipt, err := kernel.New(b.Store, reg, "daemon").Run(context.Background(), BackupKind, raw, func(kernel.Event) {})
+		if err != nil || receipt.Status != state.Succeeded {
+			t.Fatalf("backup %d: %+v %v", i+1, receipt, err)
+		}
+	}
+	receipt, err := kernel.New(b.Store, reg, "daemon").Run(context.Background(), MoveCaptureKind, captureRaw(t, b.Store), func(kernel.Event) {})
+	if err != nil || receipt.Status != state.Succeeded {
+		t.Fatalf("the new capture: %+v %v", receipt, err)
+	}
+	if run, err := b.Store.BackupRun(context.Background(), earlier.ID); err != nil || run.Finished() {
+		t.Errorf("the earlier capture's run must be left as it was: %+v %v", run, err)
+	}
+	runs, err := b.Store.BackupRuns(context.Background(), "hello", state.BackupRunBackup, 10)
+	if err != nil || len(runs) != 4 {
+		t.Fatalf("the runs are %+v, want the earlier capture's, two backups' and the new capture's: %v", runs, err)
+	}
+	if newest := runs[0]; newest.ID == earlier.ID || !newest.OK || newest.Detail != "migration rehearsal capture for target" {
+		t.Errorf("the new capture must record its result on a run of its own: %+v", newest)
+	}
+}
+
+// What backups keep in their receipts says nothing about a capture's run,
+// so one of them that can't be read must not keep a capture resumed after
+// a restart from taking up the run its prepare began, leaving that one
+// open and recording a second.
+func TestAnUnreadableBackupReceiptLeavesAResumedCaptureItsOwnRun(t *testing.T) {
+	b, _ := backupIdentityFixture(t, false)
+	dockertest.New(t)
+	reg := kernel.Registry{}
+	reg.Add(MoveCapture{Backup: b.Backup})
+	at := time.Now().UTC().Truncate(time.Second)
+	began := stopCapture(t, b, reg, at)
+	receipts := filepath.Join(b.StateDir, "backups", ".receipts")
+	if err := os.MkdirAll(receipts, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(receipts, "torn.json"), []byte(`{"operation":`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	resumeCapture(t, b, reg, at)
+	captureRunFailed(t, b.Store, began)
+}
+
+// A capture resumed after a restart takes up the run its own operation
+// began, even behind a newer run still open that no receipt names, such
+// as one a backup killed before it wrote its receipt left behind.
+func TestAResumedCaptureTakesUpTheRunItsOperationBegan(t *testing.T) {
+	b, _ := backupIdentityFixture(t, false)
+	dockertest.New(t)
+	reg := kernel.Registry{}
+	reg.Add(MoveCapture{Backup: b.Backup})
+	at := time.Now().UTC().Truncate(time.Second)
+	began := stopCapture(t, b, reg, at)
+	other, err := b.Store.StartBackupRun(context.Background(), "hello", state.BackupRunBackup, time.Now().UTC().Add(time.Second))
+	if err != nil {
+		t.Fatal(err)
+	}
+	resumeCapture(t, b, reg, at)
+	captureRunFailed(t, b.Store, began, other)
 }
 
 // An interrupted operation resumes, and a resumed snapshot reads the tree
