@@ -83,7 +83,9 @@ func TestTheMeshRangeEndsAtItsEdges(t *testing.T) {
 // on the mesh or loopback written as one. A name the system resolvers
 // read as an IPv4 address, as inet_aton does, in decimal, octal or hex,
 // whole or in fewer than four parts, would reach an address never
-// checked, with this machine's key in the clear, so it is refused.
+// checked, with this machine's key in the clear, so it is refused. A
+// short mesh name such as 0xcafe reads that way too, so the refusal
+// names both ways out: the address written as one, or the full name.
 func TestMeshHostThatReadsAsAnAddressIsRefused(t *testing.T) {
 	outside, loopback := in("192.0.2.0/24"), in("127.0.0.0/8")
 	o := outside.As4()
@@ -99,9 +101,10 @@ func TestMeshHostThatReadsAsAnAddressIsRefused(t *testing.T) {
 		fmt.Sprintf("0%o.%d.%d.%d", o[0], o[1], o[2], o[3]),
 		"127.1",
 		"0x",
+		"0xcafe",
 	} {
 		_, err := ParseMesh(host + ":7700")
-		if err == nil || !strings.Contains(err.Error(), "reads as an IP address; it must be written as one, on the mesh") {
+		if err == nil || !strings.HasSuffix(err.Error(), "reads as an IP address; write the address, on the mesh (100.64.0.0/10 or fc00::/7) or loopback, or the full mesh name") {
 			t.Fatalf("%s: got %v, want it refused as an address", host, err)
 		}
 		if strings.Contains(err.Error(), host) {
@@ -133,8 +136,8 @@ func keyedStore(t *testing.T) *secrets.Store {
 // A sealed list is checked as it is read, as it was when it was saved,
 // and the refusal never repeats what it found.
 func TestLoadRefusesAnInvalidSealedList(t *testing.T) {
-	outside := at(in("192.0.2.0/24"), 7700)
-	whole := strconv.FormatUint(uint64(binary.BigEndian.Uint32(in("192.0.2.0/24").AsSlice())), 10) + ":7700"
+	outside := in("192.0.2.0/24")
+	whole := strconv.FormatUint(uint64(binary.BigEndian.Uint32(outside.AsSlice())), 10)
 	token, err := NewToken()
 	if err != nil {
 		t.Fatal(err)
@@ -145,8 +148,8 @@ func TestLoadRefusesAnInvalidSealedList(t *testing.T) {
 	for _, tc := range []struct {
 		list, token, secret, want string
 	}{
-		{list(outside), token, outside, "the sealed peer list: web2's mesh address must be a name or an address on the mesh"},
-		{list(whole), token, whole, "the sealed peer list: web2's mesh address has a host that reads as an IP address"},
+		{list(at(outside, 7700)), token, outside.String(), "the sealed peer list: web2's mesh address must be a name or an address on the mesh"},
+		{list(whole + ":7700"), token, whole, "the sealed peer list: web2's mesh address has a host that reads as an IP address"},
 		{list(at(in("100.64.0.0/10"), 7700)), "hp1_" + token[4:20], token[4:20], "the sealed peer list: this machine's peer key is malformed"},
 		{list(at(in("100.64.0.0/10"), 7700)), "", "", "the sealed peer list: this machine's peer key is malformed"},
 	} {

@@ -145,7 +145,9 @@ func ParseListen(s string) (netip.AddrPort, error) {
 // host:port. The host may be a name, which the mesh's DNS resolves; an
 // address must be on the mesh or loopback, and written as one, since the
 // system resolvers read a name like 127.1 or 0x7f000001 as an address
-// that was never checked. Errors never repeat it.
+// that was never checked. A short mesh name that reads as a number, such
+// as 0xcafe, is refused the same way, so its refusal points at the full
+// mesh name too. Errors never repeat it.
 func ParseMesh(s string) (string, error) {
 	host, port, err := net.SplitHostPort(s)
 	if err != nil || host == "" {
@@ -163,7 +165,7 @@ func ParseMesh(s string) (string, error) {
 			return "", errors.New("must be a name or an address on the mesh (100.64.0.0/10 or fc00::/7) or loopback")
 		}
 	} else if readsAsIPv4(host) {
-		return "", errors.New("has a host that reads as an IP address; it must be written as one, on the mesh (100.64.0.0/10 or fc00::/7) or loopback")
+		return "", errors.New("has a host that reads as an IP address; write the address, on the mesh (100.64.0.0/10 or fc00::/7) or loopback, or the full mesh name")
 	} else if !meshNamePattern.MatchString(host) {
 		return "", errors.New("must name a host in lowercase letters, digits, hyphens and dots")
 	}
