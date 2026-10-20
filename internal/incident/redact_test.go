@@ -1,6 +1,7 @@
 package incident
 
 import (
+	"encoding/json"
 	"slices"
 	"testing"
 )
@@ -38,6 +39,27 @@ func TestTheLeakScanReadsTextNotTimes(t *testing.T) {
 	}
 	e.Logs[0].Lines[0].Text = "renewed until 2026"
 	if leaked := r.leaks(e); !slices.Equal(leaked, []string{"YEAR"}) {
+		t.Fatalf("leaked %q", leaked)
+	}
+}
+
+func TestTheLeakScanSkipsHeliosOwnWordsAndLeavesThemInPlace(t *testing.T) {
+	var r redactor
+	r.add("RESULT", "succeeded", minEnvValue)
+	e := full()
+	e.RecentDeploys = []Change{{Operation: "op-api-1", Kind: "app.deploy", App: "api", StartedAt: opened, Outcome: "succeeded", Steps: []Step{{Name: "start", Status: "succeeded"}}}}
+	before, err := json.Marshal(e)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if leaked := r.leaks(e); len(leaked) != 0 {
+		t.Fatalf("leaked %q", leaked)
+	}
+	if after, err := json.Marshal(e); err != nil || string(after) != string(before) {
+		t.Fatalf("the scan changed the evidence: %v", err)
+	}
+	e.RecentDeploys[0].Steps[0].Name = "succeeded"
+	if leaked := r.leaks(e); !slices.Equal(leaked, []string{"RESULT"}) {
 		t.Fatalf("leaked %q", leaked)
 	}
 }

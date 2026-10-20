@@ -434,12 +434,13 @@ func (r *redactor) change(c *Change) {
 // leaks names the values still found in e's JSON, sorted, however they
 // were escaped. It reads the JSON's string values, not its keys, numbers
 // or times, which can't carry a secret but which a short value such as
-// 2026 would match.
+// 2026 would match, and not helios's own words, which an env value such
+// as cloudflare or critical can be.
 func (r *redactor) leaks(e *Evidence) []string {
 	if len(r.raw.list) == 0 {
 		return nil
 	}
-	b, err := json.Marshal(e)
+	b, err := json.Marshal(withoutOwnWords(e))
 	if err != nil {
 		return []string{"evidence that can't be encoded"}
 	}
@@ -483,6 +484,50 @@ func (r *redactor) leaks(e *Evidence) []string {
 	}
 	slices.Sort(names)
 	return names
+}
+
+// withoutOwnWords is a copy of e without the words helios writes itself:
+// who collected it, severities, kinds, outcomes and statuses, operation
+// IDs, streams and sources, the names of status pages, signals and
+// sources that failed, and what was truncated. Every other string is
+// kept, including those of a field added later.
+func withoutOwnWords(e *Evidence) *Evidence {
+	c := e.Clone()
+	c.CollectedBy, c.Incident.Severity, c.Redaction.Status = "", "", ""
+	change := func(ch *Change) {
+		ch.Operation, ch.Kind, ch.Outcome = "", "", ""
+		for i := range ch.Steps {
+			ch.Steps[i].Status = ""
+		}
+	}
+	if c.LastChange != nil {
+		change(c.LastChange)
+	}
+	for i := range c.RecentDeploys {
+		change(&c.RecentDeploys[i])
+	}
+	for i := range c.Logs {
+		c.Logs[i].Source = ""
+		for j := range c.Logs[i].Lines {
+			c.Logs[i].Lines[j].Stream = ""
+		}
+	}
+	if h := c.History; h != nil {
+		for i := range h.Incidents {
+			h.Incidents[i].Severity = ""
+		}
+		for i := range h.Signals {
+			h.Signals[i].Kind = ""
+		}
+	}
+	for i := range c.Upstream {
+		c.Upstream[i].Name = ""
+	}
+	c.Truncated = nil
+	for i := range c.Errors {
+		c.Errors[i].Source = ""
+	}
+	return c
 }
 
 // clean makes s valid UTF-8 and drops control characters other than tab.

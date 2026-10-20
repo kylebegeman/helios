@@ -186,6 +186,85 @@ func TestMessagesAreLeftOutWhenTheSecretsCantBeRead(t *testing.T) {
 	}
 }
 
+// An env value can be one of the words helios writes itself, such as a
+// status page's name, a severity, a signal's kind or a container's name.
+// It is redacted where an app or a name it chose holds it, and finding it
+// in helios's own words is no leak, so the evidence keeps its logs.
+func TestAnEnvValueThatIsOneOfHeliosOwnWordsIsNoLeak(t *testing.T) {
+	ctx := context.Background()
+	store := openStore(t)
+	env := map[string]string{"DNS_PROVIDER": "cloudflare", "ALERT_LEVEL": "critical", "METRIC": "requests", "WORKER_HOST": "bedrock-web-worker-r7"}
+	saveRevision(t, store, "web", "r7", env, map[string]string{"web": "bedrock-web-web-r7", "worker": "bedrock-web-worker-r7"})
+	if err := store.AddSignal(ctx, state.Signal{Hour: opened.Add(-time.Hour), App: "web", Metric: "requests", Value: 120, Samples: 60}); err != nil {
+		t.Fatal(err)
+	}
+	page := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		io.WriteString(w, `{"status":{"indicator":"none","description":"All Systems Operational"}}`)
+	}))
+	defer page.Close()
+	inc := openIncident(t, store, "app:web", "web answers 502", opened)
+	journal := &recordingJournal{containers: []docker.JournalContainer{{ID: "c1", Name: "bedrock-web-web-r7", Workload: "web", Revision: "r7", Lines: []docker.JournalLine{{At: opened.Add(-time.Minute), Stream: "stderr", Text: "lookup through cloudflare timed out"}}}}}
+	engine := &fakeEngine{logs: map[string][]string{"bedrock-web-worker-r7": {strings.Repeat("c", docker.JournalReadLimit-25) + "\n", "short\n", "working\n", strings.Repeat("w", 25) + "\n"}}}
+
+	e, err := Collect(ctx, inc, Sources{
+		Store: store, Secrets: fakeSecrets{}, Engine: engine, Journal: journal,
+		Upstream: []Statuspage{{Name: "cloudflare", Base: page.URL}},
+		Host:     "web.example.test", CollectedBy: "test", Now: func() time.Time { return opened },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if e.Redaction.Status != RedactionApplied || len(e.Errors) != 0 {
+		t.Fatalf("redaction %q, errors %+v", e.Redaction.Status, e.Errors)
+	}
+	if e.Incident.Severity != "critical" || len(e.Upstream) != 1 || e.Upstream[0].Name != "cloudflare" || len(e.History.Signals) != 1 || e.History.Signals[0].Kind != "requests" {
+		t.Fatalf("severity %q, upstream %+v, signals %+v", e.Incident.Severity, e.Upstream, e.History.Signals)
+	}
+	var logs []string
+	for _, l := range e.Logs {
+		for _, line := range l.Lines {
+			logs = append(logs, l.Container+": "+line.Text)
+		}
+	}
+	want := []string{"[redacted WORKER_HOST]: working", "bedrock-web-web-r7: lookup through [redacted DNS_PROVIDER] timed out"}
+	if !slices.Equal(logs, want) {
+		t.Fatalf("logs %q", logs)
+	}
+	if !slices.Equal(e.Truncated, []string{"logs: the engine read of [redacted WORKER_HOST] stopped at 8 MiB"}) {
+		t.Fatalf("truncated %q", e.Truncated)
+	}
+}
+
+// Redaction's own words can let a value survive it, as here, where a
+// secret reads like the stand-in for a private address. Found in a log
+// line, the logs, step notes and messages are left out, and the note
+// saying so is helios's own words too, which an env value can match.
+// Found where nothing is left out, there is no evidence.
+func TestAValueThatSurvivesRedactionLeavesTheLogsOutOrTheEvidence(t *testing.T) {
+	ctx := context.Background()
+	store := openStore(t)
+	saveRevision(t, store, "web", "r7", map[string]string{"QUEUE_NAME": "messages"}, map[string]string{"web": "bedrock-web-web-r7"})
+	saveChange(t, store, "op-web-1", apps.DeployKind, "web", apps.DeployInput{Revision: "r7"}, opened.Add(-5*time.Minute), "migrated")
+	inc := openIncident(t, store, "app:web", "web answers 502", opened)
+	journal := &recordingJournal{containers: []docker.JournalContainer{{ID: "c1", Name: "bedrock-web-web-r7", Workload: "web", Revision: "r7", Lines: []docker.JournalLine{{At: opened.Add(-time.Minute), Stream: "stderr", Text: "upstream 10.0.0.1 refused"}}}}}
+	sealed := fakeSecrets{versions: map[string]map[int]map[string]string{"web": {2: {"PROXY_LABEL": "[private]"}}}}
+	src := Sources{Store: store, Secrets: sealed, Journal: journal, Host: "web.example.test", CollectedBy: "test", Now: func() time.Time { return opened }}
+
+	e, err := Collect(ctx, inc, src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	survived := SourceError{Source: "redaction", Error: "a value of PROXY_LABEL survived redaction, so logs, step notes and messages were left out"}
+	if e.Redaction.Status != RedactionLogsOmitted || e.Logs != nil || e.Incident.Message != messageOmitted || e.LastChange.Steps[0].Note != "" || !slices.Equal(e.Errors, []SourceError{survived}) {
+		t.Fatalf("redaction %q with %d logs, message %q, note %q, errors %+v", e.Redaction.Status, len(e.Logs), e.Incident.Message, e.LastChange.Steps[0].Note, e.Errors)
+	}
+
+	src.Host = "10.0.0.5"
+	if e, err := Collect(ctx, inc, src); e != nil || err == nil || err.Error() != "a secret value survived redaction, so there is no evidence" {
+		t.Fatalf("evidence %t, error %v", e != nil, err)
+	}
+}
+
 // assertNoSecrets fails when out holds any secret value or private
 // address, as written or as JSON escapes it.
 func assertNoSecrets(t *testing.T, what string, out []byte) {

@@ -339,6 +339,9 @@ func (e *Evidence) Clone() *Evidence {
 		c.LastChange = &change
 	}
 	c.RecentDeploys = slices.Clone(e.RecentDeploys)
+	for i := range c.RecentDeploys {
+		c.RecentDeploys[i].Steps = slices.Clone(c.RecentDeploys[i].Steps)
+	}
 	c.Logs = slices.Clone(e.Logs)
 	for i := range c.Logs {
 		c.Logs[i].Lines = slices.Clone(c.Logs[i].Lines)

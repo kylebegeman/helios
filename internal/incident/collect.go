@@ -416,7 +416,7 @@ func (c *collection) engineLogs(ctx context.Context, seen map[string]bool) []Log
 		text := out.String()
 		if out.cut {
 			text = text[:strings.LastIndexByte(text, '\n')+1]
-			c.e.Truncated = append(c.e.Truncated, "logs: the engine read of "+name+" stopped at 8 MiB")
+			c.e.Truncated = append(c.e.Truncated, "logs: the engine read of "+c.redact.String(name)+" stopped at 8 MiB")
 		}
 		text = strings.TrimSuffix(text, "\n")
 		if text == "" {
@@ -548,6 +548,8 @@ func (c *collection) upstream(ctx context.Context) {
 // finish redacts the evidence, caps its strings and fits it to FileMax.
 // Should a secret value still be found, logs, step notes and messages go
 // and it is fit again; should one survive that, there is no evidence.
+// The note of what went, like what fitting adds, is helios's own words
+// and names, so it is added once the evidence is known to be clean.
 func (c *collection) finish() (*Evidence, error) {
 	e := c.e
 	c.redact.evidence(e)
@@ -558,11 +560,11 @@ func (c *collection) finish() (*Evidence, error) {
 	Fit(e, FileMax)
 	if leaked := c.redact.leaks(e); len(leaked) > 0 {
 		omitLogs(e)
-		e.Errors = append(e.Errors, SourceError{Source: "redaction", Error: "a value of " + strings.Join(leaked, ", ") + " survived redaction, so logs, step notes and messages were left out"})
-		Fit(e, FileMax)
 		if len(c.redact.leaks(e)) > 0 {
 			return nil, errors.New("a secret value survived redaction, so there is no evidence")
 		}
+		e.Errors = append(e.Errors, SourceError{Source: "redaction", Error: "a value of " + strings.Join(leaked, ", ") + " survived redaction, so logs, step notes and messages were left out"})
+		Fit(e, FileMax)
 	}
 	return e, nil
 }
