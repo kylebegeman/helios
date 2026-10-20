@@ -28,9 +28,10 @@ key/value types.
 The schema is editor guidance. `helios check [source-dir]` uses the deploy
 parser and validator, then checks local build contexts, Dockerfiles, static
 directories and PostgreSQL init inputs. It also validates references, route
-and port collisions, cron expressions and durations that JSON Schema cannot
-fully express. Use `--manifest helios.worker.yaml` for another manifest at
-the source root and `--json` for structured field/line diagnostics.
+and port collisions, one `dns` and `origin_pull` per host across its routes,
+cron expressions and durations that JSON Schema cannot fully express. Use
+`--manifest helios.worker.yaml` for another manifest at the source root and
+`--json` for structured field/line diagnostics.
 
 An offline pass does not prove that Docker can build the source, a container
 can answer its HTTP health path, DNS points at a target, certificates are
@@ -38,9 +39,11 @@ ready, secret values exist, images can be pulled or the machine has capacity.
 Run `helios check <source-dir> --host` on the target to apply the deploy
 planner's read-only preflight after the offline check passes. This checks
 required integrations, exact host/path ownership, shared-host DNS modes and
-published-port ownership against the target's existing apps, and named secrets
-(including generated, derived and inherited names), then returns the
-plan without applying or journaling an operation. It does not establish
+published-port ownership against the target's existing apps, that the
+target's edge trusts a CA for every host that would require origin pull,
+whether this app or another app sharing the host requires it, and named
+secrets (including generated, derived and inherited names), then returns
+the plan without applying or journaling an operation. It does not establish
 runtime readiness, DNS resolution or certificate issuance. `--json` includes
 `host_preflight.valid` and the plan when successful.
 

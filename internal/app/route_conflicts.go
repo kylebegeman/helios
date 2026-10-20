@@ -12,7 +12,10 @@ import (
 
 // CheckRouteConflicts refuses exact host/path ownership conflicts before a
 // deploy builds or runs releases. Different prefixes may share one host, but
-// that host's DNS mode must agree. The app may replace its own active routes.
+// that host's DNS mode must agree. Its origin-pull modes need not: the edge
+// takes the strictest any app asks for (settleOriginPull), which is how
+// apps sharing a host switch it one at a time, and the trust check holds
+// each of them to that mode. The app may replace its own active routes.
 func CheckRouteConflicts(ctx context.Context, store *state.Store, m *manifest.Manifest) error {
 	if store == nil {
 		return nil

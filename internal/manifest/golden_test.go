@@ -22,9 +22,9 @@ workloads:
     dir: public
     port: 0
     routes:
-      - {host: not a host, path: nope, dns: sideways, auth: magic, port: 70000}
+      - {host: not a host, path: nope, dns: sideways, auth: magic, origin_pull: strict, port: 70000}
       - {host: a.com}
-      - {host: a.com, dns: direct}
+      - {host: a.com, dns: direct, origin_pull: required}
     env: {bad: 1, KEY: 2}
     secrets: [KEY, lower]
     resources: {memory: lots, cpus: 99, pids: 3}

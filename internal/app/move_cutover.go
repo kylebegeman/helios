@@ -64,6 +64,13 @@ func (c MoveCutover) Plan(ctx context.Context, raw json.RawMessage) (*kernel.Pla
 	if err := checkPublishedPorts(ctx, c.Deploy.Store, &m); err != nil {
 		return nil, err
 	}
+	// A CA trusted when the move was staged can have been forgotten since:
+	// forget guards only what the edge already serves.
+	if rev.Status == revisionStaged {
+		if err := checkMovedOriginPullTrust(ctx, c.Deploy.Store, &m, c.Deploy.Secrets, time.Now(), "cut over again"); err != nil {
+			return nil, err
+		}
+	}
 	r := &rollout{d: c.Deploy, m: &m, manifestJSON: rev.Manifest, revision: in.Revision, store: c.Deploy.Store, stateDir: c.Deploy.StateDir, images: rev.Images, containers: map[string]string{}, hosts: m.Hosts()}
 	for _, name := range m.WorkloadNames() {
 		if m.Workloads[name].LongRunning() {

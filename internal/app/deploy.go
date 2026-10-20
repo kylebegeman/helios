@@ -572,40 +572,74 @@ func servePort(w manifest.Workload, r *manifest.Route) int {
 // for, when it is up. The daemon does this at start, so a helios that
 // changed how it configures the edge takes effect without a deploy.
 func ReloadEdge(ctx context.Context, store *state.Store, sec *secrets.Store) error {
-	admin := edge.NewAdmin()
+	_, err := LoadEdge(ctx, store, sec)
+	return err
+}
+
+// LoadEdge is ReloadEdge, and also reports whether the edge took the
+// configuration: one whose admin API doesn't answer takes none, and keeps
+// running whatever it last took.
+func LoadEdge(ctx context.Context, store *state.Store, sec *secrets.Store) (bool, error) {
+	return loadEdge(ctx, edge.NewAdmin(), store, sec)
+}
+
+// edgeAdmin is what loading the edge needs of its admin API.
+type edgeAdmin interface {
+	Answers(context.Context) bool
+	Load(context.Context, []byte) error
+}
+
+func loadEdge(ctx context.Context, admin edgeAdmin, store *state.Store, sec *secrets.Store) (bool, error) {
 	if !admin.Answers(ctx) {
-		return nil
+		return false, nil
 	}
 	cfg, err := EdgeConfig(ctx, store, sec)
 	if err != nil {
-		return err
+		return false, err
 	}
-	return admin.Load(ctx, cfg)
+	if err := admin.Load(ctx, cfg); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 // UpgradeEdge replaces an edge an older helios made, keeping its routes,
-// and then gives it the current configuration. A machine without an edge
-// yet is left for host setup.
-func UpgradeEdge(ctx context.Context, store *state.Store, sec *secrets.Store, out io.Writer) error {
+// and then gives it the current configuration, reporting as LoadEdge does
+// whether it took it. A machine without an edge yet is left for host
+// setup.
+func UpgradeEdge(ctx context.Context, store *state.Store, sec *secrets.Store, out io.Writer) (bool, error) {
 	e, err := docker.Connect(ctx)
 	if err != nil {
-		return err
+		return false, err
 	}
 	defer e.Close()
 	info, err := e.Inspect(ctx, edge.Container)
-	if err != nil {
-		return nil
-	}
-	if info.Labels[edge.LayoutLabel] != edge.Layout {
+	return upgradeEdge(ctx, store, sec, info, err, func() error {
 		boot, err := EdgeConfig(ctx, store, sec)
 		if err != nil {
 			return err
 		}
-		if err := edge.Ensure(ctx, e, boot, out); err != nil {
-			return err
+		return edge.Ensure(ctx, e, boot, out)
+	}, LoadEdge)
+}
+
+// upgradeEdge is UpgradeEdge once the edge's container is inspected, as
+// info or inspectErr: replace swaps out one an older helios made, and load,
+// which is LoadEdge outside tests, gives it the configuration. A missing
+// edge is left for host setup to make. One Docker fails to describe is
+// left as it is until the next start or deploy. Neither is loaded, so the
+// daemon reloads the edge once a CA it trusts runs out rather than count
+// on what the edge last took.
+func upgradeEdge(ctx context.Context, store *state.Store, sec *secrets.Store, info *docker.Info, inspectErr error, replace func() error, load func(context.Context, *state.Store, *secrets.Store) (bool, error)) (bool, error) {
+	if inspectErr != nil {
+		return false, nil
+	}
+	if info.Labels[edge.LayoutLabel] != edge.Layout {
+		if err := replace(); err != nil {
+			return false, err
 		}
 	}
-	return ReloadEdge(ctx, store, sec)
+	return load(ctx, store, sec)
 }
 
 // servesAny reports whether any of an app's workloads takes traffic from
@@ -678,6 +712,20 @@ func showLastLines(ctx context.Context, e *docker.Engine, container, name string
 
 // edgeConfig builds the edge's whole configuration from every active revision.
 func edgeConfig(ctx context.Context, store *state.Store, sec *secrets.Store) ([]byte, error) {
+	routes, err := edgeRoutes(ctx, store, sec, time.Now())
+	if err != nil {
+		return nil, err
+	}
+	return edge.ConfigBehind(routes, cloudflareProxies())
+}
+
+// edgeNotes hears what edgeConfig leaves out of the configuration rather
+// than refuse all of it: the daemon's log, or the terminal of whoever ran
+// the command. Tests replace it.
+var edgeNotes io.Writer = os.Stderr
+
+// edgeRoutes are the routes every active revision asks the edge for.
+func edgeRoutes(ctx context.Context, store *state.Store, sec *secrets.Store, now time.Time) ([]edge.Route, error) {
 	active, err := store.ActiveRevisions(ctx)
 	if err != nil {
 		return nil, err
@@ -708,7 +756,7 @@ func edgeConfig(ctx context.Context, store *state.Store, sec *secrets.Store) ([]
 		for _, name := range m.WorkloadNames() {
 			w := m.Workloads[name]
 			for _, r := range w.Routes {
-				route := edge.Route{Host: r.Host, Path: r.NormalizedPath(), Dial: fmt.Sprintf("%s:%d", rev.Containers[name], servePort(w, &r))}
+				route := edge.Route{Host: r.Host, Path: r.NormalizedPath(), Dial: fmt.Sprintf("%s:%d", rev.Containers[name], servePort(w, &r)), OriginPull: string(r.OriginPull)}
 				if r.Auth.Guarded() {
 					// Serving a route that asked for a sign-in without one
 					// would put the app on the open internet, so the whole
@@ -722,7 +770,19 @@ func edgeConfig(ctx context.Context, store *state.Store, sec *secrets.Store) ([]
 			}
 		}
 	}
-	return edge.ConfigBehind(routes, cloudflareProxies())
+	if asksOriginPull(routes) {
+		trust, err := LoadOriginPullTrust(sec)
+		if err != nil {
+			// One unreadable value must not take every app's edge down
+			// with it, so no host gets a CA: one that requires origin pull
+			// refuses every connection and every other host keeps
+			// working. helios watch reports the same trouble.
+			fmt.Fprintf(edgeNotes, "edge: %v; until it loads, a host that requires origin pull refuses every connection and one where it is optional checks no certificate\n", err)
+			trust = edge.OriginPullTrust{}
+		}
+		settleOriginPull(routes, trust, now)
+	}
+	return routes, nil
 }
 
 // cloudflareProxies are the ranges the edge trusts to say who a visitor

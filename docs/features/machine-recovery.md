@@ -60,8 +60,26 @@ long-running workloads on internal networks. It publishes no ports, installs
 no live app routes, changes no DNS records and runs no release or cron jobs.
 Restored file contents are verified against their snapshot before private
 health probes verify the restored runtime. The source host profile is
-applied; missing non-storage integrations and operational keys are recovered
-while target storage and already configured target values remain authoritative.
+applied; missing non-storage integrations and operational keys are
+recovered while target storage and already configured target values remain
+authoritative. The CAs the edge trusts for origin pull are merged host by
+host: the target keeps every CA it already trusts and gains each one the
+source trusts that it lacks. A CA that ran out comes too. The edge checks
+against none that did, but one beside a newer CA stays a critical alert
+until you forget it, as it was on the source.
+
+Recovery stops at the profile step if the backup's origin-pull trust
+doesn't parse, or if the target's doesn't while the backup trusts any CA.
+By then it has loaded images, restored data, started private workloads and
+applied the source host profile, but it has recovered no integration or
+operational key. The recovery still reserves the machine, so commands that
+change the target's trust are refused and a retry stops the same way. Stop
+it with `helios recover abandon <recovery-id>`. Abandoning keeps the
+restored volumes and resealed secrets, so recovering again needs a clean
+target. Before recovering, check the target's trust with
+`helios edge origin-pull list`; if it can't read it,
+`helios secret remove bedrock EDGE_ORIGIN_PULL` drops it, with every CA the
+target trusts.
 
 The source state is imported additively. The target operation journal, identity
 and configured integrations stay in place. Original source revisions remain
@@ -86,6 +104,15 @@ readiness does it activate recovered revisions, load edge routes and explicitly
 point managed DNS records at the target. Cron jobs become eligible after
 cutover completes and releases the reservation. DNS modes configured as manual
 remain manual.
+
+Cutover refuses, while it is still a plan, an app with a host that requires
+origin pull while the target trusts no usable CA for it. The recovered trust
+is the source's as of the backup, so a CA can be missing from it or have run
+out since. Trust the CA the source trusts with
+`helios edge origin-pull trust <host> ca.pem`, or, with the source gone,
+mint one with `helios edge origin-pull mint <host> --out FILE` and upload it
+at Cloudflare, then run `helios recover cutover <recovery-id>` again.
+
 Cutover durably records its start before changing the target runtime. A failed
 or interrupted cutover reports `cutover-incomplete` and is retried with the same
 recovery ID; it cannot be abandoned after that start marker.

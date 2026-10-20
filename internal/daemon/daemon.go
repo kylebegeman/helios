@@ -232,10 +232,10 @@ func Run(ctx context.Context, cfg Config, logw io.Writer) error {
 	// The edge gets the configuration this build of helios makes for the
 	// active revisions, in case the shape changed since the last deploy;
 	// an edge an older helios made is replaced, keeping its routes.
-	if err := app.UpgradeEdge(ctx, store, sec, logWriter{logf}); err != nil {
-		logf("edge: %v", err)
-	}
-	d.startLoops(ctx)
+	edgeLoaded := edgeLoadedAtStart(time.Now().UTC(), func() (bool, error) {
+		return app.UpgradeEdge(ctx, store, sec, logWriter{logf})
+	}, logf)
+	d.startLoops(ctx, edgeLoaded)
 	receiver, stopHooks := d.serveHooks(ctx)
 	defer stopHooks()
 	defer func() { cancel(); receiver.Wait(context.Background()) }()
@@ -318,9 +318,11 @@ func (d *daemon) recoverOperations(ctx context.Context) error {
 }
 
 // startLoops starts what runs on the daemon's own clocks: cron workloads,
-// outside the operation lock; watching; signals; and scheduled backups,
-// drills and collection.
-func (d *daemon) startLoops(ctx context.Context) {
+// outside the operation lock; watching; reloading the edge as origin-pull
+// CAs run out; signals; and scheduled backups, drills and collection.
+// edgeLoaded is when the edge took its configuration at start, zero when
+// it didn't.
+func (d *daemon) startLoops(ctx context.Context, edgeLoaded time.Time) {
 	logf := d.logf
 	jobs := app.NewJobs(d.store, d.sec)
 	d.jobs = jobs
@@ -330,12 +332,28 @@ func (d *daemon) startLoops(ctx context.Context) {
 	watcher := &watch.Watcher{Store: d.store, Notifier: d.alerts, Hostname: d.machine, Log: logf}
 	prober := watch.NewProber(d.store)
 	prober.CheckSecrets = d.sec.Load
+	prober.OriginPullTrust = func() (edge.OriginPullTrust, error) { return app.LoadOriginPullTrust(d.sec) }
 	d.every(ctx, time.Minute, true, func(time.Time) {
 		guarded(logf, "watch", func() {
 			if err := watcher.Round(ctx, prober.Observe(ctx)); err != nil && ctx.Err() == nil {
 				logf("watch: %v", err)
 			}
 		})
+	})
+	reloader := &originPullReloader{Trust: prober.OriginPullTrust, Log: logf, loaded: edgeLoaded,
+		Reload: func(ctx context.Context) (bool, error) {
+			// Under the operation lock, so a configuration built here from
+			// the revisions active now can't land after one a deploy built
+			// from newer ones.
+			unlock, err := api.LockOperations(ctx, d.store.Path())
+			if err != nil {
+				return false, err
+			}
+			defer unlock()
+			return app.LoadEdge(ctx, d.store, d.sec)
+		}}
+	d.every(ctx, time.Minute, false, func(now time.Time) {
+		guarded(logf, "origin pull", func() { reloader.Tick(ctx, now) })
 	})
 	sampler := signals.NewSampler(d.store)
 	sampler.Log = logf

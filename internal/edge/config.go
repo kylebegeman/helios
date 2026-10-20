@@ -3,8 +3,11 @@
 package edge
 
 import (
+	"crypto/x509"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 )
@@ -21,6 +24,13 @@ type Route struct {
 	// Guard, when set, is asked about every request before the upstream
 	// sees it. A route with no Guard is open.
 	Guard *Guard
+	// OriginPull is OriginPullOptional or OriginPullRequired for a host
+	// whose TLS connections may, or must, present a client certificate
+	// one of ClientCAs signed. A host takes the strictest of its routes'.
+	OriginPull string
+	// ClientCAs are the CA certificates, base64 DER, that OriginPull
+	// checks a client against.
+	ClientCAs []string
 }
 
 // Guard is an endpoint the edge asks whether a request may proceed.
@@ -115,6 +125,13 @@ func proxyTo(dial string) caddyHandler {
 // proxy, such as Cloudflare's: a request that arrives from one of proxies
 // is taken to be from the address the proxy names, and every other
 // request's claims about where it came from are ignored.
+//
+// A host that takes origin pulls gets a TLS connection policy of its own
+// (see originPullPolicy) and is served over HTTPS only, so a request on
+// port 80 is redirected rather than answered. A host left without a usable
+// CA is settled on its own, refusing its connections when origin pulls are
+// required and taking them unchecked when they are optional, so one host's
+// missing CA never stops the whole edge loading.
 func ConfigBehind(routes []Route, proxies []string) ([]byte, error) {
 	byHost := map[string][]Route{}
 	for _, r := range routes {
@@ -127,6 +144,8 @@ func ConfigBehind(routes []Route, proxies []string) ([]byte, error) {
 	sort.Strings(hosts)
 
 	serverRoutes := make([]caddyRoute, len(hosts))
+	var policies []caddyTLSConnPolicy
+	var checked map[string]string
 	for hostIndex, host := range hosts {
 		rs := byHost[host]
 		// Longest prefix first; the catch-all last, without a path matcher.
@@ -151,13 +170,38 @@ func ConfigBehind(routes []Route, proxies []string) ([]byte, error) {
 				sub[routeIndex].Match = []caddyMatcher{{Path: []string{prefix, prefix + "/*"}}}
 			}
 		}
+		hostMatch := caddyMatcher{Host: []string{host}}
+		if mode := originPullMode(rs); mode != "" {
+			// Over plain HTTP there is no certificate to check, so the
+			// host's route doesn't match on port 80 and the request falls
+			// through to Caddy's own redirect to HTTPS.
+			hostMatch.Protocol = "https"
+			if checked == nil {
+				checked = map[string]string{}
+			}
+			if policy, ok := originPullPolicy(host, mode, originPullCAs(rs, checked)); ok {
+				policies = append(policies, policy)
+			}
+		}
 		serverRoutes[hostIndex] = caddyRoute{
 			Handle:   [1]caddyHandler{{Handler: "subroute", Routes: sub}},
-			Match:    []caddyMatcher{{Host: []string{host}}},
+			Match:    []caddyMatcher{hostMatch},
 			Terminal: true,
 		}
 	}
 	server := caddyServer{Listen: [2]string{":80", ":443"}, Routes: serverRoutes}
+	if len(policies) > 0 {
+		// Policies are tried in order, so every other name needs the
+		// empty catch-all last, or it would have no TLS at all.
+		server.TLSConnectionPolicies = append(policies, caddyTLSConnPolicy{})
+		// Without this a client could finish a handshake under another
+		// host's name, which asks for no certificate, and then send the
+		// protected host's Host header. It is set outright, never left
+		// to Caddy, which only turns it on for itself when some policy
+		// checks clients: a host that refuses every connection doesn't.
+		strict := true
+		server.StrictSNIHost = &strict
+	}
 	if len(proxies) > 0 {
 		server.TrustedProxies = &caddyTrustedProxies{Ranges: proxies, Source: "static"}
 		// Cloudflare sets CF-Connecting-IP to the visitor and nothing
@@ -178,6 +222,88 @@ func ConfigBehind(routes []Route, proxies []string) ([]byte, error) {
 	cfg.Logging.Logs.Default.Encoder.Format = "json"
 	cfg.Logging.Logs.Default.Writer.Output = "stdout"
 	return json.MarshalIndent(cfg, "", "  ")
+}
+
+// originPullMode is the strictest origin-pull mode any of a host's routes
+// asks for, so a route of helios's own on the host, such as the git hook,
+// which carries no mode, never weakens it. A mode this edge doesn't know
+// counts as required: refusing a host's connections is the safer mistake.
+func originPullMode(rs []Route) string {
+	mode := ""
+	for _, r := range rs {
+		switch r.OriginPull {
+		case "":
+		case OriginPullOptional:
+			if mode == "" {
+				mode = OriginPullOptional
+			}
+		default:
+			return OriginPullRequired
+		}
+	}
+	return mode
+}
+
+// originPullCAs are the CAs any of a host's routes names that Caddy can
+// check a client against, as Caddy reads them, each once and in a fixed
+// order. checked remembers what each one turned out to be, since every
+// route of a host and every host of an app usually names the same ones.
+func originPullCAs(rs []Route, checked map[string]string) []string {
+	var cas []string
+	for _, r := range rs {
+		for _, text := range r.ClientCAs {
+			ca, seen := checked[text]
+			if !seen {
+				ca = clientCA(text)
+				checked[text] = ca
+			}
+			if ca != "" && !slices.Contains(cas, ca) {
+				cas = append(cas, ca)
+			}
+		}
+	}
+	slices.Sort(cas)
+	return cas
+}
+
+// clientCA is text, base64 DER, as Caddy's inline CA pool takes it, or ""
+// when it isn't a CA's certificate. Caddy refuses a whole configuration
+// over one certificate it can't read, so a damaged record is left out
+// here and the host goes without it.
+func clientCA(text string) string {
+	der, err := base64.StdEncoding.DecodeString(text)
+	if err != nil {
+		return ""
+	}
+	cert, err := x509.ParseCertificate(der)
+	if err != nil || !cert.BasicConstraintsValid || !cert.IsCA || cert.KeyUsage&x509.KeyUsageCertSign == 0 {
+		return ""
+	}
+	return base64.StdEncoding.EncodeToString(cert.Raw)
+}
+
+// originPullPolicy is the TLS connection policy for host's handshakes.
+//
+// With a CA to check against, required refuses a connection without a
+// certificate one of cas signed, and optional checks one only when it is
+// presented. Without one, a required host refuses every connection, and
+// an optional host has no policy and takes connections as any host does.
+// A policy that checks clients is never written without a CA: Caddy would
+// then check them against the system's roots, and any publicly trusted
+// certificate would do.
+func originPullPolicy(host, mode string, cas []string) (caddyTLSConnPolicy, bool) {
+	match := &caddyTLSMatch{SNI: []string{host}}
+	if len(cas) == 0 {
+		if mode == OriginPullRequired {
+			return caddyTLSConnPolicy{Drop: true, Match: match}, true
+		}
+		return caddyTLSConnPolicy{}, false
+	}
+	auth := &caddyClientAuth{CA: caddyCAPool{Provider: "inline", TrustedCACerts: cas}, Mode: "verify_if_given"}
+	if mode == OriginPullRequired {
+		auth.Mode = "require_and_verify"
+	}
+	return caddyTLSConnPolicy{ClientAuthentication: auth, Match: match}, true
 }
 
 // Initial is the configuration the edge starts with before any app is

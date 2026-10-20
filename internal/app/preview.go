@@ -122,6 +122,9 @@ func PreviewOfWithReport(parent *manifest.Manifest, branch, domain string) (*man
 			route := r
 			route.Host = host
 			route.Auth = manifest.AuthLoom
+			// Cloudflare holds no client certificate for a preview's
+			// hostname, so the edge would refuse every connection to it.
+			route.OriginPull = manifest.OriginPullOff
 			copied.Routes = append(copied.Routes, route)
 		}
 		preview.Workloads[name] = copied

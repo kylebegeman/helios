@@ -131,6 +131,9 @@ func (u Upgrade) Plan(ctx context.Context, raw json.RawMessage) (*kernel.Plan, e
 	if err := candidate.AcceptsState(stateVersion); err != nil {
 		return nil, fmt.Errorf("upgrade preflight: %w", err)
 	}
+	if err := checkOriginPullCandidate(ctx, u.Store, candidate); err != nil {
+		return nil, err
+	}
 	// The plan is re-built when the operation resumes on the new daemon, so
 	// nothing in a step's Change may depend on which build is running now;
 	// that goes in the notes.

@@ -9,4 +9,4 @@ workloads:
       - host: site.lane.example.com
 checks:
   - url: https://site.lane.example.com/
-    contains: A static site served by bedrock
+    contains: A static site served by helios

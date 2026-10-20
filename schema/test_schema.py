@@ -116,6 +116,31 @@ class ManifestSchemaTests(unittest.TestCase):
         manifest["workloads"]["web"]["routes"][0]["auth"] = "loom"
         self.assert_valid(manifest)
 
+    def test_origin_pull_needs_a_known_mode_and_a_proxied_record(self) -> None:
+        manifest = {"app": "shop", "workloads": {"web": {"kind": "web", "image": "app", "port": 8080,
+                                                         "routes": [{"host": "shop.example.com", "dns": "proxied"}]}}}
+        self.assert_valid(manifest)
+        route = manifest["workloads"]["web"]["routes"][0]
+        for mode in ("optional", "required"):
+            with self.subTest(mode=mode):
+                route["origin_pull"] = mode
+                self.assert_valid(manifest)
+        for changes in ({"origin_pull": "strict"}, {"origin_pull": "Required"},
+                        {"origin_pull": ""}, {"origin_pull": True},
+                        {"origin_pull": "required", "dns": "direct"},
+                        {"origin_pull": "optional", "dns": "direct"},
+                        {"origin_pull": "required", "dns": ""}):
+            with self.subTest(changes=changes):
+                bad = copy.deepcopy(manifest)
+                bad["workloads"]["web"]["routes"][0].update(changes)
+                self.assert_invalid(bad)
+        missing_dns = copy.deepcopy(manifest)
+        missing_dns["workloads"]["web"]["routes"][0] = {"host": "shop.example.com", "origin_pull": "required"}
+        self.assert_invalid(missing_dns)
+        direct = copy.deepcopy(manifest)
+        direct["workloads"]["web"]["routes"][0] = {"host": "shop.example.com", "dns": "direct"}
+        self.assert_valid(direct)
+
     def test_credential_checks_require_explicit_edge_and_https(self) -> None:
         manifest = {"app": "api", "workloads": {"worker": {"kind": "worker", "image": "app"}},
                     "checks": [{"url": "https://api.example.com/", "context": "edge",

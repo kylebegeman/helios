@@ -68,6 +68,19 @@ class ProofReports(unittest.TestCase):
         args = SimpleNamespace(proofs=["transfer"], target_config=None)
         self.assertTrue(any("--target-config" in item for item in PROOF.prerequisites(args, {})))
 
+    def test_every_listed_proof_has_an_executable_script(self):
+        for name in PROOF.PROOFS:
+            script = HERE / f"prove-{name}.sh"
+            self.assertTrue(script.is_file(), script)
+            self.assertTrue(script.stat().st_mode & 0o111, f"{script} is not executable")
+
+    def test_origin_pull_proof_runs_on_the_loopback_guest(self):
+        # It brings its own records and certificates, so it needs no public
+        # DNS and is not refused on the QEMU guest the way m3 is.
+        args = SimpleNamespace(proofs=["originpull"])
+        self.assertEqual(PROOF.prerequisites(args, {"LANE_PROVIDER": "qemu-docker"}), [])
+        self.assertTrue(PROOF.prerequisites(SimpleNamespace(proofs=["m3"]), {"LANE_PROVIDER": "qemu-docker"}))
+
     def test_real_cloudflare_requires_explicit_mutation_opt_in(self):
         args = SimpleNamespace(proofs=["cloudflare"], real_cloudflare=False)
         settings = {"LANE_DOMAIN": "lane.example.com", "LANE_ZONE": "example.com"}

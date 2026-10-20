@@ -199,6 +199,9 @@ func (g *schemaGenerator) constrain() {
 	g.prop("Route", "auth")["enum"] = []AuthMode{AuthNone, AuthLoom}
 	g.describe("Route", "dns", "direct or proxied manages Cloudflare DNS; omitted leaves DNS alone.")
 	g.describe("Route", "auth", "loom requires a signed-in Loom session; omitted leaves the route open.")
+	g.prop("Route", "origin_pull")["enum"] = []OriginPullMode{OriginPullOptional, OriginPullRequired}
+	g.describe("Route", "origin_pull", "Check the client certificate Cloudflare presents, minted with helios edge origin-pull mint: optional checks one that is presented, required refuses connections without one. Needs dns: proxied and the same value on every route to the host; omitted takes any connection.")
+	g.def("Route")["allOf"] = []any{condition(schemaObject{"required": []string{"origin_pull"}}, schemaObject{"required": []string{"dns"}, "properties": schemaObject{"dns": schemaObject{"const": DNSProxied}}})}
 	g.prop("Health", "path")["pattern"] = `^(?:/.*|)$`
 	g.def("Health")["allOf"] = []any{condition(schemaObject{"required": []string{"command"}, "properties": schemaObject{"command": schemaObject{"minItems": 1}}}, properties(schemaObject{"path": schemaObject{"const": ""}}))}
 	g.describe("Health", "timeout", "Positive Go duration such as 90s. Default 60s.")

@@ -23,6 +23,10 @@ const (
 	MinStateVersion = 0
 )
 
+// capabilities name what this build can do, for a client to check before
+// asking a target to do it.
+var capabilities = []string{"kernel.plan.v1", "kernel.apply.v1", "kernel.expect.v1", "operations.history.v1", "operations.output.v1", "manifest.check.v1", "remote.source.v1", "state.migrations.v1", "upgrade.checkpoint.v1", "api.errors.v1", "git.signed.v1", "release.signed.v1", "edge.origin-pull.v1"}
+
 // Info is additive. Contract versions describe behavior, independently of the
 // binary's release version. State range includes unversioned historical state.
 type Info struct {
@@ -58,7 +62,7 @@ func Current(keyPath string) (Info, error) {
 		APIVersion: APIVersion, ManifestVersion: ManifestVersion,
 		StateVersion: StateVersion, MinStateVersion: MinStateVersion, MaxStateVersion: StateVersion,
 		MachineID: id, Build: version.Current(),
-		Capabilities: []string{"kernel.plan.v1", "kernel.apply.v1", "kernel.expect.v1", "operations.history.v1", "operations.output.v1", "manifest.check.v1", "remote.source.v1", "state.migrations.v1", "upgrade.checkpoint.v1", "api.errors.v1", "git.signed.v1", "release.signed.v1"},
+		Capabilities: append([]string(nil), capabilities...),
 	}, nil
 }
 

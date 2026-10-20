@@ -118,6 +118,7 @@ workloads:
     routes:
       - host: hello.example.com
         dns: direct        # helios keeps the Cloudflare record (or proxied)
+        # origin_pull: required  # with dns: proxied; see Authenticated origin pulls
       - host: example.com
         path: /hello       # a prefix; longest wins on a host
     env: {GREETING: hello}
@@ -454,6 +455,157 @@ and needs no auth code of its own. `helios integration set loom` names the
 Core's verify endpoint. A machine without that integration refuses to
 deploy a guarded route rather than serve it open, and previews rely on it.
 
+## Authenticated origin pulls
+
+A `dns: proxied` host hides the machine's address behind Cloudflare, and
+`helios host setup --web-from cloudflare` lets only Cloudflare reach it, but
+any Cloudflare zone, someone else's included, can point at that address.
+With `origin_pull` on its routes, a host takes only the connections that
+present the client certificate Cloudflare holds for it, checked during the
+TLS handshake:
+
+```yaml
+routes:
+  - host: shop.example.com
+    dns: proxied
+    origin_pull: required    # optional while Cloudflare starts presenting it
+```
+
+Turning it on for a host goes in this order:
+
+1. Mint the certificate. On the machine, or from your computer with
+   `--target`, where the certificate is made locally and only its CA goes
+   to the machine:
+
+   ```sh
+   helios edge origin-pull mint shop.example.com --out shop.example.com.pem
+   ```
+
+   This makes a CA and a client certificate it signs, both good for a year.
+   The edge trusts the CA at once, and the CA's key is thrown away, so
+   nothing can sign another certificate the edge takes. The file gets the
+   certificate and then its key, readable by you alone. `--out` must name a
+   file that doesn't exist yet, so no key is ever written over. If the
+   machine keeps the CA but its edge doesn't reload, the file is still
+   written and mint says so. With `--target`, if the machine then can't be
+   asked whether it kept the CA, the file is kept too, and mint names the
+   `list` and `forget` commands that check or drop the CA there before you
+   upload anything.
+2. Upload it in the Cloudflare dashboard, under SSL/TLS, Origin Server,
+   Authenticated Origin Pulls, Per-hostname: choose Upload certificate,
+   paste the file's `CERTIFICATE` block as the certificate and its
+   `PRIVATE KEY` block as the private key, and associate the certificate
+   with the hostname. Cloudflare presents it once the hostname is
+   associated. Then delete the file: it holds the only copy of the key.
+3. Set the zone's SSL/TLS encryption mode to Full (strict).
+4. Deploy with `origin_pull: optional`. The edge checks a certificate that
+   is presented and still lets a connection without one through, so nothing
+   breaks while Cloudflare starts presenting it. A request whose certificate
+   the edge checked is in its access log on the machine, with the
+   certificate's name:
+
+   ```sh
+   docker logs --since 10m bedrock-edge 2>&1 | grep -F '"client_common_name":"shop.example.com"'
+   ```
+
+5. Only once requests through Cloudflare show up there, deploy with
+   `origin_pull: required`. From then on a connection that doesn't present
+   the certificate is refused before it sends a request.
+
+A deploy, rollback, move or recovery cutover that would leave a host
+requiring origin pull with no CA the edge trusts is refused while it is
+still a plan, since the edge would refuse every connection to it. That
+includes a host another app on the machine requires, even when the app
+being deployed sets `origin_pull: optional` for it or leaves it out.
+`helios edge origin-pull list` shows each host's mode and the CAs it
+trusts, until when; `--json` adds each CA's PEM.
+
+What to know before turning it on:
+
+- **Full (strict), never Flexible.** A host with `origin_pull`, optional or
+  required, answers plain HTTP on port 80 only with a 308 redirect to HTTPS,
+  since there is no certificate to check over it. Under Flexible, Cloudflare
+  reaches the machine over plain HTTP, hands that redirect back to the
+  visitor, and sends the next request over plain HTTP again, round the same
+  loop for good.
+- **421 for a mismatched name.** Once the edge checks certificates for any
+  host on the machine, every HTTPS request to it, for any host, must name
+  the same host in its TLS handshake (SNI) as in its Host header. One whose
+  Host header differs from the name in its handshake gets 421 Misdirected
+  Request. A connection whose handshake names no host, such as `curl` to
+  the machine's address with only a Host header, fails during the TLS
+  handshake and never gets an HTTP status. Without that, a connection made
+  under another host's name, which asks for no certificate, could carry the
+  protected host's Host header. Cloudflare sends the hostname in both; an
+  Origin Rule that rewrites one without the other gets 421 too.
+- **Hosts deeper than one level.** Cloudflare's Universal SSL certificate
+  covers the zone and one level below it, `shop.example.com` but not
+  `eu.shop.example.com`. A proxied host deeper than that needs an edge
+  certificate at Cloudflare that covers it, an advanced or a custom one, or
+  visitors never get as far as the machine.
+- **10 per zone.** Cloudflare allows 10 per-hostname certificates per zone,
+  and each host gets its own, so a zone has at most 10 hosts with
+  `origin_pull`, and rotating one needs a free place for its new certificate
+  until the old one is deleted.
+- **Never the shared certificate.** Cloudflare's global authenticated origin
+  pull certificate is shared by every Cloudflare account, so it proves only
+  that a connection came through Cloudflare, not through your zone. Don't give
+  its CA to `helios edge origin-pull trust`; use the certificate minted for
+  the host.
+- **Never on a `dns: direct` host.** Its visitors connect to the machine
+  themselves, with no certificate to present, so the manifest check refuses
+  `origin_pull` without `dns: proxied`. Every route to a host within one
+  app's manifest must set the same `origin_pull`, and an app's previews
+  never set it, since Cloudflare holds no certificate for a preview's
+  hostname.
+- **One host, several apps.** Apps that route different paths of one host
+  may set different `origin_pull`, so they can switch the host one deploy
+  at a time, in either order. The host takes the strictest mode any of
+  them asks for, so an app that relaxes a host another app still requires
+  leaves it required.
+
+To rotate, mint again into a new file, upload that certificate at
+Cloudflare, associate the hostname with it, and delete the old certificate
+there. Rotating always means minting again: nothing renews a certificate,
+and the CA that signed the old one can sign nothing more. helios keeps
+trusting the old CA beside the new one until you forget it, so the host
+keeps working while Cloudflare switches. helios can't see which certificate
+Cloudflare presents, so forget the old CA once Cloudflare presents the new
+certificate; `mint` prints the command when the host trusts an older CA.
+An old CA left to run out becomes a critical alert, and only `forget`
+clears it, since trusting or minting another CA never drops one:
+
+```sh
+helios edge origin-pull mint shop.example.com --out shop.example.com-2.pem
+# Once Cloudflare presents the new certificate, drop the old CA:
+helios edge origin-pull list
+helios edge origin-pull forget shop.example.com sha256:<fingerprint>
+```
+
+`forget` without a fingerprint drops every CA the host trusts. It won't
+leave a host that requires origin pull with none, since the edge would then
+refuse every connection to it; deploy the host with `origin_pull: optional`
+or without `origin_pull` first.
+
+The daemon warns 30 days before each CA a host trusts runs out. For an old
+CA beside a newer one, the warning says to forget it once Cloudflare
+presents the new certificate. A CA that runs out while the host still
+trusts it beside a newer one is a critical alert in either mode, since the
+edge then refuses the certificate Cloudflare may still present with it; it
+stays open until you forget that CA. A host that requires origin pull with
+no usable CA left is a critical alert too. A host that no app sets
+`origin_pull` for raises no alert, whatever its CAs, since the edge asks
+it for no certificate.
+
+When a CA runs out, the daemon reloads the edge, so an optional host whose
+last CA ran out then checks no certificate; until that reload, the edge
+refuses the expired one. An edge that isn't answering then, or when the
+daemon starts after a CA ran out, is reloaded within a minute of
+answering. `helios upgrade` refuses a build without origin-pull support
+while any host sets `origin_pull`, since that build's edge would stop
+checking the certificate. Moving an app that requires it needs the CA on
+the other machine first; see [safe moves](docs/features/safe-moves.md).
+
 ## What Helios keeps an eye on
 
 The daemon watches every app and the machine once a minute: containers
@@ -706,7 +858,7 @@ complete log, and become available when an execution finishes.
 | **Apps** | `init` · `check` · `launch` · `deploy` · `preview` · `rollback` · `remove` · `move` · `ls` · `ps` · `logs` · `history` · `gc` |
 | **Data** | `backup` · `backups` · `restore` · `recover` · `rehearse` · `drill` · `psql` |
 | **Access** | `secret` · `integration` · `git` · `exec` · `run` · `jobs` · `cron` |
-| **Network** | `dns` · `exposure` |
+| **Network** | `dns` · `edge` · `exposure` |
 
 Run `helios <command> --help` for any of them.
 

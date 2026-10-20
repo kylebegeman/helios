@@ -28,8 +28,18 @@ func upgradeCompatibilityFixture(t *testing.T) (*fakeMachine, *state.Store, Upgr
 	store := openStore(t)
 	return m, store, Upgrade{Env: m.env(), Store: store}
 }
+
+// serveWithOriginPull makes app's active revision route host with mode.
+func serveWithOriginPull(t *testing.T, store *state.Store, app, host, mode string) {
+	t.Helper()
+	m, _ := json.Marshal(map[string]any{"app": app, "workloads": map[string]any{"web": map[string]any{"routes": []map[string]string{{"host": host, "origin_pull": mode}}}}})
+	if err := store.SaveRevision(context.Background(), state.Revision{App: app, ID: "r1", Status: state.RevisionActive, Manifest: m, CreatedAt: time.Now()}); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestUpgradeRejectsIncompatibleCandidateBeforeJournalOrBinaryChanges(t *testing.T) {
-	for _, kind := range []string{"downgrade", "new-schema", "api", "missing-capability"} {
+	for _, kind := range []string{"downgrade", "new-schema", "api", "missing-capability", "origin-pull"} {
 		t.Run(kind, func(t *testing.T) {
 			m, store, u := upgradeCompatibilityFixture(t)
 			info := candidateCompatibility()
@@ -44,14 +54,24 @@ func TestUpgradeRejectsIncompatibleCandidateBeforeJournalOrBinaryChanges(t *test
 				info.APIVersion = 2
 			case "missing-capability":
 				info.Capabilities = nil
+			case "origin-pull":
+				// A build without the capability drops a stored
+				// manifest's origin_pull, so its edge would take any
+				// connection to shop and check no certificate on api.
+				serveWithOriginPull(t, store, "shop", "shop.example.com", "required")
+				serveWithOriginPull(t, store, "api", "api.example.com", "optional")
 			}
 			body, _ := json.Marshal(info)
 			m.answers["/tmp/candidate capabilities --json"] = string(body)
 			reg := kernel.Registry{}
 			reg.Add(u)
 			engine := kernel.New(store, reg, "test")
-			if _, err := engine.Run(context.Background(), UpgradeKind, upgradeInput(t, "/tmp/candidate"), func(kernel.Event) {}); err == nil || !strings.Contains(err.Error(), "preflight") {
+			_, err := engine.Run(context.Background(), UpgradeKind, upgradeInput(t, "/tmp/candidate"), func(kernel.Event) {})
+			if err == nil || !strings.Contains(err.Error(), "preflight") {
 				t.Fatalf("%v", err)
+			}
+			if kind == "origin-pull" && (!strings.Contains(err.Error(), "edge.origin-pull.v1") || !strings.Contains(err.Error(), "api.example.com, shop.example.com")) {
+				t.Fatalf("the refusal doesn't name the capability and hosts: %v", err)
 			}
 			ops, _ := store.List(context.Background(), 10)
 			if len(ops) != 0 || m.read(BinaryPath) != "old binary" || m.read(PreviousBinary) != "" {
@@ -60,6 +80,36 @@ func TestUpgradeRejectsIncompatibleCandidateBeforeJournalOrBinaryChanges(t *test
 		})
 	}
 }
+
+// Only a host the edge checks a client certificate on now needs the
+// capability: one the apps here have since stopped setting origin_pull
+// for doesn't.
+func TestUpgradeAsksForOriginPullOnlyWhereAHostSetsIt(t *testing.T) {
+	ctx := context.Background()
+	t.Run("candidate has it", func(t *testing.T) {
+		m, store, u := upgradeCompatibilityFixture(t)
+		serveWithOriginPull(t, store, "shop", "shop.example.com", "required")
+		info := candidateCompatibility()
+		info.Capabilities = append(info.Capabilities, "edge.origin-pull.v1")
+		body, _ := json.Marshal(info)
+		m.answers["/tmp/candidate capabilities --json"] = string(body)
+		if _, err := u.Plan(ctx, upgradeInput(t, "/tmp/candidate")); err != nil {
+			t.Fatal(err)
+		}
+	})
+	t.Run("no host sets it now", func(t *testing.T) {
+		_, store, u := upgradeCompatibilityFixture(t)
+		serveWithOriginPull(t, store, "shop", "shop.example.com", "required")
+		serveWithOriginPull(t, store, "shop", "shop.example.com", "")
+		if err := store.SaveRevision(ctx, state.Revision{App: "shop", ID: "r0", Status: state.RevisionPrevious, Manifest: json.RawMessage(`{"app":"shop","workloads":{"web":{"routes":[{"host":"shop.example.com","origin_pull":"required"}]}}}`), CreatedAt: time.Now()}); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := u.Plan(ctx, upgradeInput(t, "/tmp/candidate")); err != nil {
+			t.Fatal(err)
+		}
+	})
+}
+
 func TestUpgradeCheckpointsConsistentPrivateStateBeforeSwitch(t *testing.T) {
 	m, store, u := upgradeCompatibilityFixture(t)
 	ctx := context.Background()

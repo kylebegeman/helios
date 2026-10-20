@@ -3,6 +3,7 @@ package edge
 import (
 	"encoding/json"
 	"fmt"
+	"maps"
 	"slices"
 	"strings"
 	"testing"
@@ -10,12 +11,14 @@ import (
 
 // ConfigBehind rebuilds the complete edge configuration on deployment and
 // daemon startup. Each app contributes a catch-all, an API, a guarded admin
-// route and a route on a shared host. This measures grouping and prefix sorting
-// as well as encoding open and guarded handlers, without Docker or Caddy I/O.
+// route and a route on a shared host, and a third of the apps require origin
+// pulls and another third take them optionally. This measures grouping and
+// prefix sorting, encoding open and guarded handlers, and reading origin pull
+// CAs, without Docker or Caddy I/O.
 func BenchmarkConfigBehind(b *testing.B) {
 	for _, apps := range []int{10, 100, 1000} {
 		b.Run(fmt.Sprintf("apps=%d", apps), func(b *testing.B) {
-			routes, proxies := configBenchmarkFixture(apps)
+			routes, proxies := configBenchmarkFixture(b, apps)
 			config, err := ConfigBehind(routes, proxies)
 			if err != nil {
 				b.Fatal(err)
@@ -34,11 +37,14 @@ func BenchmarkConfigBehind(b *testing.B) {
 	}
 }
 
-func configBenchmarkFixture(apps int) ([]Route, []string) {
+func configBenchmarkFixture(tb testing.TB, apps int) ([]Route, []string) {
 	guards := []*Guard{
 		{Dial: "auth.example.com:443", Path: "/api/cloud/auth/verify", TLS: true, ServerName: "auth.example.com", HeaderName: "X-Loom-Verified", HeaderValue: "yes"},
 		{Dial: "bedrock-auth-api-ab12cd:4773", Path: "/verify", HeaderName: "X-Loom-Verified", HeaderValue: "yes"},
 	}
+	// Every app names the same CAs, as one helios's apps share a trust
+	// during a rotation, so the edge reads each certificate once.
+	a, b := fixedCA(tb, "a"), fixedCA(tb, "b")
 	routes := make([]Route, 0, apps*4)
 	// Reverse app order and interleave hosts so the benchmark cannot rely on
 	// inputs already being grouped or sorted. Guard pointers are shared, as in
@@ -51,11 +57,24 @@ func configBenchmarkFixture(apps int) ([]Route, []string) {
 		if app%2 == 0 {
 			sharedGuard = guard
 		}
+		own := []Route{
+			{Host: host, Path: "/", Dial: dial},
+			{Host: host, Path: "/api/", Dial: fmt.Sprintf("bedrock-app-%04d-api-ab12cd:9000", app)},
+			{Host: host, Path: "/admin/", Dial: dial, Guard: guard},
+		}
+		switch app % 3 {
+		case 0:
+			for i := range own {
+				own[i].OriginPull, own[i].ClientCAs = OriginPullRequired, []string{a, b}
+			}
+		case 1:
+			own[0].OriginPull, own[0].ClientCAs = OriginPullOptional, []string{a}
+		}
 		routes = append(routes,
-			Route{Host: host, Path: "/", Dial: dial},
+			own[0],
 			Route{Host: "shared.example.com", Path: fmt.Sprintf("/apps/app-%04d/", app), Dial: dial, Guard: sharedGuard},
-			Route{Host: host, Path: "/api/", Dial: fmt.Sprintf("bedrock-app-%04d-api-ab12cd:9000", app)},
-			Route{Host: host, Path: "/admin/", Dial: dial, Guard: guard},
+			own[1],
+			own[2],
 		)
 	}
 	// Representative IPv4 and IPv6 Cloudflare ranges. The benchmark is local
@@ -73,11 +92,25 @@ func configBenchmarkFixture(apps int) ([]Route, []string) {
 
 type benchmarkConfigRoute struct {
 	Match []struct {
-		Host []string `json:"host"`
-		Path []string `json:"path"`
+		Host     []string `json:"host"`
+		Path     []string `json:"path"`
+		Protocol string   `json:"protocol"`
 	} `json:"match"`
 	Handle   []benchmarkConfigHandler `json:"handle"`
 	Terminal bool                     `json:"terminal"`
+}
+
+type benchmarkConfigPolicy struct {
+	ClientAuthentication *struct {
+		CA struct {
+			Provider       string   `json:"provider"`
+			TrustedCACerts []string `json:"trusted_ca_certs"`
+		} `json:"ca"`
+		Mode string `json:"mode"`
+	} `json:"client_authentication"`
+	Match *struct {
+		SNI []string `json:"sni"`
+	} `json:"match"`
 }
 
 type benchmarkConfigHandler struct {
@@ -112,8 +145,10 @@ func checkConfigBenchmarkFixture(tb testing.TB, raw []byte, routes []Route, prox
 						Source string   `json:"source"`
 						Ranges []string `json:"ranges"`
 					} `json:"trusted_proxies"`
-					ClientIPHeaders      []string `json:"client_ip_headers"`
-					TrustedProxiesStrict int      `json:"trusted_proxies_strict"`
+					ClientIPHeaders      []string                `json:"client_ip_headers"`
+					TrustedProxiesStrict int                     `json:"trusted_proxies_strict"`
+					StrictSNIHost        *bool                   `json:"strict_sni_host"`
+					Policies             []benchmarkConfigPolicy `json:"tls_connection_policies"`
 				} `json:"servers"`
 			} `json:"http"`
 		} `json:"apps"`
@@ -126,12 +161,17 @@ func checkConfigBenchmarkFixture(tb testing.TB, raw []byte, routes []Route, prox
 		tb.Fatal("benchmark config lost the trusted proxy configuration")
 	}
 	want := make(map[string]map[string]Route)
+	pulls := make(map[string]string)
 	for _, route := range routes {
 		if want[route.Host] == nil {
 			want[route.Host] = make(map[string]Route)
 		}
 		want[route.Host][route.Path] = route
+		if route.OriginPull != "" && pulls[route.Host] != OriginPullRequired {
+			pulls[route.Host] = route.OriginPull
+		}
 	}
+	checkConfigBenchmarkPolicies(tb, server.StrictSNIHost, server.Policies, pulls)
 	if len(server.Routes) != len(want) {
 		tb.Fatalf("config hosts: got %d, want %d", len(server.Routes), len(want))
 	}
@@ -141,6 +181,9 @@ func checkConfigBenchmarkFixture(tb testing.TB, raw []byte, routes []Route, prox
 			tb.Fatal("benchmark config has a malformed host route")
 		}
 		host := hostRoute.Match[0].Host[0]
+		if (hostRoute.Match[0].Protocol == "https") != (pulls[host] != "") {
+			tb.Fatalf("host %q matches %q for origin pull %q", host, hostRoute.Match[0].Protocol, pulls[host])
+		}
 		expected := want[host]
 		if host <= lastHost || expected == nil || len(hostRoute.Handle[0].Routes) != len(expected) {
 			tb.Fatalf("missing, duplicate or unsorted host %q", host)
@@ -182,6 +225,31 @@ func checkConfigBenchmarkFixture(tb testing.TB, raw []byte, routes []Route, prox
 			if handler.Handler != "reverse_proxy" || len(handler.Upstreams) != 1 || handler.Upstreams[0].Dial != route.Dial {
 				tb.Fatalf("missing app upstream on %s%s", host, path)
 			}
+		}
+	}
+}
+
+// checkConfigBenchmarkPolicies checks there is one TLS policy for each host
+// that takes origin pulls, in host order, checking clients as strictly as the
+// host asks and against at least one CA, and a catch-all after them.
+func checkConfigBenchmarkPolicies(tb testing.TB, strict *bool, got []benchmarkConfigPolicy, pulls map[string]string) {
+	tb.Helper()
+	hosts := slices.Sorted(maps.Keys(pulls))
+	if len(hosts) == 0 {
+		if strict != nil || got != nil {
+			tb.Fatal("benchmark config has TLS policies without an origin-pull host")
+		}
+		return
+	}
+	if strict == nil || !*strict || len(got) != len(hosts)+1 || got[len(hosts)].ClientAuthentication != nil || got[len(hosts)].Match != nil {
+		tb.Fatalf("benchmark config has %d TLS policies for %d origin-pull hosts, or no catch-all or strict SNI", len(got), len(hosts))
+	}
+	for i, host := range hosts {
+		policy := got[i]
+		mode := map[string]string{OriginPullRequired: "require_and_verify", OriginPullOptional: "verify_if_given"}[pulls[host]]
+		if policy.Match == nil || !slices.Equal(policy.Match.SNI, []string{host}) || policy.ClientAuthentication == nil ||
+			policy.ClientAuthentication.Mode != mode || policy.ClientAuthentication.CA.Provider != "inline" || len(policy.ClientAuthentication.CA.TrustedCACerts) == 0 {
+			tb.Fatalf("the TLS policy for %s is missing, out of order or wrong", host)
 		}
 	}
 }

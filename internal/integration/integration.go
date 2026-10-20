@@ -157,6 +157,11 @@ func WebhookSecretName(app string) string { return hookSecretName("WEBHOOK_SECRE
 // DeployKeyName is the deploy key's name; see WebhookSecretName.
 func DeployKeyName(app string) string { return hookSecretName("DEPLOY_KEY", app) }
 
+// OriginPullName names the CAs the edge's origin-pull hosts trust, all
+// hosts in one value (edge.OriginPullTrust): a host's dots and hyphens
+// can't be told apart in a secret's name.
+const OriginPullName = "EDGE_ORIGIN_PULL"
+
 func hookSecretName(kind, app string) string {
 	return kind + "_" + strings.ToUpper(strings.ReplaceAll(app, "-", "_"))
 }

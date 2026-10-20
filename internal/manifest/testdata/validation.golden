@@ -30,8 +30,10 @@ workloads.web.routes[0]: host "not a host" isn't a hostname
 workloads.web.routes[0]: path "nope" must start with / and is a prefix, without wildcards
 workloads.web.routes[0].dns: "sideways" isn't direct or proxied
 workloads.web.routes[0].auth: "magic" isn't loom
+workloads.web.routes[0].origin_pull: "strict" isn't optional or required
 workloads.web.routes[0].port: must be a port number
 workloads.web.routes[2]: a.com / is already routed to web
+workloads.web.routes[2].origin_pull: needs dns: proxied, since only Cloudflare's proxy presents the client certificate; set dns: proxied or leave origin_pull out
 workloads.web.user: "Nope!" must be a user, uid, or user:group
 workloads.web.capabilities: "bad cap" isn't a capability name such as NET_BIND_SERVICE
 workloads.web.tmpfs: "relative" must be an absolute path
@@ -43,6 +45,7 @@ workloads.web.resources.cpus: must be 0 to 64
 workloads.web.health.path: must start with /
 workloads.what: kind "blob" isn't one of web, static, worker, cron, release
 routes: a.com has dns "" on one route and "direct" on another; use one
+routes: a.com has origin_pull "" on one route and "required" on another; give every route to a.com the same origin_pull
 data.volumes: "Bad" must be lowercase letters, digits and hyphens
 data.volumes: "postgres" is helios's own volume for the database; pick another name
 data.postgres.version: "9" isn't a supported major version (15 to 18)

@@ -71,6 +71,12 @@ func (d Deploy) rollout(ctx context.Context, m *manifest.Manifest, revision stri
 	if err := CheckRouteConflicts(ctx, r.store, m); err != nil {
 		return nil, err
 	}
+	// A host that requires origin pull with no CA to check against would
+	// be refused every connection, which the certificate step would find
+	// only after the switch.
+	if err := checkOriginPullTrust(ctx, r.store, m, d.Secrets, time.Now()); err != nil {
+		return nil, err
+	}
 	for _, name := range m.WorkloadNames() {
 		if m.Workloads[name].LongRunning() {
 			r.containers[name] = docker.ContainerName(m.App, name, revision)

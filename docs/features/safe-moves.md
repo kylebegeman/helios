@@ -50,6 +50,36 @@ containers for the app. Moves and ordinary app restores also refuse an
 unfinished release-checkpoint restore. Finish that selected rollback, or
 explicitly remove the app, before changing recovery paths.
 
+A host the app requires origin pull for (`origin_pull: required`) needs the
+CA the source trusts for it on the target too, since Cloudflare keeps
+presenting the certificate minted on the source. `helios edge origin-pull
+list --json` shows each CA's PEM as `ca_pem`:
+
+```sh
+# On the source, save the host's CA that runs out last.
+helios edge origin-pull list --json \
+  | jq -r '.[] | select(.host == "shop.example.com") | .cas[-1].ca_pem' > ca.pem
+
+# Copy ca.pem to the target and trust it there.
+helios edge origin-pull trust shop.example.com ca.pem
+```
+
+A host's CAs are listed from the one that runs out first, with its
+`fingerprint` and `not_after`. A CA that ran out stays listed until it is
+forgotten, and `trust` refuses it. A host in the middle of a rotation
+trusts more than one CA that hasn't run out: trust the one whose
+certificate Cloudflare presents, matched by the fingerprint `mint` printed
+for it, or trust each of them. Trust takes the CA, never the certificate
+uploaded to Cloudflare.
+
+`helios move stage` refuses the app until the target trusts a CA for each
+such host, and `helios move cutover` refuses it again if that CA was
+forgotten since. A host another app on the target already requires origin
+pull for needs a CA there too, even if the moved app sets `origin_pull:
+optional` for it or leaves it out. Machine recovery adds each CA the source
+trusts to the ones the target already trusts, host by host, so a target
+that already trusts some hosts still gains the source's.
+
 ## Rehearse before downtime
 
 Capture a consistent rehearsal snapshot on the source. Workloads resume after
