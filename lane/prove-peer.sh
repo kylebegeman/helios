@@ -100,8 +100,12 @@ echo "== web1 answers its peers on loopback; the Mac watches it and may read it"
 # web1 only answers here and watches no peer, so its self-check, which fails
 # for want of a public name, judges nothing.
 run "bedrock peer init --name web1 --listen $listen --public https://web1.example.test"
-# The Mac's state directory is new, so it makes a throwaway secrets key and
-# shows its recovery identity once; that is masked here.
+# As root on the guest, helios keeps its secrets key at the guest's own key
+# path whatever the state directory, so the Mac seals its peer setup with
+# the guest's key and only that setup is new: no key is made, and no
+# recovery identity is shown. The Mac's first run, which makes a key, isn't
+# proven here. The sed is a guard: should a run ever make a key, the
+# identity it shows stays out of the proof's output.
 mac peer init --name mac 2>&1 | sed 's/AGE-SECRET-KEY-1[A-Z0-9]*/AGE-SECRET-KEY-1.../'
 mac peer add web1 --mesh "$listen" --public https://web1.example.test
 mac_key=$(mac peer key)
