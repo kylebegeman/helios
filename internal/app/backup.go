@@ -176,6 +176,17 @@ func (r *backupRun) fail(err error) error {
 	return err
 }
 
+// stop records a run whose step failed or was stopped. A recorded run whose
+// step was stopped stays open, as one a killed daemon left: its operation
+// resumes and takes it up again, or Recover closes it when it ends the
+// operation instead.
+func (r *backupRun) stop(ctx context.Context, err error) error {
+	if ctx.Err() != nil && r.record != "" {
+		return err
+	}
+	return r.fail(err)
+}
+
 // done records a successful run.
 func (r *backupRun) done(ctx context.Context, result state.BackupRun) error {
 	result.OK = true
@@ -625,12 +636,13 @@ func (x *backingUp) stopSnapshotHelpers(ctx context.Context) error {
 // with receipts writes the owner file that proves the staging is its own,
 // so a move's capture keeps its staging.
 //
-// The run stays open too: the resumed attempt adopts it from the receipt
-// and closes it with its own outcome. Closed here, it would read as a
-// failed backup until a resumed one that succeeds reopened it as good.
+// The run stays open too: the resumed attempt adopts it from the receipt,
+// or a capture's from its record, and closes it with its own outcome.
+// Closed here, it would read as a failed backup until a resumed one that
+// succeeds reopened it as good.
 func (x *backingUp) failStaged(ctx context.Context, err error) error {
 	if x.receiptDir == "" {
-		return x.run.fail(err)
+		return x.run.stop(ctx, err)
 	}
 	if ctx.Err() == nil {
 		if derr := x.dropStaging(ctx); derr != nil {

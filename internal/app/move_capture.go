@@ -185,7 +185,7 @@ func (c MoveCapture) Plan(ctx context.Context, raw json.RawMessage) (*kernel.Pla
 					}
 					defer func() {
 						if captureErr != nil {
-							captureErr = x.run.fail(captureErr)
+							captureErr = x.run.stop(ctx, captureErr)
 						}
 					}()
 					record, err := readMigration(c.Backup.Store.Path(), in.App)

@@ -721,6 +721,33 @@ func TestAResumedCaptureTakesUpTheRunItsOperationBegan(t *testing.T) {
 	captureRunFailed(t, b.Store, began, other)
 }
 
+// A capture stopped in the middle of its snapshot, as its daemon stopping
+// does, leaves its run open for the resumed attempt, as one stopped between
+// steps does. Closed as failed with the stop, it would make the resumed
+// snapshot start a second run and show a failure nothing ended.
+func TestACaptureStoppedMidSnapshotLeavesItsRunToItsResumedAttempt(t *testing.T) {
+	b, _ := backupIdentityFixture(t, false)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	repositoryWhoseBackup(t, func(c *dockertest.Container) {
+		// The snapshot never finishes; the daemon stops first.
+		c.ExitAfter, c.Logs = 0, `{"message_type":"status"}`
+		cancel()
+	})
+	reg := kernel.Registry{}
+	reg.Add(MoveCapture{Backup: b.Backup})
+	at := time.Now().UTC().Truncate(time.Second)
+	if _, err := kernel.New(b.Store, reg, "old-daemon", kernel.WithClock(func() time.Time { return at })).Run(ctx, MoveCaptureKind, captureRaw(t, b.Store), func(kernel.Event) {}); err == nil {
+		t.Fatal("the capture was not stopped")
+	}
+	began, err := b.Store.LastBackupRun(context.Background(), "hello", state.BackupRunBackup)
+	if err != nil || began == nil || began.Finished() {
+		t.Fatalf("the stopped capture must leave its run open: %+v %v", began, err)
+	}
+	resumeCapture(t, b, reg, at)
+	captureRunFailed(t, b.Store, *began)
+}
+
 // An interrupted operation resumes, and a resumed snapshot reads the tree
 // its prepare staged, so a snapshot interrupted mid-backup keeps it. The
 // resumed snapshot can't know what the interrupted one wrote, so it
