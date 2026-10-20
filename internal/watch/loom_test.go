@@ -1104,3 +1104,76 @@ func TestAnOutageThatEndsBeforeLoomIsReachedStillReachesItOnce(t *testing.T) {
 		}
 	})
 }
+
+func TestAResolveOrAWarningNeverOpensALoomThread(t *testing.T) {
+	ctx := context.Background()
+	// unreached opens hello's outage while the hook can't be reached, so
+	// no marker holds the incident's one send.
+	unreached := func(t *testing.T) (*loomRig, int64) {
+		t.Helper()
+		r := newLoomRig(t)
+		r.setLoomURL("https://127.0.0.1:" + closedPort(t) + loomPath)
+		r.rounds(3, down("hello"))
+		inc := openIncident(t, r.w)
+		if r.hasMarker(inc.ID) {
+			t.Fatalf("an unreachable hook should leave no marker")
+		}
+		return r, inc.ID
+	}
+	// neverOpened checks that hello recovered and Loom heard nothing of it.
+	neverOpened := func(t *testing.T, r *loomRig, id int64) {
+		t.Helper()
+		inc, err := r.w.Store.Incident(ctx, id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if inc.ResolvedAt.IsZero() {
+			t.Fatalf("hello should have recovered: %+v", inc)
+		}
+		if got := r.loom.got(); len(got) != 0 || r.hasMarker(id) {
+			t.Fatalf("a resolve opened a Loom thread: %d requests, marker %v", len(got), r.hasMarker(id))
+		}
+	}
+
+	// A restart forgets that Loom is owed the outage, so the resolve is
+	// the only notice its leg is given.
+	t.Run("resolved after a restart", func(t *testing.T) {
+		r, id := unreached(t)
+		r.restart()
+		r.setLoomURL(r.loom.url())
+		r.rounds(20)
+		neverOpened(t, r, id)
+	})
+
+	t.Run("a resolve tried again after a restart", func(t *testing.T) {
+		r, id := unreached(t)
+		r.rounds(2)
+		if pending, err := r.w.Store.PendingResolvedIncidentNotices(ctx); err != nil || len(pending) != 1 {
+			t.Fatalf("the resolve should be owed: %+v, %v", pending, err)
+		}
+		r.restart()
+		r.setLoomURL(r.loom.url())
+		r.rounds(20)
+		neverOpened(t, r, id)
+	})
+
+	t.Run("told directly", func(t *testing.T) {
+		r := newLoomRig(t)
+		l := &LoomNotifier{LoomWebhook: integration.LoomWebhook{URL: r.loom.url(), Secret: loomSecret}, Store: r.w.Store, Secrets: r.sec}
+		opened := r.w.Now().Truncate(time.Millisecond)
+		inc := state.Incident{Key: "app:hello", Subject: "hello", Severity: state.SeverityCritical, Message: "web isn't running", OpenedAt: opened}
+		id, err := r.w.Store.OpenIncident(ctx, inc)
+		if err != nil {
+			t.Fatal(err)
+		}
+		open := Notice{IncidentID: id, Key: inc.Key, Transition: TransitionOpen, Severity: inc.Severity, Host: r.w.Hostname, Message: inc.Message, OpenedAt: opened}
+		resolved, warning := open, open
+		resolved.Transition, resolved.Retry = TransitionResolved, true
+		warning.Severity = state.SeverityWarning
+		for name, n := range map[string]Notice{"a resolve": resolved, "a warning": warning} {
+			if err := l.Notify(ctx, n); err != nil || len(r.loom.got()) != 0 || r.hasMarker(id) {
+				t.Fatalf("%s went to Loom: %d requests, marker %v, %v", name, len(r.loom.got()), r.hasMarker(id), err)
+			}
+		}
+	})
+}
