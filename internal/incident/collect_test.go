@@ -633,6 +633,62 @@ func TestEachKindOfKeyReadsItsOwnSources(t *testing.T) {
 	}
 }
 
+// A host incident lists the deploys of every app in the hour before it,
+// without their errors or steps: those can hold another app's secrets,
+// which a host incident's redaction doesn't know.
+func TestAHostIncidentListsOtherAppsDeploysWithoutTheirErrors(t *testing.T) {
+	ctx := context.Background()
+	store := openStore(t)
+	const token = "tok_fake_api_registry_0000"
+	started := opened.Add(-10 * time.Minute)
+	in, err := json.Marshal(apps.DeployInput{Revision: "r2"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan, err := json.Marshal(kernel.PlanView{Kind: apps.DeployKind, Target: "api", Steps: []kernel.PlanStepView{{Index: 0, Name: "pull", Change: "update"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.CreateOperation(ctx, state.NewOperation{ID: "op-api-1", Kind: apps.DeployKind, Target: "api", Input: in, Plan: plan, StepNames: []string{"pull"}, CreatedAt: started}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Claim(ctx, "op-api-1", "test", started, started.Add(time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.StepStarted(ctx, "op-api-1", 0, started); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.StepFinished(ctx, "op-api-1", 0, state.StepFailed, "the registry refused "+token, "", started.Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Finish(ctx, "op-api-1", state.Failed, "pull: the registry refused "+token, nil, started.Add(2*time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	inc := openIncident(t, store, "host:disk", "the disk is 95% full", opened)
+
+	e, err := Collect(ctx, inc, Sources{Store: store, Secrets: fakeSecrets{}, Host: "web.example.test", CollectedBy: "test", Now: func() time.Time { return opened }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(e.RecentDeploys) != 1 {
+		t.Fatalf("recent deploys %+v", e.RecentDeploys)
+	}
+	if d := e.RecentDeploys[0]; d.Operation != "op-api-1" || d.App != "api" || d.Revision != "r2" || d.Outcome != "failed" || d.Error != "" || d.Steps != nil {
+		t.Fatalf("recent deploy %+v", d)
+	}
+	stateDir := t.TempDir()
+	if err := Save(stateDir, e); err != nil {
+		t.Fatal(err)
+	}
+	file, err := os.ReadFile(filepath.Join(Dir(stateDir, inc.ID), EvidenceFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(file), token) {
+		t.Fatal("evidence.json holds api's token")
+	}
+}
+
 // fakeSecrets holds each app's secrets by version, the highest current,
 // or fails every read with err.
 type fakeSecrets struct {
