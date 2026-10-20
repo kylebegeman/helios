@@ -614,19 +614,32 @@ func UpgradeEdge(ctx context.Context, store *state.Store, sec *secrets.Store, ou
 	}
 	defer e.Close()
 	info, err := e.Inspect(ctx, edge.Container)
-	if err != nil {
+	return upgradeEdge(ctx, store, sec, info, err, func() error {
+		boot, err := EdgeConfig(ctx, store, sec)
+		if err != nil {
+			return err
+		}
+		return edge.Ensure(ctx, e, boot, out)
+	}, LoadEdge)
+}
+
+// upgradeEdge is UpgradeEdge once the edge's container is inspected, as
+// info or inspectErr: replace swaps out one an older helios made, and load,
+// which is LoadEdge outside tests, gives it the configuration. A missing
+// edge is left for host setup to make. One Docker fails to describe is
+// left as it is until the next start or deploy. Neither is loaded, so the
+// daemon reloads the edge once a CA it trusts runs out rather than count
+// on what the edge last took.
+func upgradeEdge(ctx context.Context, store *state.Store, sec *secrets.Store, info *docker.Info, inspectErr error, replace func() error, load func(context.Context, *state.Store, *secrets.Store) (bool, error)) (bool, error) {
+	if inspectErr != nil {
 		return false, nil
 	}
 	if info.Labels[edge.LayoutLabel] != edge.Layout {
-		boot, err := EdgeConfig(ctx, store, sec)
-		if err != nil {
-			return false, err
-		}
-		if err := edge.Ensure(ctx, e, boot, out); err != nil {
+		if err := replace(); err != nil {
 			return false, err
 		}
 	}
-	return LoadEdge(ctx, store, sec)
+	return load(ctx, store, sec)
 }
 
 // servesAny reports whether any of an app's workloads takes traffic from

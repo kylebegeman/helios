@@ -516,35 +516,24 @@ func TestAMintForATargetWhoseTrustFailedKeepsTheFileUnlessTheCAWasntKept(t *test
 // The target trusted the new CA, but the file couldn't be written: the
 // error names the CA and the forget command for that very target, since
 // nobody holds a key for it. The file is opened before the trust, so only
-// a write can fail once the target has answered, and a file-size limit
-// makes it fail at the key.
+// a write can fail once the target has answered, and a disk that fills
+// once the certificate is in the file makes it fail at the key.
 func TestAMintForATargetWhoseFileCantBeWrittenSaysHowToForgetTheCAThere(t *testing.T) {
 	config, _, stdin := originPullTarget(t, "edge.origin-pull.v1")
 	path := filepath.Join(t.TempDir(), "shop.pem")
-	var limit syscall.Rlimit
-	if err := syscall.Getrlimit(syscall.RLIMIT_FSIZE, &limit); err != nil {
-		t.Fatal(err)
-	}
-	// The CA sent to the target fits, and so does the certificate, but
-	// not the key after it. The limit is the whole process's, which is
-	// safe while this test, which can't be parallel, runs.
-	const fits = 2048
-	if limit.Cur < fits {
-		t.Skipf("files are already limited to %d bytes", limit.Cur)
-	}
-	restore := func() {
-		if err := syscall.Setrlimit(syscall.RLIMIT_FSIZE, &limit); err != nil {
-			t.Errorf("the file-size limit wasn't restored: %v", err)
+	// The file is made as mint makes it, and only its writes fail, so the
+	// test process's other files, the testing package's own logs among
+	// them, still take every write.
+	create := createOriginPullFile
+	t.Cleanup(func() { createOriginPullFile = create })
+	createOriginPullFile = func(path string) (originPullFile, error) {
+		f, err := create(path)
+		if err != nil {
+			return nil, err
 		}
-	}
-	t.Cleanup(restore)
-	small := limit
-	small.Cur = fits
-	if err := syscall.Setrlimit(syscall.RLIMIT_FSIZE, &small); err != nil {
-		t.Fatal(err)
+		return fullAfterCertificate{f}, nil
 	}
 	out, stderr, code := targetRun(t, config, "edge", "origin-pull", "mint", "shop.example.com", "--out", path)
-	restore()
 
 	sent, _ := os.ReadFile(stdin)
 	fp, err := apps.OriginPullFingerprint(string(sent))
@@ -563,6 +552,17 @@ func TestAMintForATargetWhoseFileCantBeWrittenSaysHowToForgetTheCAThere(t *testi
 	if _, err := os.Stat(path); !os.IsNotExist(err) {
 		t.Fatalf("the partly written file was left: %v", err)
 	}
+}
+
+// fullAfterCertificate is mint's file on a disk that fills once the
+// certificate is in it: the key after it can't be written.
+type fullAfterCertificate struct{ originPullFile }
+
+func (f fullAfterCertificate) Write(p []byte) (int, error) {
+	if bytes.Contains(p, []byte("PRIVATE KEY")) {
+		return 0, syscall.ENOSPC
+	}
+	return f.originPullFile.Write(p)
 }
 
 // Minting for a target that trusts an older CA for the host says to forget

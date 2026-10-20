@@ -195,7 +195,7 @@ func (a *app) mintOriginPull(host, out string, trust func(caPEM string) (originP
 	if out == "" || out == "-" {
 		return errors.New("give --out, a new file for the certificate and key to upload to Cloudflare")
 	}
-	f, err := os.OpenFile(out, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+	f, err := createOriginPullFile(out)
 	if errors.Is(err, fs.ErrExist) {
 		return fmt.Errorf("%s already exists; give --out a file that doesn't, so no key is written over", out)
 	}
@@ -304,9 +304,28 @@ func (a *app) originPullCommand(args ...string) string {
 	return command + " edge origin-pull " + strings.Join(args, " ")
 }
 
+// originPullFile is mint's --out file, as much of it as mint uses.
+type originPullFile interface {
+	io.Writer
+	Sync() error
+	Close() error
+}
+
+// createOriginPullFile makes mint's --out file, new and readable by its
+// owner alone. It is a variable so a test can have the file fail part way
+// through, as a full disk does, without limiting the file sizes of the
+// whole test process.
+var createOriginPullFile = func(path string) (originPullFile, error) {
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+	if err != nil {
+		return nil, err
+	}
+	return f, nil
+}
+
 // writeOriginPull writes the certificate and then its key, and makes sure
 // they are on disk.
-func writeOriginPull(f *os.File, minted *edge.MintedOriginPull) error {
+func writeOriginPull(f originPullFile, minted *edge.MintedOriginPull) error {
 	if _, err := f.Write(minted.LeafPEM); err != nil {
 		return err
 	}
