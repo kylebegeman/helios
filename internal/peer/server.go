@@ -30,6 +30,9 @@ const (
 	MaxHeaderBytes = 8 << 10
 	// MaxViewBytes bounds the views an observer pushes in one request.
 	MaxViewBytes = 64 << 10
+	// ListenerTick is how often the daemon reads where its peer listener
+	// is to listen, and follows it.
+	ListenerTick = 30 * time.Second
 )
 
 // Header is on every answer a peer listener gives, so an observer can

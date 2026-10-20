@@ -133,6 +133,17 @@ func (sc *Sidecar) prune(now time.Time) {
 	sc.Deferring = deferring
 }
 
+// nothingToKeep reports whether sc keeps nothing and there is no sidecar
+// beside store's database to replace, as on a machine that has never set
+// up peer watch.
+func nothingToKeep(store *state.Store, sc Sidecar) bool {
+	if sc.Self != "" || len(sc.LastGood) > 0 || len(sc.LastView) > 0 || len(sc.Told) > 0 || len(sc.Deferring) > 0 {
+		return false
+	}
+	_, err := os.Stat(sidecarPath(store))
+	return errors.Is(err, os.ErrNotExist)
+}
+
 // writeSidecar replaces the sidecar beside store's database at once, so
 // a crash leaves the old one or the new one, never part of either.
 func writeSidecar(store *state.Store, sc Sidecar) error {

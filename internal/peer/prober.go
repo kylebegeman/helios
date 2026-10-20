@@ -187,7 +187,7 @@ func (s *Source) begin() {
 
 // Save writes what the watch must remember across a restart to the
 // sidecar, leaving out what is past keeping. The watch saves once after
-// each round.
+// each round. A machine that has never watched a peer gets no sidecar.
 func (s *Source) Save() error {
 	s.mu.Lock()
 	s.begin()
@@ -196,6 +196,9 @@ func (s *Source) Save() error {
 	s.told, s.deferring = sc.Told, sc.Deferring
 	sc.Told, sc.Deferring = append([]Told{}, sc.Told...), append([]Deferral{}, sc.Deferring...)
 	s.mu.Unlock()
+	if nothingToKeep(s.Store, sc) {
+		return nil
+	}
 	return writeSidecar(s.Store, sc)
 }
 
@@ -219,7 +222,7 @@ func (s *Source) Observe(ctx context.Context) []watch.Condition {
 	case errors.Is(err, ErrNotSet):
 		return nil
 	case err != nil:
-		return s.held(ctx)
+		return s.Held(ctx)
 	}
 	deadline := s.deadline
 	if deadline == 0 {
@@ -315,8 +318,9 @@ func (s *Source) openKeys(ctx context.Context) []string {
 	return keys
 }
 
-// held holds every open peer incident as it is.
-func (s *Source) held(ctx context.Context) []watch.Condition {
+// Held holds every open peer incident as it is, for a round in which
+// the peers couldn't be looked at.
+func (s *Source) Held(ctx context.Context) []watch.Condition {
 	var conditions []watch.Condition
 	for _, key := range s.openKeys(ctx) {
 		if strings.HasPrefix(key, keyPrefix) {

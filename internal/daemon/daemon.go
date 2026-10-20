@@ -28,6 +28,7 @@ import (
 	"github.com/kylebegeman/helios/internal/integration"
 	"github.com/kylebegeman/helios/internal/kernel"
 	"github.com/kylebegeman/helios/internal/manifest"
+	"github.com/kylebegeman/helios/internal/peer"
 	"github.com/kylebegeman/helios/internal/secrets"
 	"github.com/kylebegeman/helios/internal/signals"
 	"github.com/kylebegeman/helios/internal/state"
@@ -221,7 +222,7 @@ func Run(ctx context.Context, cfg Config, logw io.Writer) error {
 	engine := kernel.New(store, Registry(store, sec, cfg.Socket, cfg.StateDir), cfg.Owner)
 	logf("helios daemon %s, state %s, owner %s", version.Current().Version, store.Path(), cfg.Owner)
 	d := &daemon{cfg: cfg, logf: logf, store: store, sec: sec, api: &api.Server{Engine: engine, Store: store, Lifetime: ctx}, machine: hostname(), cancel: cancel,
-		alerts: &watch.Alerts{Secrets: sec, Store: store}}
+		alerts: &watch.Alerts{Secrets: sec, Store: store}, peers: &peer.Source{Secrets: sec, Store: store, Log: logf}}
 	defer func() {
 		cancel()
 		d.loops.Wait()
@@ -284,7 +285,10 @@ type daemon struct {
 	api     *api.Server
 	machine string
 	// alerts tells a person, for the watcher and for webhook deploys.
-	alerts *watch.Alerts
+	alerts watch.Notifier
+	// peers is this machine's watch of its peers, judged in the watcher's
+	// round and answered on the peer listener.
+	peers  *peer.Source
 	loops  sync.WaitGroup
 	jobs   *app.Jobs
 	cancel context.CancelFunc
@@ -323,8 +327,9 @@ func (d *daemon) recoverOperations(ctx context.Context) error {
 }
 
 // startLoops starts what runs on the daemon's own clocks: cron workloads,
-// outside the operation lock; watching; reloading the edge as origin-pull
-// CAs run out; signals; and scheduled backups, drills and collection.
+// outside the operation lock; watching, this machine and its peers; the
+// peer listener; reloading the edge as origin-pull CAs run out; signals;
+// and scheduled backups, drills and collection.
 // edgeLoaded is when the edge took its configuration at start, zero when
 // it didn't.
 func (d *daemon) startLoops(ctx context.Context, edgeLoaded time.Time) {
@@ -334,17 +339,14 @@ func (d *daemon) startLoops(ctx context.Context, edgeLoaded time.Time) {
 	d.every(ctx, 30*time.Second, false, func(now time.Time) {
 		guarded(logf, "cron", func() { jobs.Tick(ctx, now, logf) })
 	})
-	watcher := &watch.Watcher{Store: d.store, Notifier: d.alerts, Hostname: d.machine, Log: logf}
+	watcher := d.newWatcher()
 	prober := watch.NewProber(d.store)
 	prober.CheckSecrets = d.sec.Load
 	prober.OriginPullTrust = func() (edge.OriginPullTrust, error) { return app.LoadOriginPullTrust(d.sec) }
 	d.every(ctx, time.Minute, true, func(time.Time) {
-		guarded(logf, "watch", func() {
-			if err := watcher.Round(ctx, prober.Observe(ctx)); err != nil && ctx.Err() == nil {
-				logf("watch: %v", err)
-			}
-		})
+		guarded(logf, "watch", func() { d.watchRound(ctx, watcher, prober.Observe, d.peers.Observe) })
 	})
+	d.servePeers(ctx, d.newPeerListener())
 	reloader := &originPullReloader{Trust: prober.OriginPullTrust, Log: logf, loaded: edgeLoaded,
 		Reload: func(ctx context.Context) (bool, error) {
 			// Under the operation lock, so a configuration built here from
