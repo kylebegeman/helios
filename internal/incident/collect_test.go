@@ -159,6 +159,33 @@ func TestNoisyLogFitsBody(t *testing.T) {
 	assertNoSecrets(t, "evidence without logs", b)
 }
 
+// An incident's message can end with the container's own output, such as
+// a health command's last words, where no pattern finds a secret. Without
+// the values to redact it with, it is left out like the logs.
+func TestMessagesAreLeftOutWhenTheSecretsCantBeRead(t *testing.T) {
+	store := openStore(t)
+	saveRevision(t, store, "web", "r7", nil, map[string]string{"web": "bedrock-web-web-r7"})
+	openIncident(t, store, "app:web", "web: the health command failed: password: sk_fake_earlier_value", opened.Add(-24*time.Hour))
+	inc := openIncident(t, store, "app:web", "web: the health command failed: settings invalid {'api_key': 'sk_fake_current_value'}", opened)
+	e, err := Collect(context.Background(), inc, Sources{
+		Store: store, Secrets: fakeSecrets{err: errors.New("the sealed secrets can't be opened")},
+		Host: "web.example.test", CollectedBy: "test", Now: func() time.Time { return opened },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := json.Marshal(e)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if e.Redaction.Status != RedactionLogsOmitted || strings.Contains(string(b), "sk_fake_") {
+		t.Fatalf("redaction %q with %s", e.Redaction.Status, b)
+	}
+	if len(e.History.Incidents) != 1 || e.Incident.Message != messageOmitted || e.History.Incidents[0].Message != messageOmitted {
+		t.Fatalf("message %q, history %+v", e.Incident.Message, e.History.Incidents)
+	}
+}
+
 // assertNoSecrets fails when out holds any secret value or private
 // address, as written or as JSON escapes it.
 func assertNoSecrets(t *testing.T, what string, out []byte) {

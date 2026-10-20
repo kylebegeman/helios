@@ -44,7 +44,7 @@ type Journal interface {
 
 // Sources are what Collect reads. A nil Journal or Engine, or no
 // Upstream, leaves out what it would give. Without Secrets nothing is
-// known to be redacted, so logs and step notes are left out.
+// known to be redacted, so logs, step notes and messages are left out.
 type Sources struct {
 	Store    *state.Store
 	Secrets  Secrets
@@ -142,7 +142,7 @@ func (c *collection) fail(source string, err error) {
 // secrets and, for an app, every secrets version it has kept, which
 // covers the versions its revisions pinned even after gc removed them,
 // and the env values of the revisions it still has. A set that can't be
-// read leaves logs and step notes out.
+// read leaves logs, step notes and messages out.
 func (c *collection) loadRedactor(ctx context.Context, app string) {
 	c.redact = &redactor{}
 	unreadable := func(source string, err error) {
@@ -546,8 +546,8 @@ func (c *collection) upstream(ctx context.Context) {
 }
 
 // finish redacts the evidence, caps its strings and fits it to FileMax.
-// Should a secret value still be found, logs and step notes go and it is
-// fit again; should one survive that, there is no evidence.
+// Should a secret value still be found, logs, step notes and messages go
+// and it is fit again; should one survive that, there is no evidence.
 func (c *collection) finish() (*Evidence, error) {
 	e := c.e
 	c.redact.evidence(e)
@@ -558,7 +558,7 @@ func (c *collection) finish() (*Evidence, error) {
 	Fit(e, FileMax)
 	if leaked := c.redact.leaks(e); len(leaked) > 0 {
 		omitLogs(e)
-		e.Errors = append(e.Errors, SourceError{Source: "redaction", Error: "a value of " + strings.Join(leaked, ", ") + " survived redaction, so logs and step notes were left out"})
+		e.Errors = append(e.Errors, SourceError{Source: "redaction", Error: "a value of " + strings.Join(leaked, ", ") + " survived redaction, so logs, step notes and messages were left out"})
 		Fit(e, FileMax)
 		if len(c.redact.leaks(e)) > 0 {
 			return nil, errors.New("a secret value survived redaction, so there is no evidence")
@@ -567,11 +567,22 @@ func (c *collection) finish() (*Evidence, error) {
 	return e, nil
 }
 
+// messageOmitted stands in for an incident's message omitLogs leaves out.
+const messageOmitted = "[left out with the logs]"
+
 // omitLogs leaves out what can carry an app's secrets unnoticed: logs,
-// and the notes and errors of the last change and its steps.
+// the notes and errors of the last change and its steps, and the
+// messages of the incident and its key's earlier ones, which can end with
+// a container's own output.
 func omitLogs(e *Evidence) {
 	e.Redaction.Status = RedactionLogsOmitted
 	e.Logs = nil
+	e.Incident.Message = messageOmitted
+	if h := e.History; h != nil {
+		for i := range h.Incidents {
+			h.Incidents[i].Message = messageOmitted
+		}
+	}
 	if lc := e.LastChange; lc != nil {
 		lc.Error = ""
 		for i := range lc.Steps {

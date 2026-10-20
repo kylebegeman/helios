@@ -66,7 +66,8 @@ const (
 	// known and replaced.
 	RedactionApplied = "applied"
 	// RedactionLogsOmitted means a secret set couldn't be read or a value
-	// survived redaction, so logs and step notes were left out.
+	// survived redaction, so logs, step notes and incident messages were
+	// left out.
 	RedactionLogsOmitted = "logs_omitted"
 )
 
