@@ -360,13 +360,14 @@ func TestAMachineBackupChecksEachCopyAgainstTheDiskItFindsThen(t *testing.T) {
 // The machine backup holds the operation lock, so it waits only so long
 // for Docker to answer each call.
 func TestAMachineBackupStopsWaitingForADockerThatDoesNotAnswer(t *testing.T) {
-	// answered runs call with a short limit on each Docker call, and fails
-	// the test if it waited for Docker much longer than that.
+	// answered runs call with a short limit on each Docker call and on the
+	// wait for its output to close, and fails the test if it waited for
+	// Docker much longer than that.
 	answered := func(t *testing.T, call func(ctx context.Context) error) error {
 		t.Helper()
-		saved := machineDockerTimeout
-		machineDockerTimeout = 50 * time.Millisecond
-		t.Cleanup(func() { machineDockerTimeout = saved })
+		saved, savedDelay := machineDockerTimeout, machineDockerWaitDelay
+		machineDockerTimeout, machineDockerWaitDelay = 50*time.Millisecond, 50*time.Millisecond
+		t.Cleanup(func() { machineDockerTimeout, machineDockerWaitDelay = saved, savedDelay })
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 		started := time.Now()
@@ -401,6 +402,30 @@ func TestAMachineBackupStopsWaitingForADockerThatDoesNotAnswer(t *testing.T) {
 		})
 		if want := "size the workload images: docker did not answer within 50ms"; err == nil || err.Error() != want {
 			t.Fatalf("got %v, want %q", err, want)
+		}
+	})
+	// A docker that is a wrapper script runs the real one as its child,
+	// which keeps the output open after the wrapper is stopped.
+	t.Run("a docker whose child holds its output", func(t *testing.T) {
+		dockerCLI(t, "sleep 5")
+		err := answered(t, func(ctx context.Context) error {
+			_, err := recoveryImageSizes(ctx, []string{"sha256:" + strings.Repeat("c", 64)})
+			return err
+		})
+		if want := "size the workload images: docker did not answer within 50ms"; err == nil || err.Error() != want {
+			t.Fatalf("got %v, want %q", err, want)
+		}
+	})
+	t.Run("archiving the images when the backup is stopped", func(t *testing.T) {
+		dockerCLI(t, "sleep 5")
+		archive := filepath.Join(t.TempDir(), machineImagesFile)
+		err := answered(t, func(ctx context.Context) error {
+			ctx, cancel := context.WithTimeout(ctx, 50*time.Millisecond)
+			defer cancel()
+			return saveMachineImages(ctx, archive, []string{"sha256:" + strings.Repeat("c", 64)})
+		})
+		if err == nil || !strings.HasPrefix(err.Error(), "archive the machine's workload images: ") {
+			t.Fatalf("got %v, want the archive stopped", err)
 		}
 	})
 	t.Run("connecting", func(t *testing.T) {

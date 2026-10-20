@@ -163,13 +163,22 @@ func syncRecoveryDirectory(path string) error {
 // shorten it.
 var machineDockerTimeout = 2 * time.Minute
 
+// machineDockerWaitDelay is how long a stopped docker call waits for its
+// output to close. A docker that is a wrapper script runs the real one as
+// its child, and stopping the wrapper leaves the child holding the output
+// open, so without it the call would wait for the child however long that
+// takes. Tests shorten it.
+var machineDockerWaitDelay = 10 * time.Second
+
 // machineDocker runs one docker command for the machine catalog, which
 // holds the operation lock, so a Docker that stops answering can't hold
 // the lock with it.
 func machineDocker(ctx context.Context, args ...string) ([]byte, error) {
 	callCtx, cancel := context.WithTimeout(ctx, machineDockerTimeout)
 	defer cancel()
-	out, err := exec.CommandContext(callCtx, "docker", args...).Output()
+	cmd := exec.CommandContext(callCtx, "docker", args...)
+	cmd.WaitDelay = machineDockerWaitDelay
+	out, err := cmd.Output()
 	if err != nil && ctx.Err() == nil && errors.Is(callCtx.Err(), context.DeadlineExceeded) {
 		return nil, fmt.Errorf("docker did not answer within %s", machineDockerTimeout)
 	}
@@ -250,7 +259,9 @@ func saveMachineImages(ctx context.Context, path string, refs []string) error {
 	saveCtx, cancel := context.WithTimeout(ctx, machineImagesTimeout)
 	defer cancel()
 	args := append([]string{"image", "save", "--output", path + ".tmp"}, refs...)
-	if _, err := exec.CommandContext(saveCtx, "docker", args...).CombinedOutput(); err != nil {
+	cmd := exec.CommandContext(saveCtx, "docker", args...)
+	cmd.WaitDelay = machineDockerWaitDelay
+	if _, err := cmd.CombinedOutput(); err != nil {
 		_ = os.Remove(path + ".tmp")
 		if ctx.Err() == nil && errors.Is(saveCtx.Err(), context.DeadlineExceeded) {
 			return fmt.Errorf("archive the machine's workload images: did not finish within %s and was stopped", machineImagesTimeout)
