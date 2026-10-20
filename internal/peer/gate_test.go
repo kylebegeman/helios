@@ -118,15 +118,23 @@ func (p *pager) restart(t *testing.T) {
 	if err := p.src.Save(); err != nil {
 		t.Fatal(err)
 	}
+	p.crash()
+}
+
+// crash is web2's daemon stopped before it saves the sidecar, and
+// started again.
+func (p *pager) crash() {
 	p.src = &Source{Secrets: p.secrets, Store: p.store, Now: p.src.Now, fetch: p.fetch, handshake: p.handshake, check: p.check}
 	p.gate = &Gate{Next: p.gate.Next, Source: p.src}
 	p.wt = p.incidents(p.gate)
 }
 
-// logging keeps every line web2's watch logs, and returns them.
+// logging keeps every line web2's watch and its peer watch log, and
+// returns them.
 func (p *pager) logging() *[]string {
 	lines := &[]string{}
 	p.wt.Log = func(format string, args ...any) { *lines = append(*lines, fmt.Sprintf(format, args...)) }
+	p.src.Log = p.wt.Log
 	return lines
 }
 

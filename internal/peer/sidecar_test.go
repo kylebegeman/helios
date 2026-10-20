@@ -98,3 +98,56 @@ func TestSidecarSurvivesRestartAndPrunes(t *testing.T) {
 		t.Fatalf("logged %q, then %v", logged, err)
 	}
 }
+
+// The recovery of a page this machine sent goes out when the record that
+// it sent it is lost: the sidecar unreadable, deleted, or not yet saved
+// when the daemon stopped. Every observer that stood down leaves that
+// recovery to this machine, so nobody else sends it, and the alert would
+// ring on. The loss is logged once, however many tries the recovery
+// takes.
+func TestALostRecordOfAPageSentHereLeavesItsRecoveryHere(t *testing.T) {
+	for _, loss := range []struct {
+		name string
+		lose func(t *testing.T, p *pager)
+	}{
+		{"unreadable", func(t *testing.T, p *pager) {
+			p.restart(t)
+			if err := os.WriteFile(sidecarPath(p.store), []byte("{not json"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+		}},
+		{"deleted", func(t *testing.T, p *pager) {
+			p.restart(t)
+			if err := os.Remove(sidecarPath(p.store)); err != nil {
+				t.Fatal(err)
+			}
+		}},
+		{"not yet saved", func(t *testing.T, p *pager) { p.crash() }},
+	} {
+		t.Run(loss.name, func(t *testing.T) {
+			p := paging(t)
+			pushover, email := p.legs()
+			p.down("web3")
+			p.rounds(t, watch.DefaultOpenAfter-1)
+			if err := p.src.Save(); err != nil {
+				t.Fatal(err)
+			}
+			p.rounds(t, 1)
+			loss.lose(t, p)
+			logged := p.logging()
+			p.up("web3")
+			pushover.failing, email.failing = true, true
+			p.rounds(t, watch.DefaultResolveAfter)
+			pushover.failing, email.failing = false, false
+			p.rounds(t, handoff)
+			want := []string{watch.TransitionOpen, watch.TransitionResolved}
+			if got, pending := transitions(pushover.got), p.pending(t); !slices.Equal(got, want) || !slices.Equal(transitions(email.got), want) || pending != nil {
+				t.Fatalf("sent %v and %v, pending %v", got, transitions(email.got), pending)
+			}
+			lost := "peer state: no record of who told peer:web3; its recovery goes from here"
+			if n := strings.Count(strings.Join(*logged, "\n"), lost); n != 1 {
+				t.Fatalf("logged the loss %d times:\n%s", n, strings.Join(*logged, "\n"))
+			}
+		})
+	}
+}

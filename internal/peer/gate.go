@@ -138,6 +138,13 @@ func (g *Gate) page(ctx context.Context, self string, n watch.Notice) error {
 // observer, in sight with its incident still open, sends the recovery
 // when it closes it. An observer out of sight for HandoffWait has its
 // recovery sent from here.
+//
+// An incident told with no record of who told it lost the record with
+// the sidecar, or stopped before the sidecar kept it. Its recovery goes
+// from here: this machine may have paged it, and every observer that
+// stood down leaves that recovery to this one. A second recovery carries
+// the same Pushover tag as the first; a lost one leaves an emergency
+// ringing.
 func (g *Gate) recovered(ctx context.Context, self string, n watch.Notice) error {
 	s := g.Source
 	now := s.now()
@@ -149,10 +156,18 @@ func (g *Gate) recovered(ctx context.Context, self string, n watch.Notice) error
 		s.forget(n.IncidentID)
 		s.mu.Unlock()
 		return g.send(ctx, n, finishing)
-	case !told:
+	case !told && n.NotifiedAt.IsZero():
 		s.forget(n.IncidentID)
 		s.mu.Unlock()
 		return nil
+	case !told:
+		// A try that missed every leg is retried without a word more.
+		if _, tried := s.missed[n.IncidentID]; !tried {
+			s.log("peer state: no record of who told %s; its recovery goes from here", n.Key)
+		}
+		s.forget(n.IncidentID)
+		s.mu.Unlock()
+		return g.send(ctx, n, false)
 	}
 	theirs, seen := s.seen[teller.By]
 	since := later(s.hold(n, teller.By, now).Since, s.started)

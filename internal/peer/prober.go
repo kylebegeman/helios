@@ -160,7 +160,8 @@ func (s *Source) log(format string, args ...any) {
 
 // begin starts the watch's clock the first time it is asked anything,
 // and takes up what the sidecar kept. A sidecar that can't be read is
-// started afresh, which only makes the clocks it kept start again. The
+// started afresh: the clocks it kept start again, and the recovery of an
+// incident told with no record of who told it goes from this machine. The
 // caller holds mu.
 func (s *Source) begin() {
 	if !s.started.IsZero() {
