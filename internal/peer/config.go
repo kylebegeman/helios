@@ -83,7 +83,7 @@ var (
 
 // reservedNames name peer watch's own alerts, peer:self and
 // peer:edge-provider, so no machine may take them.
-var reservedNames = map[string]bool{"self": true, "edge-provider": true}
+var reservedNames = map[string]bool{selfName: true, edgeProviderName: true}
 
 // meshRanges are where a listener may bind and a mesh address may point:
 // loopback, and the tailnet's ranges.
