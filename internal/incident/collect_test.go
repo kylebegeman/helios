@@ -240,6 +240,14 @@ func noisyJournal(t *testing.T) {
 	if err := os.WriteFile(suppressed, []byte(note), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	journalctlOnPath(t, journal, suppressed)
+}
+
+// journalctlOnPath puts a journalctl on PATH that prints the entries in
+// journal, only the newest when asked for --lines as the real one does,
+// and those in suppressed when asked for journald's own.
+func journalctlOnPath(t *testing.T, journal, suppressed string) {
+	t.Helper()
 	script := strings.NewReplacer("JOURNAL", journal, "SUPPRESSED", suppressed).Replace(`#!/bin/sh
 lines=0
 for arg in "$@"; do
@@ -258,6 +266,161 @@ exec cat 'JOURNAL'
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+}
+
+// tokenTail is what follows API_TOKEN's first nine bytes, which on its
+// own no redaction can know for part of a secret.
+var tokenTail = strings.TrimPrefix(apiToken, "tok_fake_")
+
+// A long line whose first chunk fell outside the journal's newest 4,800
+// entries starts partway through a secret, so it is left out.
+func TestALogLineThatLostItsFirstChunkIsLeftOut(t *testing.T) {
+	store := openStore(t)
+	saveRevision(t, store, "web", "r7", nil, nil)
+	inc := openIncident(t, store, "app:web", "web answers 502", opened)
+	dir := t.TempDir()
+	journal := filepath.Join(dir, "journal.json")
+	var entries []string
+	at := opened.Add(-time.Minute)
+	write := func(container, message string, chunk map[string]string) {
+		entry := map[string]string{"__REALTIME_TIMESTAMP": strconv.FormatInt(at.UnixMicro(), 10), "MESSAGE": message, "CONTAINER_NAME": container, "CONTAINER_ID_FULL": container, "BEDROCK_APP": "web"}
+		maps.Copy(entry, chunk)
+		b, err := json.Marshal(entry)
+		if err != nil {
+			t.Fatal(err)
+		}
+		entries = append(entries, string(b))
+		at = at.Add(time.Millisecond)
+	}
+	chunk := func(ordinal int, last bool) map[string]string {
+		c := map[string]string{"CONTAINER_PARTIAL_ID": "p1", "CONTAINER_PARTIAL_ORDINAL": strconv.Itoa(ordinal), "CONTAINER_PARTIAL_LAST": strconv.FormatBool(last)}
+		if !last {
+			c["CONTAINER_PARTIAL_MESSAGE"] = "true"
+		}
+		return c
+	}
+	// web-01 dumps its settings with API_TOKEN across its first two
+	// chunks, then web-02 writes enough to push the first chunk out.
+	write("web-01", strings.Repeat("x", 16<<10-len("API_TOKEN=tok_fake_"))+"API_TOKEN=tok_fake_", chunk(1, false))
+	write("web-01", tokenTail+strings.Repeat("y", 16<<10-len(tokenTail)), chunk(2, false))
+	write("web-01", " and the rest", chunk(3, true))
+	for i := range maxContainers*linesPerContainer - 2 {
+		write("web-02", fmt.Sprintf("GET /items/%d 200", i), nil)
+	}
+	if err := os.WriteFile(journal, []byte(strings.Join(entries, "\n")+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	suppressed := filepath.Join(dir, "suppressed.json")
+	if err := os.WriteFile(suppressed, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	journalctlOnPath(t, journal, suppressed)
+	sealed := fakeSecrets{versions: map[string]map[int]map[string]string{"web": {2: {"API_TOKEN": apiToken}}}}
+
+	e, err := Collect(context.Background(), inc, Sources{Store: store, Secrets: sealed, Journal: docker.Journal{}, Host: "web.example.test", CollectedBy: "test", Now: func() time.Time { return opened }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if e.Redaction.Status != RedactionApplied || len(e.Errors) != 0 {
+		t.Fatalf("redaction %q, errors %+v", e.Redaction.Status, e.Errors)
+	}
+	b, err := json.Marshal(e)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(b), tokenTail) {
+		t.Fatal("the evidence holds the end of API_TOKEN")
+	}
+	if len(e.Logs) != 1 || e.Logs[0].Container != "web-02" || e.Logs[0].LinesKept != linesPerContainer {
+		t.Fatalf("logs %+v", e.Logs)
+	}
+}
+
+// The engine's tail counts Docker's 16 KiB chunks rather than lines,
+// stdout and stderr share its output, and its read stops at 8 MiB, so a
+// line can start or end partway through a secret; such lines are left
+// out.
+func TestEngineLinesThatMayBePartOfAnotherAreLeftOut(t *testing.T) {
+	store := openStore(t)
+	saveRevision(t, store, "web", "r7", nil, map[string]string{"web": "bedrock-web-web-r7"})
+	inc := openIncident(t, store, "app:web", "web answers 502", opened)
+	sealed := fakeSecrets{versions: map[string]map[int]map[string]string{"web": {2: {"API_TOKEN": apiToken}}}}
+	// chunk is one of Docker's 16 KiB chunks.
+	chunk := func(start, fill, end string) string {
+		return start + strings.Repeat(fill, 16<<10-len(start)-len(end)) + end
+	}
+	cut := "API_TOKEN=tok_fake_"
+	gets := func(n int) []string {
+		var lines []string
+		for i := range n {
+			lines = append(lines, fmt.Sprintf("GET /items/%d 200\n", i))
+		}
+		return lines
+	}
+	for _, c := range []struct {
+		name      string
+		output    []string
+		total     int
+		first     string
+		truncated string
+	}{
+		{
+			name:   "a tail of whole lines is kept",
+			output: gets(400),
+			total:  400, first: "GET /items/0 200",
+		},
+		{
+			// The line after the long one goes too: from the other
+			// stream it could have been the long one's rest.
+			name:   "the tail starts inside a line",
+			output: append([]string{chunk("", "x", cut), chunk(tokenTail, "y", cut), tokenTail + " and the rest\n"}, gets(399)...),
+			total:  398, first: "GET /items/1 200",
+		},
+		{
+			name:   "a stderr line comes between a stdout line's chunks",
+			output: []string{"starting\n", chunk("", "x", cut), "oops\n", tokenTail + " and the rest\n", "done\n"},
+			total:  3, first: "starting",
+		},
+		{
+			// Only a driver whose chunks are larger than the usual
+			// 16 KiB fills 8 MiB within the tail.
+			name:   "the read stops at 8 MiB inside a line",
+			output: []string{strings.Repeat("c", docker.JournalReadLimit-25) + "\n", "short\n", "kept\n", apiToken + "\n", "later\n"},
+			total:  1, first: "kept", truncated: "logs: the engine read of bedrock-web-web-r7 stopped at 8 MiB",
+		},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			engine := &fakeEngine{logs: map[string][]string{"bedrock-web-web-r7": c.output}}
+			e, err := Collect(context.Background(), inc, Sources{Store: store, Secrets: sealed, Engine: engine, Host: "web.example.test", CollectedBy: "test", Now: func() time.Time { return opened }})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if e.Redaction.Status != RedactionApplied || len(e.Errors) != 0 {
+				t.Fatalf("redaction %q, errors %+v", e.Redaction.Status, e.Errors)
+			}
+			b, err := json.Marshal(e)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, part := range []string{"tok_fa", tokenTail} {
+				if strings.Contains(string(b), part) {
+					t.Fatalf("the evidence holds %q", part)
+				}
+			}
+			if len(e.Logs) != 1 || len(e.Logs[0].Lines) == 0 {
+				t.Fatalf("%d logs", len(e.Logs))
+			}
+			if e.Logs[0].LinesTotal != c.total {
+				t.Fatalf("%d lines, want %d", e.Logs[0].LinesTotal, c.total)
+			}
+			if first := e.Logs[0].Lines[0].Text; first != c.first {
+				t.Fatalf("first line %.80q", first)
+			}
+			if c.truncated != "" && !slices.Contains(e.Truncated, c.truncated) {
+				t.Fatalf("truncated %q", e.Truncated)
+			}
+		})
+	}
 }
 
 func TestEachKindOfKeyReadsItsOwnSources(t *testing.T) {
@@ -325,7 +488,7 @@ func TestEachKindOfKeyReadsItsOwnSources(t *testing.T) {
 		t.Run(c.key, func(t *testing.T) {
 			inc := openIncident(t, store, c.key, "now", opened)
 			journal := &recordingJournal{containers: []docker.JournalContainer{{ID: "c1", Name: "bedrock-web-web-r7", Workload: "web", Revision: "r7", Lines: []docker.JournalLine{{At: opened.Add(-time.Minute), Stream: "stderr", Text: "panic"}}}}}
-			engine := &fakeEngine{logs: map[string]string{"bedrock-web-web-r7": "from the engine\n", "bedrock-web-worker-r7": "started\nworking\n"}}
+			engine := &fakeEngine{logs: map[string][]string{"bedrock-web-web-r7": {"from the engine\n"}, "bedrock-web-worker-r7": {"started\n", "working\n"}}}
 			e, err := Collect(ctx, inc, Sources{
 				Store: store, Secrets: fakeSecrets{}, Engine: engine, Journal: journal,
 				Upstream: []Statuspage{{Name: "status.example.test", Base: page.URL}},
@@ -420,19 +583,24 @@ func (j *recordingJournal) Suppressed(ctx context.Context, since, until time.Tim
 	return nil, nil
 }
 
-// fakeEngine has the output of the containers in logs, and no others.
+// fakeEngine has the output of the containers in logs, each entry as
+// Docker logged it, and no others. Its tail counts entries, as Docker's
+// does.
 type fakeEngine struct {
-	logs  map[string]string
+	logs  map[string][]string
 	asked []string
 }
 
 func (f *fakeEngine) Logs(ctx context.Context, name string, opts docker.LogOptions, w io.Writer) error {
 	f.asked = append(f.asked, name)
-	text, ok := f.logs[name]
+	entries, ok := f.logs[name]
 	if !ok {
 		return errdefs.ErrNotFound
 	}
-	_, err := io.WriteString(w, text)
+	if n, err := strconv.Atoi(opts.Tail); err == nil {
+		entries = entries[max(0, len(entries)-n):]
+	}
+	_, err := io.WriteString(w, strings.Join(entries, ""))
 	return err
 }
 

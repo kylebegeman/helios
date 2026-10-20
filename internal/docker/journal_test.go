@@ -45,7 +45,7 @@ func TestAJournalQueryAsksForItsContainersInItsWindow(t *testing.T) {
 		Lines: 40, Follow: true,
 	}
 	head := []string{"--no-pager", "--all", "--output=json",
-		"--output-fields=MESSAGE,PRIORITY,CONTAINER_NAME,CONTAINER_ID_FULL,CONTAINER_PARTIAL_MESSAGE,CONTAINER_PARTIAL_ID,CONTAINER_PARTIAL_LAST,BEDROCK_APP,BEDROCK_WORKLOAD,BEDROCK_REVISION,SYSLOG_IDENTIFIER"}
+		"--output-fields=MESSAGE,PRIORITY,CONTAINER_NAME,CONTAINER_ID_FULL,CONTAINER_PARTIAL_MESSAGE,CONTAINER_PARTIAL_ID,CONTAINER_PARTIAL_ORDINAL,CONTAINER_PARTIAL_LAST,BEDROCK_APP,BEDROCK_WORKLOAD,BEDROCK_REVISION,SYSLOG_IDENTIFIER"}
 	want := append(slices.Clone(head),
 		"--since=@1792487040", "--until=@1792487641", "--lines=40", "--follow",
 		"CONTAINER_NAME=bedrock-hello-web-r1", "CONTAINER_NAME=bedrock-hello-worker-r1",
@@ -139,6 +139,72 @@ func TestJournalLinesSplitByDockerComeBackWhole(t *testing.T) {
 	}
 	if !slices.Equal(lines, want) {
 		t.Fatalf("lines\n got %q\nwant %q", lines, want)
+	}
+}
+
+// Docker numbers a long line's chunks. A line whose first chunks fell
+// outside the window, or that journald dropped, can start partway
+// through a secret, so a Read leaves it out; Stream gives it as it is,
+// as docker logs does.
+func TestAJournalLineThatLostItsFirstChunksIsLeftOutOfARead(t *testing.T) {
+	chunk := func(seconds int, container, id string, ordinal int, last bool, message string) string {
+		extra := fmt.Sprintf(`,"CONTAINER_PARTIAL_ID":"%s","CONTAINER_PARTIAL_ORDINAL":"%d","CONTAINER_PARTIAL_LAST":"%t"`, id, ordinal, last)
+		if !last {
+			extra += `,"CONTAINER_PARTIAL_MESSAGE":"true"`
+		}
+		return fmt.Sprintf(`{"__REALTIME_TIMESTAMP":"%s","CONTAINER_ID_FULL":"%s","PRIORITY":"6","MESSAGE":"%s"%s}`, at(seconds), container, message, extra)
+	}
+	fake := &fakeJournal{out: strings.Join([]string{
+		chunk(1, "aaa", "p1", 2, false, "456789 from the middle"),
+		chunk(2, "aaa", "p1", 3, true, " to the end"),
+		chunk(3, "bbb", "p2", 2, true, "456789 at the end"),
+		chunk(4, "ccc", "p3", 1, false, "a start "),
+		chunk(5, "ccc", "p3", 3, true, "456789 after a gap"),
+		chunk(6, "ddd", "p4", 1, false, "one "),
+		chunk(7, "ddd", "p4", 2, false, "two "),
+		chunk(8, "ddd", "p4", 3, true, "three"),
+		chunk(9, "eee", "p5", 1, false, "never finished "),
+		chunk(10, "eee", "p6", 1, false, "the next "),
+		chunk(11, "eee", "p6", 2, true, "line"),
+	}, "\n") + "\n"}
+	q := JournalQuery{App: "hello"}
+	got, err := fake.journal().Read(context.Background(), q)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var read []string
+	for _, c := range got {
+		for _, l := range c.Lines {
+			read = append(read, fmt.Sprintf("%s %s %s", c.ID, l.At.Format(time.TimeOnly), l.Text))
+		}
+	}
+	want := []string{
+		"ccc 09:04:04 a start ",
+		"ddd 09:04:06 one two three",
+		"eee 09:04:09 never finished ",
+		"eee 09:04:10 the next line",
+	}
+	if !slices.Equal(read, want) {
+		t.Fatalf("read\n got %q\nwant %q", read, want)
+	}
+	var streamed []string
+	if err := fake.journal().Stream(context.Background(), q, func(l JournalLine) error {
+		streamed = append(streamed, l.Container+" "+l.Text)
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	want = []string{
+		"aaa 456789 from the middle to the end",
+		"bbb 456789 at the end",
+		"ccc a start ",
+		"ccc 456789 after a gap",
+		"ddd one two three",
+		"eee never finished ",
+		"eee the next line",
+	}
+	if !slices.Equal(streamed, want) {
+		t.Fatalf("streamed\n got %q\nwant %q", streamed, want)
 	}
 }
 

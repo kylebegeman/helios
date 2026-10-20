@@ -40,7 +40,7 @@ type JournalQuery struct {
 // __REALTIME_TIMESTAMP whatever is asked.
 var journalFields = []string{
 	"MESSAGE", "PRIORITY", "CONTAINER_NAME", "CONTAINER_ID_FULL",
-	"CONTAINER_PARTIAL_MESSAGE", "CONTAINER_PARTIAL_ID", "CONTAINER_PARTIAL_LAST",
+	"CONTAINER_PARTIAL_MESSAGE", "CONTAINER_PARTIAL_ID", "CONTAINER_PARTIAL_ORDINAL", "CONTAINER_PARTIAL_LAST",
 	"BEDROCK_APP", "BEDROCK_WORKLOAD", "BEDROCK_REVISION", "SYSLOG_IDENTIFIER",
 }
 
@@ -130,20 +130,23 @@ func (j Journal) start(ctx context.Context, args []string) (io.ReadCloser, func(
 
 // Stream calls each with every line the query picks, in the journal's
 // order, until the output ends, each fails or, when following, ctx ends.
-// Nothing caps the total, so it is for a person watching.
+// Nothing caps the total, so it is for a person watching. Like docker
+// logs, it gives a line whose first chunks it didn't read as it is.
 func (j Journal) Stream(ctx context.Context, q JournalQuery, each func(JournalLine) error) error {
-	_, err := j.read(ctx, q, 0, each)
+	_, err := j.read(ctx, q, 0, true, each)
 	return err
 }
 
 // Read takes in at most JournalReadLimit of the query's lines and groups
 // them by container, in the order their first lines come. Past the limit
-// it returns what it read with ErrJournalLimit.
+// it returns what it read with ErrJournalLimit. It leaves out a line
+// whose first chunks it didn't read, which could start partway through a
+// secret.
 func (j Journal) Read(ctx context.Context, q JournalQuery) ([]JournalContainer, error) {
 	q.Follow = false
 	var out []JournalContainer
 	index := map[string]int{}
-	limited, err := j.read(ctx, q, JournalReadLimit, func(l JournalLine) error {
+	limited, err := j.read(ctx, q, JournalReadLimit, false, func(l JournalLine) error {
 		i, ok := index[l.Container]
 		if !ok {
 			i = len(out)
@@ -184,43 +187,80 @@ func (j Journal) Suppressed(ctx context.Context, since, until time.Time) ([]Jour
 	return out, err
 }
 
-// read runs the query and hands each a whole line: Docker marks every
-// chunk but the last of a long line as partial, and the chunks join with
-// nothing between them. A line still waiting for its last chunk when the
-// output ends, or grown past JournalReadLimit, is handed over as it is.
-func (j Journal) read(ctx context.Context, q JournalQuery, limit int64, each func(JournalLine) error) (bool, error) {
+// read runs the query and hands each a whole line: Docker numbers the
+// chunks of a long line and marks every one but the last as partial, and
+// the chunks join with nothing between them. Older Docker numbers none,
+// so its chunks join in the order they come. A line still waiting for
+// its last chunk when the output ends, when another line starts or when
+// it grows past JournalReadLimit is handed over as it is. A line whose
+// first chunks didn't come, because the window or --lines cut them off
+// or journald dropped them, is handed over only when headless is set.
+func (j Journal) read(ctx context.Context, q JournalQuery, limit int64, headless bool, each func(JournalLine) error) (bool, error) {
 	if len(q.Names) == 0 && q.App == "" && q.Revision == "" {
 		return false, errors.New("a journal query needs a container name, an app or a revision")
 	}
 	type key struct{ container, stream string }
-	pending := map[key]*JournalLine{}
+	// chunked is a line put together so far: id and next are the
+	// partial ID and the ordinal its next chunk carries, both zero when
+	// Docker numbers none.
+	type chunked struct {
+		line     JournalLine
+		id       string
+		next     int
+		headless bool
+	}
+	pending := map[key]*chunked{}
 	var waiting []key
+	hand := func(c *chunked) error {
+		if c.headless && !headless {
+			return nil
+		}
+		return each(c.line)
+	}
+	done := func(k key) error {
+		c := pending[k]
+		delete(pending, k)
+		waiting = slices.DeleteFunc(waiting, func(w key) bool { return w == k })
+		return hand(c)
+	}
 	limited, err := j.run(ctx, q.Args(), limit, func(e journalEntry) error {
 		l := e.line()
 		k := key{l.Container, l.Stream}
 		partial := e.field("CONTAINER_PARTIAL_MESSAGE") == "true"
+		id := e.field("CONTAINER_PARTIAL_ID")
+		ordinal, _ := strconv.Atoi(e.field("CONTAINER_PARTIAL_ORDINAL"))
+		next := 0
+		if ordinal > 0 {
+			next = ordinal + 1
+		}
 		p := pending[k]
-		if p == nil && partial {
-			pending[k] = &l
+		if p != nil && (p.id != id || p.next != ordinal) {
+			if err := done(k); err != nil {
+				return err
+			}
+			p = nil
+		}
+		if p == nil {
+			c := &chunked{line: l, id: id, next: next, headless: ordinal > 1}
+			if !partial {
+				return hand(c)
+			}
+			pending[k] = c
 			waiting = append(waiting, k)
 			return nil
 		}
-		if p == nil {
-			return each(l)
-		}
-		p.Text += l.Text
-		if partial && len(p.Text) < JournalReadLimit {
+		p.line.Text += l.Text
+		p.next = next
+		if partial && len(p.line.Text) < JournalReadLimit {
 			return nil
 		}
-		delete(pending, k)
-		waiting = slices.DeleteFunc(waiting, func(w key) bool { return w == k })
-		return each(*p)
+		return done(k)
 	})
 	if err != nil {
 		return limited, err
 	}
 	for _, k := range waiting {
-		if err := each(*pending[k]); err != nil {
+		if err := hand(pending[k]); err != nil {
 			return limited, err
 		}
 	}

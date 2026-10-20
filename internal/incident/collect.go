@@ -404,7 +404,7 @@ func (c *collection) engineLogs(ctx context.Context, seen map[string]bool) []Log
 			continue
 		}
 		out := &capped{max: docker.JournalReadLimit}
-		opts := docker.LogOptions{Tail: strconv.Itoa(linesPerContainer), Since: c.e.Window.Since, Until: c.e.Window.Until}
+		opts := docker.LogOptions{Tail: strconv.Itoa(engineTail), Since: c.e.Window.Since, Until: c.e.Window.Until}
 		err := c.src.Engine.Logs(ctx, name, opts, out)
 		if docker.IsNotFound(err) {
 			continue
@@ -413,11 +413,19 @@ func (c *collection) engineLogs(ctx context.Context, seen map[string]bool) []Log
 			c.fail(sourceEngine, fmt.Errorf("%s: %w", name, err))
 			continue
 		}
-		text := strings.TrimSuffix(out.String(), "\n")
+		text := out.String()
+		if out.cut {
+			text = text[:strings.LastIndexByte(text, '\n')+1]
+			c.e.Truncated = append(c.e.Truncated, "logs: the engine read of "+name+" stopped at 8 MiB")
+		}
+		text = strings.TrimSuffix(text, "\n")
 		if text == "" {
 			continue
 		}
-		lines := strings.Split(text, "\n")
+		lines := wholeLines(strings.Split(text, "\n"))
+		if len(lines) == 0 {
+			continue
+		}
 		log := Log{Container: name, Workload: workload, Revision: active.ID, Source: sourceEngine, LinesTotal: len(lines)}
 		for _, l := range lines[max(0, len(lines)-linesPerContainer):] {
 			log.Lines = append(log.Lines, Line{Text: clean(l)})
@@ -428,18 +436,52 @@ func (c *collection) engineLogs(ctx context.Context, seen map[string]bool) []Log
 	return logs
 }
 
-// capped keeps the first max bytes written to it.
+// Docker logs a line longer than dockerChunk in chunks of that size, and
+// the engine's tail counts chunks, not lines. engineTail asks for one
+// more than is kept, so a first line the tail cut into can go.
+const (
+	dockerChunk = 16 << 10
+	engineTail  = linesPerContainer + 1
+)
+
+// wholeLines leaves out the engine's lines that could start partway
+// through another, where a secret could be cut. The first line can be
+// the end of one whose first chunks the tail left behind, unless there
+// are too few chunks for the tail to have cut anything. And stdout and
+// stderr share the output with nothing between a chunk and what comes
+// after it, so a line that follows one holding a whole chunk can be the
+// rest of that.
+func wholeLines(lines []string) []string {
+	chunks := 0
+	for _, l := range lines {
+		chunks += len(l)/dockerChunk + 1
+	}
+	var out []string
+	for i, l := range lines {
+		if i == 0 && chunks >= engineTail || i > 0 && len(lines[i-1]) >= dockerChunk {
+			continue
+		}
+		out = append(out, l)
+	}
+	return out
+}
+
+// capped keeps the first max bytes written to it, and whether there were
+// more.
 type capped struct {
-	bytes.Buffer
+	buf bytes.Buffer
 	max int
+	cut bool
 }
 
 func (b *capped) Write(p []byte) (int, error) {
-	if room := b.max - b.Len(); room > 0 {
-		b.Buffer.Write(p[:min(len(p), room)])
-	}
+	room := max(b.max-b.buf.Len(), 0)
+	b.buf.Write(p[:min(len(p), room)])
+	b.cut = b.cut || len(p) > room
 	return len(p), nil
 }
+
+func (b *capped) String() string { return b.buf.String() }
 
 // history is the key's earlier incidents, newest first.
 func (c *collection) history(ctx context.Context, key string) {
