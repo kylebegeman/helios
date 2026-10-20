@@ -41,6 +41,8 @@ type LegResult struct {
 	Leg   string `json:"leg"`
 	To    string `json:"to,omitempty"`
 	Error string `json:"error,omitempty"`
+	// Probe is set when the leg was probed rather than sent a test.
+	Probe bool `json:"probe,omitempty"`
 }
 
 func alertTestPath(store *state.Store) string {
@@ -50,14 +52,19 @@ func alertTestPath(store *state.Store) string {
 // SendTestAlerts sends a test notice through each leg on its own, each
 // mail server as a leg of its own, and records how each did. only names
 // the one leg to test; empty tests them all and replaces the record.
+// Testing them all probes the Loom leg, which opens no thread; naming it
+// sends it a test, which opens one.
 func SendTestAlerts(ctx context.Context, sec *secrets.Store, store *state.Store, hostname, only string, now time.Time) ([]LegResult, error) {
 	legs := loadLegs(sec, store)
+	notice := testNotice(hostname)
+	notice.Test = TestProbe
 	if only != "" {
 		i := slices.IndexFunc(legs, func(l legSpec) bool { return l.name == only })
 		if i < 0 {
 			return nil, unknownLeg(only, legs)
 		}
 		legs = legs[i : i+1]
+		notice.Test = TestSend
 	}
 	results := make([]LegResult, len(legs))
 	var wg sync.WaitGroup
@@ -65,8 +72,8 @@ func SendTestAlerts(ctx context.Context, sec *secrets.Store, store *state.Store,
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			results[i] = LegResult{Leg: l.name, To: l.to}
-			if err := deliver(ctx, Leg{Name: l.name, Notifier: l.notifier}, testNotice(hostname)); err != nil {
+			results[i] = LegResult{Leg: l.name, To: l.to, Probe: notice.Test == TestProbe && l.name == LoomWebhookLeg}
+			if err := deliver(ctx, Leg{Name: l.name, Notifier: l.notifier}, notice); err != nil {
 				results[i].Error = err.Error()
 			}
 		}()
@@ -74,11 +81,18 @@ func SendTestAlerts(ctx context.Context, sec *secrets.Store, store *state.Store,
 	wg.Wait()
 
 	err := updateAlertTest(store, func(record *AlertTest) {
+		before := record.Legs
 		if only == "" {
 			*record = AlertTest{At: now, Legs: map[string]LegTest{}}
 		}
 		for _, r := range results {
-			record.Legs[r.Leg] = LegTest{At: now, Error: r.Error}
+			// A probe proves less than a test that arrives, so it never
+			// takes the place of the failure of one.
+			if was := before[r.Leg]; r.Probe && was.Error != "" && !was.Probe {
+				record.Legs[r.Leg] = was
+				continue
+			}
+			record.Legs[r.Leg] = LegTest{At: now, Error: r.Error, Probe: r.Probe}
 		}
 	})
 	if err != nil {
@@ -181,17 +195,28 @@ func (p *Prober) alertTest() []Condition {
 	if record == nil {
 		return nil
 	}
-	var failed []string
+	var failed, again []string
 	for _, name := range sortedLegs(record.Legs) {
-		if t := record.Legs[name]; t.Error != "" {
-			failed = append(failed, fmt.Sprintf("%s failed its test on %s (%s)", name, t.At.Format("2006-01-02"), t.Error))
+		t := record.Legs[name]
+		if t.Error == "" {
+			continue
+		}
+		failed = append(failed, fmt.Sprintf("%s failed its test on %s (%s)", name, t.At.Format("2006-01-02"), t.Error))
+		// Only a test that arrives clears what an incident or a test send
+		// found wrong with the Loom leg; a full test only probes it.
+		test := "helios alerts test"
+		if name == LoomWebhookLeg && !t.Probe {
+			test += " --leg " + LoomWebhookLeg
+		}
+		if !slices.Contains(again, test) {
+			again = append(again, test)
 		}
 	}
 	if len(failed) == 0 {
 		return nil
 	}
 	return []Condition{{Key: "host:alerts", Subject: "alerts", Severity: state.SeverityWarning,
-		Message: strings.Join(failed, "; ") + "; fix it, then run helios alerts test"}}
+		Message: strings.Join(failed, "; ") + "; fix it, then run " + strings.Join(again, " and ")}}
 }
 
 func sortedLegs(legs map[string]LegTest) []string {

@@ -118,12 +118,18 @@ func loadLegs(sec *secrets.Store, store *state.Store) []legSpec {
 	} else if !errors.Is(err, integration.ErrNotSet) {
 		legs = append(legs, legSpec{name: NtfyLeg, least: state.SeverityWarning, notifier: broken{err}})
 	}
+	if w, err := integration.LoadLoomWebhook(sec); err == nil {
+		legs = append(legs, legSpec{name: LoomWebhookLeg, to: "the Loom task", least: state.SeverityCritical, timeout: LoomTimeout,
+			notifier: &LoomNotifier{LoomWebhook: *w, Store: store, Secrets: sec}})
+	} else if !errors.Is(err, integration.ErrNotSet) {
+		legs = append(legs, legSpec{name: LoomWebhookLeg, least: state.SeverityCritical, timeout: LoomTimeout, notifier: broken{err}})
+	}
 	return legs
 }
 
 // LoadFanout builds the fan-out from the integrations set up now: one
-// email leg that fails over through the mail servers in order, and a
-// phone leg for each of Pushover and ntfy.
+// email leg that fails over through the mail servers in order, a phone
+// leg for each of Pushover and ntfy, and the Loom leg.
 func LoadFanout(sec *secrets.Store, store *state.Store) (*Fanout, error) {
 	return fanoutOf(loadLegs(sec, store), store)
 }
@@ -170,7 +176,9 @@ func (b broken) Notify(context.Context, Notice) error { return b.err }
 type Alerts struct {
 	Secrets *secrets.Store
 	Store   *state.Store
-	ledger  Ledger
+	// Now is the ledger's clock; nil is the system's.
+	Now    func() time.Time
+	ledger Ledger
 }
 
 // Notify implements Notifier.
@@ -179,6 +187,6 @@ func (a *Alerts) Notify(ctx context.Context, n Notice) error {
 	if err != nil {
 		return err
 	}
-	f.Ledger = &a.ledger
+	f.Ledger, f.Now = &a.ledger, a.Now
 	return f.Notify(ctx, n)
 }

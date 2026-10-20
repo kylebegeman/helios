@@ -98,7 +98,7 @@ Usage:
   helios alerts test [flags]
 
 Flags:
-      --leg string   test only this one: email, email2, pushover or ntfy
+      --leg string   test only this one: email, email2, pushover, ntfy or loom_webhook, which opens a Loom thread
 
 Global Flags:
       --json                  print JSON, one object per line

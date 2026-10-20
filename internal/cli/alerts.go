@@ -84,9 +84,12 @@ func newAlerts(a *app) *cobra.Command {
 				if a.json {
 					break
 				}
-				if r.Error != "" {
+				switch {
+				case r.Error != "":
 					fmt.Fprintf(a.stdout, "%s: FAILED: %s\n", r.Leg, r.Error)
-				} else {
+				case r.Probe:
+					fmt.Fprintf(a.stdout, "%s: probe reached %s, which turned it away as it should\n", r.Leg, r.To)
+				default:
 					fmt.Fprintf(a.stdout, "%s: test alert sent to %s\n", r.Leg, r.To)
 				}
 			}
@@ -105,7 +108,7 @@ func newAlerts(a *app) *cobra.Command {
 			return nil
 		},
 	}
-	test.Flags().StringVar(&leg, "leg", "", "test only this one: email, email2, pushover or ntfy")
+	test.Flags().StringVar(&leg, "leg", "", "test only this one: email, email2, pushover, ntfy or loom_webhook, which opens a Loom thread")
 	cmd.AddCommand(test)
 	return cmd
 }

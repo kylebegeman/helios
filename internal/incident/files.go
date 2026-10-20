@@ -6,23 +6,77 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
+	"time"
 
 	"github.com/kylebegeman/helios/internal/state"
 )
 
-// EvidenceFile is the name of an incident's evidence in its directory.
-const EvidenceFile = "evidence.json"
+// Names of an incident's files in its directory.
+const (
+	EvidenceFile = "evidence.json"
+	// LoomFile marks the incident's one send to Loom.
+	LoomFile = "loom.json"
+)
 
 // ErrStale means an incident's directory holds evidence of an earlier
 // incident with the same ID, from before the state was replaced.
 var ErrStale = errors.New("the evidence belongs to an earlier incident with the same id")
 
+// LoomMarkerSchema is the version of the Loom marker's shape.
+const LoomMarkerSchema = 1
+
+// Where an incident's send to Loom stands.
+const (
+	// LoomSending is set before the request goes. A marker left sending
+	// by a crash is never sent again.
+	LoomSending = "sending"
+	// LoomDelivered means the relay or Loom took it.
+	LoomDelivered = "delivered"
+	// LoomRefused means it was turned away, and won't be taken however
+	// often it is sent.
+	LoomRefused = "refused"
+	// LoomAmbiguous means it was written but no clear answer came back,
+	// so Loom may have it.
+	LoomAmbiguous = "ambiguous"
+)
+
+// LoomMarker records an incident's send to Loom. It is created before
+// the request goes, so an incident that might have arrived is never sent
+// again; a request that never left removes it.
+type LoomMarker struct {
+	Schema   int       `json:"schema"`
+	EventID  string    `json:"event_id"`
+	OpenedAt time.Time `json:"opened_at"`
+	State    string    `json:"state"`
+	// Status is the HTTP status of the answer, or zero for none.
+	Status     int       `json:"status"`
+	DeliveryID string    `json:"delivery_id"`
+	At         time.Time `json:"at"`
+	Error      string    `json:"error"`
+}
+
 // Dir is where an incident's files are kept, beside the state.
 func Dir(stateDir string, id int64) string {
 	return filepath.Join(stateDir, "incidents", strconv.FormatInt(id, 10))
+}
+
+// LoadLoomMarker reads incident id's Loom marker. It returns an error
+// satisfying errors.Is(err, fs.ErrNotExist) when there is none.
+func LoadLoomMarker(stateDir string, id int64) (*LoomMarker, error) {
+	data, err := os.ReadFile(filepath.Join(Dir(stateDir, id), LoomFile))
+	if err != nil {
+		return nil, err
+	}
+	var m LoomMarker
+	if err := json.Unmarshal(data, &m); err != nil {
+		return nil, fmt.Errorf("%s can't be read: %w", LoomFile, err)
+	}
+	return &m, nil
 }
 
 // Save writes e to its incident's evidence.json, replacing what was
@@ -119,6 +173,27 @@ func CreateExclusive(path string, data []byte) error {
 		return err
 	}
 	return syncDir(filepath.Dir(path))
+}
+
+// Remove deletes those of paths that exist, in order, and syncs their
+// directories, so the files stay gone after a crash.
+func Remove(paths ...string) error {
+	dirs := map[string]bool{}
+	for _, path := range paths {
+		if err := os.Remove(path); err != nil {
+			if errors.Is(err, fs.ErrNotExist) {
+				continue
+			}
+			return err
+		}
+		dirs[filepath.Dir(path)] = true
+	}
+	for _, dir := range slices.Sorted(maps.Keys(dirs)) {
+		if err := syncDir(dir); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // ensureDir makes dir and any parents it lacks, readable only by their
