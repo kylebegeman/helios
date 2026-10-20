@@ -615,18 +615,18 @@ the other machine first; see [safe moves](docs/features/safe-moves.md).
 
 The daemon watches every app and the machine once a minute: containers
 running, health paths and checks answering through the edge, certificates
-valid and renewing, disk and memory, backups fresh and drills passing, each
-workload able to write the volumes it mounts (checked hourly), an operation
-holding the machine's operation lock for over 4 hours (backups, drills and
-deploys wait behind it), backup retention deferred for over 3 days, and any
-URL added with `helios watch add` (the other machine's sites, say). A
-problem has to hold for three rounds before it becomes an alert, one alert
-per app, and you hear once when it starts, once a day while it lasts, and
-once when it recovers. An alert that grows graver, a warning that becomes an
-outage, is told as soon as the graver state has held three rounds too, rather
-than at the next daily repeat. One that eases, an outage back to a warning,
-stays the outage until the milder state has held two rounds, so an outage that
-flaps is told once.
+valid and renewing, disk and memory, backups fresh (the machine's own too) and
+drills passing, each workload able to write the volumes it mounts (checked
+hourly), an operation holding the machine's operation lock for over 4 hours
+(backups, drills and deploys wait behind it), backup retention deferred for
+over 3 days, and any URL added with `helios watch add` (the other machine's
+sites, say). A problem has to hold for three rounds before it becomes an
+alert, one alert per app, and you hear once when it starts, once a day while
+it lasts, and once when it recovers. An alert that grows graver, a warning
+that becomes an outage, is told as soon as the graver state has held three
+rounds too, rather than at the next daily repeat. One that eases, an outage
+back to a warning, stays the outage until the milder state has held two
+rounds, so an outage that flaps is told once.
 
 Alerts go out every way that is set up, all at once. Email goes through the
 `email` mail server, and through `email2` only when the first one fails, so the
@@ -702,11 +702,12 @@ deferred" with the reason (so does `helios status <app>` for an app's last good
 backup), and the next backup applies retention again. Every backup prunes, even
 when it forgot nothing, and one prune rewrites at most 2 GB, so a repository
 with a lot to reclaim catches up over several backups. Retention deferred on
-every backup for over 3 days raises an alert. Before each backup Helios runs
-`restic unlock`, which removes only locks restic considers stale (not refreshed
-for 30 minutes). It never removes a live lock, so if a stopped call couldn't
-release its lock, a backup started within the next 30 minutes can still find
-the repository locked and fail; the next scheduled run goes through.
+every backup for over 3 days raises an alert. No successful machine backup for
+36 hours raises a warning. Before each backup Helios runs `restic unlock`,
+which removes only locks restic considers stale (not refreshed for 30
+minutes). It never removes a live lock, so if a stopped call couldn't release
+its lock, a backup started within the next 30 minutes can still find the
+repository locked and fail; the next scheduled run goes through.
 
 | Command | What it does |
 |---|---|

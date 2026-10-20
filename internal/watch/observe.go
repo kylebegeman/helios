@@ -127,6 +127,9 @@ func (p *Prober) Observe(ctx context.Context) []Condition {
 	if why := p.retentionProblem(ctx, manifest.ReservedApp, p.Now()); why != "" {
 		conditions = append(conditions, Condition{Key: "host:backup-retention", Subject: "machine backups", Severity: state.SeverityWarning, Message: why})
 	}
+	if why := p.machineBackupProblem(ctx, p.Now()); why != "" {
+		conditions = append(conditions, Condition{Key: "host:machine-backup", Subject: "machine backups", Severity: state.SeverityWarning, Message: why})
+	}
 
 	e, err := p.Connect(ctx)
 	if err != nil {
@@ -525,6 +528,46 @@ func (p *Prober) backupProblem(ctx context.Context, appName string, now time.Tim
 		return fmt.Sprintf("never backed up, deployed %s ago", ago(first, now))
 	}
 	return ""
+}
+
+// machineBackupProblem says when the machine's own backup hasn't
+// succeeded for too long, and why the last one that finished failed. A
+// machine that has never tried one says nothing; machine backups wait
+// for the storage integration. backupProblem doesn't fit: with no good
+// backup it counts from the app's first deploy, and the machine has none.
+func (p *Prober) machineBackupProblem(ctx context.Context, now time.Time) string {
+	good, err := p.Store.LastGoodBackupRun(ctx, manifest.ReservedApp, state.BackupRunBackup)
+	if err != nil || good != nil && now.Sub(good.StartedAt) <= BackupStale {
+		return ""
+	}
+	// The last run to finish, not the last to start: a retry still
+	// running hasn't recovered anything, and mustn't read as if it had.
+	runs, err := p.Store.BackupRuns(ctx, manifest.ReservedApp, state.BackupRunBackup, 50)
+	if err != nil {
+		return ""
+	}
+	var last *state.BackupRun
+	for i := range runs {
+		if runs[i].Finished() {
+			last = &runs[i]
+			break
+		}
+	}
+	failed := last != nil && !last.OK
+	var why string
+	switch {
+	case good != nil:
+		why = fmt.Sprintf("no successful machine backup for %s (the last was %s)", ago(good.StartedAt, now), good.StartedAt.Format("2006-01-02 15:04"))
+	case failed:
+		why = "no machine backup has succeeded yet"
+	default:
+		return "" // none has finished yet
+	}
+	if failed && last.Error != "" {
+		line, _, _ := strings.Cut(last.Error, "\n")
+		why += fmt.Sprintf("; the last one, started %s, failed: %s", last.StartedAt.Format("2006-01-02 15:04"), line)
+	}
+	return why
 }
 
 // retentionProblem says when every good backup of a repository has

@@ -378,3 +378,71 @@ func TestRetentionDeferredOnEveryBackupForTooLongIsAProblem(t *testing.T) {
 		t.Fatalf("completed retention is still reported: %+v", found)
 	}
 }
+
+func TestAMachineWithoutAGoodBackupForADayAndAHalfIsAWarning(t *testing.T) {
+	ctx := context.Background()
+	now := time.Date(2026, 10, 20, 12, 0, 0, 0, time.UTC)
+	// run is one machine backup that started ago before now; an hour
+	// later it finished unless running, with err when it failed.
+	type run struct {
+		ago     time.Duration
+		running bool
+		err     string
+	}
+	machineBackup := func(runs ...run) []Condition {
+		t.Helper()
+		w, _ := newWatcher(t, &fakeNotifier{})
+		for _, r := range runs {
+			at := now.Add(-r.ago)
+			id, err := w.Store.StartBackupRun(ctx, manifest.ReservedApp, state.BackupRunBackup, at)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if r.running {
+				continue
+			}
+			if err := w.Store.FinishBackupRun(ctx, id, state.BackupRun{FinishedAt: at.Add(time.Hour), OK: r.err == "", Error: r.err}); err != nil {
+				t.Fatal(err)
+			}
+		}
+		p := NewProber(w.Store)
+		p.Root = t.TempDir()
+		p.Now = func() time.Time { return now }
+		p.Connect = func(context.Context) (*docker.Engine, error) { return nil, errors.New("Docker unavailable") }
+		var out []Condition
+		for _, c := range p.Observe(ctx) {
+			if c.Key == "host:machine-backup" {
+				out = append(out, c)
+			}
+		}
+		return out
+	}
+	const refused = "copy the pinned app data into the machine backup: restoring needs 54.2 GB plus a 15.0 GB reserve; free space and back up the machine again\nrestic output the alert leaves out"
+
+	// Machine backups wait for storage, so a machine that never tried one
+	// has nothing to say yet.
+	if found := machineBackup(); len(found) != 0 {
+		t.Fatalf("a machine that never tried a backup is warned: %+v", found)
+	}
+	if found := machineBackup(run{ago: 10 * time.Hour}); len(found) != 0 {
+		t.Fatalf("a good machine backup 10 hours ago is warned: %+v", found)
+	}
+	found := machineBackup(run{ago: 40 * time.Hour}, run{ago: 16 * time.Hour, err: refused})
+	want := "no successful machine backup for 40.0 h (the last was 2026-10-18 20:00); the last one, started 2026-10-19 20:00, failed: copy the pinned app data into the machine backup: restoring needs 54.2 GB plus a 15.0 GB reserve; free space and back up the machine again"
+	if len(found) != 1 || found[0].Subject != "machine backups" || found[0].Severity != state.SeverityWarning || found[0].Message != want {
+		t.Fatalf("a machine backup 40 hours stale must be a warning that says why the last one failed: %+v", found)
+	}
+	found = machineBackup(run{ago: 3 * time.Hour, err: refused})
+	if len(found) != 1 || !strings.HasPrefix(found[0].Message, "no machine backup has succeeded yet; the last one, started 2026-10-20 09:00, failed: copy the pinned app data") {
+		t.Fatalf("a machine whose only backup failed must be warned: %+v", found)
+	}
+	if found := machineBackup(run{ago: 30 * time.Minute, running: true}); len(found) != 0 {
+		t.Fatalf("a first machine backup still running is warned: %+v", found)
+	}
+	// A retry that hasn't finished yet has fixed nothing, so the warning
+	// stays rather than resolving as a recovery while it runs.
+	found = machineBackup(run{ago: 27 * time.Hour, err: refused}, run{ago: 30 * time.Minute, running: true})
+	if len(found) != 1 || !strings.HasPrefix(found[0].Message, "no machine backup has succeeded yet; the last one, started 2026-10-19 09:00, failed:") {
+		t.Fatalf("a failed machine backup must stay a warning while the next one runs: %+v", found)
+	}
+}

@@ -27,6 +27,12 @@ that fails removes everything it staged there, unless it was stopped while it
 snapshots: the resumed operation snapshots that copy, or removes it when it
 can't.
 
+A machine that goes 36 hours without a successful machine backup raises a
+warning about machine backups in `helios alerts`, as does one whose machine
+backups have only ever failed. The warning quotes the first line of the last
+failure, so a backup refused for space is told even when no operation is
+stuck.
+
 The backup omits the machine's private identity. Keep the source recovery
 identity and storage backup password separately. Workload images are archived
 by their immutable image IDs, including images built in the source machine's
