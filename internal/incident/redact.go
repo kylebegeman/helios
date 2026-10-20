@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 	"unicode"
+	"unicode/utf16"
 	"unicode/utf8"
 )
 
@@ -26,12 +27,49 @@ const (
 // private addresses, in text. Its zero value knows no values and still
 // replaces the shapes.
 type redactor struct {
-	// names maps each form a value can take in text to the name of the
-	// secret or env var it came from.
+	// raw are the forms a value takes in text: as it is, and as Go and
+	// URLs escape it.
+	raw forms
+	// folded are those forms as fold reads them, with and without
+	// base64's padding, which find a value another encoder escaped.
+	folded forms
+}
+
+// forms maps each form a value can take in text to the name of the
+// secret or env var it came from.
+type forms struct {
 	names map[string]string
-	// forms are the keys of names, longest first, so a value is replaced
-	// before a shorter one inside it can break it up.
-	forms []string
+	// list holds the keys of names, longest first, so a value is
+	// replaced before a shorter one inside it can break it up.
+	list []string
+}
+
+// add makes form stand for name when it is at least shortest bytes and
+// no name that sorts first has it.
+func (f *forms) add(form, name string, shortest int) {
+	if len(form) < shortest {
+		return
+	}
+	if f.names == nil {
+		f.names = map[string]string{}
+	}
+	have, ok := f.names[form]
+	if ok && have <= name {
+		return
+	}
+	if !ok {
+		f.list = append(f.list, form)
+	}
+	f.names[form] = name
+}
+
+func (f *forms) sort() {
+	slices.SortFunc(f.list, func(a, b string) int {
+		if len(a) != len(b) {
+			return len(b) - len(a)
+		}
+		return strings.Compare(a, b)
+	})
 }
 
 // add makes value, and the forms it takes when escaped, replaceable by
@@ -51,29 +89,16 @@ func (r *redactor) addForms(name, value string, shortest int) {
 	if len(value) < shortest {
 		return
 	}
-	if r.names == nil {
-		r.names = map[string]string{}
-	}
 	for _, v := range []string{value, clean(value)} {
 		for _, form := range []string{v, url.QueryEscape(v), url.PathEscape(v), jsonEscape(v, true), jsonEscape(v, false)} {
-			if len(form) < shortest {
-				continue
-			}
-			if have, ok := r.names[form]; ok && have <= name {
-				continue
-			}
-			if _, ok := r.names[form]; !ok {
-				r.forms = append(r.forms, form)
-			}
-			r.names[form] = name
+			r.raw.add(form, name, shortest)
+			folded := fold(form)
+			r.folded.add(folded, name, shortest)
+			r.folded.add(strings.TrimRight(folded, "="), name, shortest)
 		}
 	}
-	slices.SortFunc(r.forms, func(a, b string) int {
-		if len(a) != len(b) {
-			return len(b) - len(a)
-		}
-		return strings.Compare(a, b)
-	})
+	r.raw.sort()
+	r.folded.sort()
 }
 
 // jsonEscape is v as it appears inside a JSON string, with or without
@@ -88,10 +113,76 @@ func jsonEscape(v string, html bool) string {
 	return strings.TrimSuffix(strings.TrimPrefix(strings.TrimSuffix(b.String(), "\n"), `"`), `"`)
 }
 
+// fold reads s as the same text however an encoder escaped it: it
+// decodes JSON's escapes, including \/ and \u in either case, and URL
+// escapes in either case, and reads base64's URL alphabet as its standard
+// one. A value and text folded alike can be compared.
+func fold(s string) string {
+	if !strings.ContainsAny(s, `\%-_`) {
+		return s
+	}
+	var b strings.Builder
+	b.Grow(len(s))
+	for len(s) > 0 {
+		out, n := unescape(s)
+		b.WriteString(out)
+		s = s[n:]
+	}
+	return b.String()
+}
+
+// unescape reads the escape or byte s starts with as fold does, and says
+// how many bytes of s that took.
+func unescape(s string) (string, int) {
+	switch {
+	case len(s) >= 3 && s[0] == '%':
+		if c, err := strconv.ParseUint(s[1:3], 16, 8); err == nil {
+			return base64Byte(byte(c)), 3
+		}
+	case len(s) >= 6 && s[:2] == `\u`:
+		c, err := strconv.ParseUint(s[2:6], 16, 16)
+		r := rune(c)
+		switch {
+		case err != nil:
+		case utf16.IsSurrogate(r):
+			if len(s) >= 12 && s[6:8] == `\u` {
+				if low, err := strconv.ParseUint(s[8:12], 16, 16); err == nil {
+					if pair := utf16.DecodeRune(r, rune(low)); pair != utf8.RuneError {
+						return string(pair), 12
+					}
+				}
+			}
+		case r < utf8.RuneSelf:
+			return base64Byte(byte(r)), 6
+		default:
+			return string(r), 6
+		}
+	case len(s) >= 2 && s[0] == '\\':
+		if i := strings.IndexByte(`"\/bfnrt`, s[1]); i >= 0 {
+			return "\"\\/\b\f\n\r\t"[i : i+1], 2
+		}
+	}
+	if s[0] == '-' || s[0] == '_' {
+		return base64Byte(s[0]), 1
+	}
+	return s[:1], 1
+}
+
+// base64Byte is c with base64's URL alphabet read as its standard one.
+func base64Byte(c byte) string {
+	switch c {
+	case '-':
+		return "+"
+	case '_':
+		return "/"
+	}
+	return string([]byte{c})
+}
+
 var (
 	// userinfoPattern is a URL's user and password, up to the last @
-	// before the host.
-	userinfoPattern = regexp.MustCompile(`(?i)\b([a-z][a-z0-9+.\-]*://)[^/?#\s"'<>]+@`)
+	// before the host, after a scheme JSON may have written as :\/\/.
+	userinfoPattern = regexp.MustCompile(`(?i)\b([a-z][a-z0-9+.\-]*:(?:\\?/){2})[^/?#\s"'<>]+@`)
 	// authorizationPattern is an Authorization header's value, in a
 	// header, a query or JSON.
 	authorizationPattern = regexp.MustCompile(`(?i)(authorization"?\s*[:=]\s*"?)(?:(?:basic|bearer|digest|negotiate|token)\s+)?[^\s"',;]+`)
@@ -113,19 +204,28 @@ var (
 	privatePrefixes = []netip.Prefix{netip.MustParsePrefix("10.0.0.0/8"), netip.MustParsePrefix("172.16.0.0/12"), netip.MustParsePrefix("192.168.0.0/16")}
 )
 
-// String redacts s: known values become [redacted NAME], a URL's user
-// and password, an Authorization or Bearer value and a credential's
-// value become [redacted], tailnet names and addresses become [mesh],
-// and RFC 1918 addresses become [private].
+// String redacts s: known values, however they were escaped, become
+// [redacted NAME], a URL's user and password, an Authorization or Bearer
+// value and a credential's value become [redacted], tailnet names and
+// addresses become [mesh], and RFC 1918 addresses become [private].
 func (r *redactor) String(s string) string {
 	if s == "" {
 		return s
 	}
-	for _, form := range r.forms {
-		s = strings.ReplaceAll(s, form, "[redacted "+r.names[form]+"]")
+	for _, form := range r.raw.list {
+		s = strings.ReplaceAll(s, form, "[redacted "+r.raw.names[form]+"]")
+	}
+	if len(r.folded.list) > 0 {
+		f := fold(s)
+		for _, form := range r.folded.list {
+			if strings.Contains(f, form) {
+				s = replaceFolded(s, f, form, "[redacted "+r.folded.names[form]+"]")
+				f = fold(s)
+			}
+		}
 	}
 	lower := strings.ToLower(s)
-	if strings.Contains(s, "://") && strings.Contains(s, "@") {
+	if strings.Contains(s, "@") && (strings.Contains(s, "://") || strings.Contains(s, `:\/\/`)) {
 		s = userinfoPattern.ReplaceAllString(s, "${1}[redacted]@")
 	}
 	if strings.Contains(lower, "authorization") {
@@ -161,6 +261,44 @@ func (r *redactor) String(s string) string {
 		})
 	}
 	return s
+}
+
+// replaceFolded replaces with repl the bytes of s that each form in f,
+// s as fold reads it, was read from. Where two meet inside one escape,
+// each is replaced whole.
+func replaceFolded(s, f, form, repl string) string {
+	var matches []int
+	for at := 0; ; {
+		i := strings.Index(f[at:], form)
+		if i < 0 {
+			break
+		}
+		matches = append(matches, at+i, at+i+len(form))
+		at += i + len(form)
+	}
+	var b strings.Builder
+	start, done := -1, 0
+	for read, at := 0, 0; read < len(s) && len(matches) > 0; {
+		out, n := unescape(s[read:])
+		end := at + len(out)
+		if start < 0 && end > matches[0] {
+			start = read
+		}
+		if start >= 0 && end >= matches[1] {
+			b.WriteString(s[done:start])
+			b.WriteString(repl)
+			done, start = read+n, -1
+			for len(matches) > 0 && matches[1] <= end {
+				matches = matches[2:]
+			}
+			if len(matches) > 0 && matches[0] < end {
+				start = done
+			}
+		}
+		read, at = read+n, end
+	}
+	b.WriteString(s[done:])
+	return b.String()
 }
 
 // evidence redacts every string in e that came from outside helios.
@@ -207,11 +345,12 @@ func (r *redactor) change(c *Change) {
 	}
 }
 
-// leaks names the values still found in e's JSON, sorted. It reads the
-// JSON's string values, not its keys, numbers or times, which can't
-// carry a secret but which a short value such as 2026 would match.
+// leaks names the values still found in e's JSON, sorted, however they
+// were escaped. It reads the JSON's string values, not its keys, numbers
+// or times, which can't carry a secret but which a short value such as
+// 2026 would match.
 func (r *redactor) leaks(e *Evidence) []string {
-	if len(r.forms) == 0 {
+	if len(r.raw.list) == 0 {
 		return nil
 	}
 	b, err := json.Marshal(e)
@@ -238,9 +377,15 @@ func (r *redactor) leaks(e *Evidence) []string {
 			if _, err := time.Parse(time.RFC3339Nano, v); err == nil {
 				return
 			}
-			for _, form := range r.forms {
+			for _, form := range r.raw.list {
 				if strings.Contains(v, form) {
-					found[r.names[form]] = true
+					found[r.raw.names[form]] = true
+				}
+			}
+			folded := fold(v)
+			for _, form := range r.folded.list {
+				if strings.Contains(folded, form) {
+					found[r.folded.names[form]] = true
 				}
 			}
 		}

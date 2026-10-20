@@ -41,3 +41,33 @@ func TestTheLeakScanReadsTextNotTimes(t *testing.T) {
 		t.Fatalf("leaked %q", leaked)
 	}
 }
+
+// Other encoders than Go's escape a value differently: PHP and Swift
+// write / as \/, System.Text.Json and Gson write + and = as \u in upper or
+// lower case, Python writes all but ASCII as \u, and a value can be
+// written in base64's URL alphabet or URL escaped in lower case.
+func TestAValueIsFoundHoweverItsEncoderEscapedIt(t *testing.T) {
+	var r redactor
+	r.add("SESSION_SECRET", "fake+b64/secret+value/AbCd=", minSecretValue)
+	r.add("DATABASE_URL", "postgres://app:pg_fake_pw@db.example.test:5432/app", minEnvValue)
+	r.add("PASSPHRASE", "pässwörd-fake🔑", minSecretValue)
+	for _, c := range []struct{ in, want string }{
+		{`{"session":"fake+b64\/secret+value\/AbCd="}`, `{"session":"[redacted SESSION_SECRET]"}`},
+		{`{"session":"fake\u002Bb64/secret\u002Bvalue/AbCd\u003D"}`, `{"session":"[redacted SESSION_SECRET]"}`},
+		{`{"session":"fake+b64/secret+value/AbCd\u003d"}`, `{"session":"[redacted SESSION_SECRET]"}`},
+		{"cookie fake-b64_secret-value_AbCd set", "cookie [redacted SESSION_SECRET] set"},
+		{"GET /next?to=fake%2bb64%2fsecret%2bvalue%2fAbCd%3d 302", "GET /next?to=[redacted SESSION_SECRET] 302"},
+		{`{"db":"postgres:\/\/app:pg_fake_pw@db.example.test:5432\/app"}`, `{"db":"[redacted DATABASE_URL]"}`},
+		{`{"cache":"redis:\/\/default:redis_fake_pw@cache.example.test:6379"}`, `{"cache":"redis:\/\/[redacted]@cache.example.test:6379"}`},
+		{`{"phrase":"p\u00e4ssw\u00F6rd-fake\ud83d\udd11"}`, `{"phrase":"[redacted PASSPHRASE]"}`},
+	} {
+		if got := r.String(c.in); got != c.want {
+			t.Errorf("%q became %q, want %q", c.in, got, c.want)
+		}
+	}
+	e := full()
+	e.Logs[0].Lines[0].Text = `config {"session":"fake\u002Bb64\/secret\u002Bvalue\/AbCd\u003D"}`
+	if leaked := r.leaks(e); !slices.Equal(leaked, []string{"SESSION_SECRET"}) {
+		t.Fatalf("leaked %q", leaked)
+	}
+}
