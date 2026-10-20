@@ -220,6 +220,25 @@ func TestAMachineBackupWithoutRoomForItsImagesRefusesBeforeArchivingThem(t *test
 	}
 }
 
+// Images that can't be sized can't be counted against the disk, so the
+// machine backup refuses rather than archive them unchecked.
+func TestAMachineBackupWhoseImagesCantBeSizedRefusesBeforeArchivingThem(t *testing.T) {
+	r, _ := recoveryFixture(t)
+	stage := stageMachineBackup(t, r, stagedApp{name: "site", image: "nginx:alpine"})
+	dockerCLI(t, "if [ \"$2\" = save ]; then printf archive > \"$4\"; else echo sha256:"+strings.Repeat("c", 64)+"; fi")
+	saved := recoveryImageSizes
+	sizing := errors.New("size the workload images: docker did not answer within 2m0s")
+	recoveryImageSizes = func(context.Context, []string) (int64, error) { return 0, sizing }
+	t.Cleanup(func() { recoveryImageSizes = saved })
+	roomToRestore(t)
+	if err := prepareCatalog(r, stage); !errors.Is(err, sizing) {
+		t.Fatalf("got %v, want %v", err, sizing)
+	}
+	if _, err := os.Stat(filepath.Join(stage, machineImagesFile)); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("the images were archived without a size: %v", err)
+	}
+}
+
 // helios watch calls a disk critical below a tenth of it free, so on a
 // big disk the machine backup keeps that much rather than 5 GB.
 func TestAMachineBackupKeepsATenthOfABigDiskFree(t *testing.T) {
@@ -310,6 +329,31 @@ func TestAMachineBackupFindsEveryPinBeforeCopyingAny(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(stage, machineAppDataDir, "hello")); !errors.Is(err, os.ErrNotExist) {
 		t.Errorf("hello's data was copied before other's pin was found: %v", err)
+	}
+}
+
+// The running apps keep writing while the pins are found, so a copy that
+// fit when planned checks the disk again before it lands.
+func TestAMachineBackupChecksEachCopyAgainstTheDiskItFindsThen(t *testing.T) {
+	r, _ := recoveryFixture(t)
+	apps := []stagedApp{{name: "hello", data: true, size: restic.Size{Bytes: 8 << 30, Files: 1}}}
+	stage := stageMachineBackup(t, r, apps...)
+	commands := pinnedRepository(t, apps, nil)
+	free := int64(20 << 30)
+	onDisks(t, func(string) (disk, error) {
+		d := disk{dev: 1, free: free}
+		free = 10 << 30 // the plan saw 20 GB; the copy finds 10 GB
+		return d, nil
+	})
+	err := prepareCatalog(r, stage)
+	appData := filepath.Join(stage, machineAppDataDir, "hello")
+	want := "copy hello's snapshot " + short(pinOf("hello")) + " into the machine backup: restoring needs 8.0 GB plus a 5.0 GB reserve on " +
+		appData + ", which has 10.0 GB free; free space and back up the machine again"
+	if err == nil || err.Error() != want {
+		t.Fatalf("got %v, want %q", err, want)
+	}
+	if !slices.Equal(*commands, []string{"snapshots"}) {
+		t.Errorf("a copy that no longer fits ran restic %v", *commands)
 	}
 }
 
