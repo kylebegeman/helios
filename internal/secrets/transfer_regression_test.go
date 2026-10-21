@@ -3,6 +3,7 @@ package secrets
 import (
 	"encoding/json"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -86,5 +87,55 @@ func TestBundleImportWritesOneVersion(t *testing.T) {
 	}
 	if version, err := target.Current("notes"); err != nil || version != 1 {
 		t.Fatalf("bundle split across versions: %d, %v", version, err)
+	}
+}
+
+func TestConcurrentRepeatedTransfersDoNotChurnVersions(t *testing.T) {
+	for _, mode := range []string{"single", "bundle", "copy"} {
+		t.Run(mode, func(t *testing.T) {
+			source, target, recipient := twoMachines(t)
+			if _, err := source.Set("notes", "TOKEN", "fixture"); err != nil {
+				t.Fatal(err)
+			}
+			var sealed string
+			var err error
+			app := "notes"
+			switch mode {
+			case "single":
+				sealed, err = source.Export("notes", "TOKEN", app, recipient)
+			case "bundle":
+				sealed, err = source.ExportBundle(app, recipient)
+			case "copy":
+				target = source
+				app = "preview"
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			start := make(chan struct{})
+			var workers sync.WaitGroup
+			for range 8 {
+				workers.Go(func() {
+					<-start
+					var err error
+					switch mode {
+					case "single":
+						_, err = target.Import(app, "TOKEN", strings.NewReader(sealed))
+					case "bundle":
+						_, err = target.ImportBundle(app, strings.NewReader(sealed))
+					case "copy":
+						_, err = source.CopyAll("notes", app)
+					}
+					if err != nil {
+						t.Error(err)
+					}
+				})
+			}
+			close(start)
+			workers.Wait()
+			if version, err := target.Current(app); err != nil || version != 1 {
+				t.Fatalf("repeated transfer created version %d, want one: %v", version, err)
+			}
+		})
 	}
 }

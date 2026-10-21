@@ -124,9 +124,12 @@ func ReadPolicy(dir string) (*Policy, error) {
 	case err != nil:
 		return nil, unreadable(err)
 	default:
-		var f policyFile
+		var f *policyFile
 		if err := json.Unmarshal(raw, &f); err != nil {
 			return nil, fmt.Errorf("the signing policy %s can't be read: %w", path, err)
+		}
+		if f == nil {
+			return nil, fmt.Errorf("the signing policy %s must be a JSON object", path)
 		}
 		for _, a := range f.RequireSigned {
 			if !ValidApp(a) {

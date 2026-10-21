@@ -126,7 +126,7 @@ class ManifestSchemaTests(unittest.TestCase):
                 route["origin_pull"] = mode
                 self.assert_valid(manifest)
         for changes in ({"origin_pull": "strict"}, {"origin_pull": "Required"},
-                        {"origin_pull": ""}, {"origin_pull": True},
+                        {"origin_pull": True},
                         {"origin_pull": "required", "dns": "direct"},
                         {"origin_pull": "optional", "dns": "direct"},
                         {"origin_pull": "required", "dns": ""}):
@@ -140,6 +140,33 @@ class ManifestSchemaTests(unittest.TestCase):
         direct = copy.deepcopy(manifest)
         direct["workloads"]["web"]["routes"][0] = {"host": "shop.example.com", "dns": "direct"}
         self.assert_valid(direct)
+
+    def test_explicitly_empty_origin_pull_matches_the_omitted_default(self) -> None:
+        for dns in (None, "", "direct", "proxied"):
+            with self.subTest(dns=dns):
+                route = {"host": "shop.example.com", "origin_pull": ""}
+                if dns is not None:
+                    route["dns"] = dns
+                self.assert_valid({"app": "shop", "workloads": {"web": {
+                    "kind": "web", "image": "app", "port": 8080, "routes": [route]}}})
+
+    def test_hostnames_fit_dns_limits(self) -> None:
+        for host, valid in (("site.example.com", True), ("site." + "a" * 63, True),
+                            ("site." + "a" * 64, False),
+                            (".".join(("a" * 63, "b" * 63, "c" * 63, "d" * 61)), True),
+                            (".".join(("a" * 63, "b" * 63, "c" * 63, "d" * 62)), False)):
+            with self.subTest(host=host):
+                manifest = {"app": "site", "workloads": {"web": {
+                    "kind": "web", "image": "app", "port": 8080, "routes": [{"host": host}]}}}
+                (self.assert_valid if valid else self.assert_invalid)(manifest)
+
+    def test_checks_require_an_http_status_or_the_default(self) -> None:
+        for status in (0, 1, 99, 100, 200, 599, 600):
+            with self.subTest(status=status):
+                manifest = {"app": "site", "workloads": {"worker": {"kind": "worker", "image": "app"}},
+                            "checks": [{"url": "https://site.example.com/", "status": status}]}
+                valid = status == 0 or 100 <= status <= 599
+                (self.assert_valid if valid else self.assert_invalid)(manifest)
 
     def test_credential_checks_require_explicit_edge_and_https(self) -> None:
         manifest = {"app": "api", "workloads": {"worker": {"kind": "worker", "image": "app"}},

@@ -134,3 +134,31 @@ func TestSettingAnIntegrationAgainKeepsWhatIsNotNamed(t *testing.T) {
 		t.Fatalf("a first set with fields missing: %v", err)
 	}
 }
+
+func TestEmailAddressesLoadAsSMTPEnvelopeMailboxes(t *testing.T) {
+	store := newStore(t)
+	if _, _, err := Set(store, EmailName, map[string]string{
+		"smtp_host": "smtp.example.com",
+		"from":      "Helios Alerts <helios@example.com>",
+		"to":        `"Doe, Jane" <jane@example.com>, Team <ops@example.com>`,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	email, err := LoadEmail(store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if email.From != "helios@example.com" || len(email.To) != 2 || email.To[0] != "jane@example.com" || email.To[1] != "ops@example.com" {
+		t.Fatalf("email did not load plain envelope mailboxes: from=%q to=%q", email.From, email.To)
+	}
+}
+
+func TestEmailRejectsMultipleEnvelopeSenders(t *testing.T) {
+	store := newStore(t)
+	if _, _, err := Set(store, EmailName, map[string]string{"smtp_host": "smtp.example.com", "from": "first@example.com, second@example.com", "to": "ops@example.com"}); err == nil {
+		t.Fatal("multiple SMTP envelope senders were accepted")
+	}
+	if version, err := store.Current(App); err != nil || version != 0 {
+		t.Fatalf("invalid email configuration was committed: version %d, %v", version, err)
+	}
+}

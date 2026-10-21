@@ -93,17 +93,34 @@ func EnsureRepo(app string) (string, error) {
 	hook := "#!/bin/sh\n# Written by bedrock: a push to the deploy branch deploys, and a failed deploy refuses the push.\nexec " + Binary + " git hook " + app + "\n"
 	path := filepath.Join(dir, "hooks", "pre-receive")
 	if current, _ := os.ReadFile(path); string(current) != hook {
-		// Replaced whole: git runs whatever is there on the next push.
-		tmp := path + ".tmp"
-		if err := os.WriteFile(tmp, []byte(hook), 0o755); err != nil {
-			return "", err
-		}
-		if err := os.Rename(tmp, path); err != nil {
-			_ = os.Remove(tmp)
+		if err := writeHook(path, hook); err != nil {
 			return "", err
 		}
 	}
 	return dir, nil
+}
+
+// writeHook replaces the complete hook before the next push reads it.
+func writeHook(path, hook string) error {
+	// Each refresh owns its temporary file, including when pushes arrive
+	// together. A predictable shared path could also follow a stale link.
+	tmp, err := os.CreateTemp(filepath.Dir(path), ".pre-receive-*")
+	if err != nil {
+		return err
+	}
+	defer os.Remove(tmp.Name())
+	if _, err := tmp.WriteString(hook); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Chmod(0o755); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	return os.Rename(tmp.Name(), path)
 }
 
 // Branch is the branch whose pushes deploy an app.

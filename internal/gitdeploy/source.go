@@ -18,7 +18,8 @@ import (
 	"github.com/kylebegeman/helios/internal/manifest"
 )
 
-// MaxSource bounds an uploaded or exported source tree.
+// MaxSource bounds both regular-file bytes and the uncompressed source
+// archive, including headers, metadata and payloads that extraction skips.
 const MaxSource int64 = 2 << 30
 
 // BuildDir names the directory one deploy's source is written to, under
@@ -40,7 +41,8 @@ func NewBuildDir(root, app, label string) (string, error) {
 }
 
 // PruneBuilds keeps an app's newest few source trees: the images are in
-// the registry, so older trees are only disk.
+// the registry, so older trees are only disk. Operation-bound deploy captures
+// belong to the daemon and are collected only after their owning operation ends.
 func PruneBuilds(root, app string, keep int) {
 	if !ValidApp(app) || keep < 0 {
 		return
@@ -55,6 +57,9 @@ func PruneBuilds(root, app string, keep int) {
 	}
 	var dirs []dir
 	for _, e := range entries {
+		if strings.HasPrefix(e.Name(), "deploy-") {
+			continue
+		}
 		if info, err := e.Info(); err == nil && e.IsDir() {
 			dirs = append(dirs, dir{e.Name(), info.ModTime()})
 		}
@@ -105,10 +110,16 @@ func ExportCommit(ctx context.Context, repoDir, commit, dest string) error {
 // regular files, directories and symlinks that stay inside dest, and
 // nothing else.
 func Extract(r io.Reader, dest string) error {
+	return extract(r, dest, MaxSource)
+}
+
+func extract(r io.Reader, dest string, maxBytes int64) error {
 	br := bufio.NewReader(r)
 	var in io.Reader = br
+	var gz *gzip.Reader
 	if magic, err := br.Peek(2); err == nil && magic[0] == 0x1f && magic[1] == 0x8b {
-		gz, err := gzip.NewReader(br)
+		var err error
+		gz, err = gzip.NewReader(br)
 		if err != nil {
 			return err
 		}
@@ -124,18 +135,40 @@ func Extract(r io.Reader, dest string) error {
 		return err
 	}
 	defer bounded.Close()
-	tr := tar.NewReader(in)
+	// The tar reader consumes padding, skipped payloads and PAX/GNU metadata
+	// internally. Limit its input too, so empty entries and compressed skipped
+	// data cannot bypass the regular-file budget. Each header consumes at
+	// least 512 bytes, bounding entry count without a separate entry policy.
+	archive := &io.LimitedReader{R: in, N: maxBytes + 1}
+	tooLarge := func() error {
+		return fmt.Errorf("the source is larger than %d GiB", MaxSource>>30)
+	}
+	tr := tar.NewReader(archive)
 	var total int64
 	for {
 		h, err := tr.Next()
+		if archive.N == 0 {
+			return tooLarge()
+		}
 		if errors.Is(err, io.EOF) {
+			if gz != nil {
+				// tar stops at its end markers before gzip necessarily reads its
+				// checksum and trailer. Close alone does not verify either.
+				_, err := io.Copy(io.Discard, archive)
+				if archive.N == 0 {
+					return tooLarge()
+				}
+				if err != nil {
+					return fmt.Errorf("the source archive: %w", err)
+				}
+			}
 			return nil
 		}
 		if err != nil {
 			return fmt.Errorf("the source archive: %w", err)
 		}
 		name := filepath.Clean(strings.TrimPrefix(h.Name, "./"))
-		if name == "." || name == "pax_global_header" {
+		if name == "." {
 			continue
 		}
 		if filepath.IsAbs(name) || name == ".." || strings.HasPrefix(name, "../") {
@@ -148,10 +181,10 @@ func Extract(r io.Reader, dest string) error {
 				return err
 			}
 		case tar.TypeReg:
-			total += h.Size
-			if total > MaxSource {
-				return fmt.Errorf("the source is larger than %d GiB", MaxSource>>30)
+			if h.Size > maxBytes-total {
+				return tooLarge()
 			}
+			total += h.Size
 			if err := bounded.MkdirAll(filepath.Dir(name), 0o755); err != nil {
 				return err
 			}
@@ -163,9 +196,14 @@ func Extract(r io.Reader, dest string) error {
 			if err != nil {
 				return err
 			}
-			if _, err := io.Copy(f, io.LimitReader(tr, h.Size)); err != nil {
+			_, copyErr := io.Copy(f, io.LimitReader(tr, h.Size))
+			if archive.N == 0 {
 				f.Close()
-				return err
+				return tooLarge()
+			}
+			if copyErr != nil {
+				f.Close()
+				return copyErr
 			}
 			if err := f.Close(); err != nil {
 				return err

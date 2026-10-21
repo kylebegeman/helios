@@ -151,7 +151,7 @@ func (g *schemaGenerator) constrain() {
 	g.describe("Workload", "dir", "A static workload's directory inside the source.")
 	g.describe("Workload", "port", "The container port a web workload listens on.")
 	g.describe("Workload", "schedule", "Five-field cron schedule in UTC; only cron workloads use it.")
-	g.describe("Workload", "timeout", "Go duration such as 10m; only cron and release workloads use it.")
+	g.describe("Workload", "timeout", "Positive Go duration such as 10m; only cron and release workloads use it.")
 	g.describe("Workload", "singleton", "Stop the old container before starting the new one; required for published ports.")
 	g.describe("Workload", "grace", "Graceful stop duration, from 1s to 10m. Default 10s.")
 	g.prop("Workload", "dir")["pattern"] = `^(?!/)(?!.*\.\.).*$`
@@ -193,15 +193,16 @@ func (g *schemaGenerator) constrain() {
 	g.prop("PublishedPort", "protocol")["enum"] = []string{"", "tcp", "udp"}
 	g.describe("PublishedPort", "address", "Machine IP to bind; omitted means every address. Docker publishes past ufw.")
 	g.prop("Route", "host")["pattern"] = hostPattern.String()
+	g.prop("Route", "host")["maxLength"] = maxHostnameLength
 	g.prop("Route", "path")["pattern"] = `^(?:/[^*]*|)$`
 	g.prop("Route", "port")["anyOf"] = []any{portSchema(false), schemaObject{"const": 0}}
 	g.prop("Route", "dns")["enum"] = []DNSMode{DNSManual, DNSDirect, DNSProxied}
 	g.prop("Route", "auth")["enum"] = []AuthMode{AuthNone, AuthLoom}
 	g.describe("Route", "dns", "direct or proxied manages Cloudflare DNS; omitted leaves DNS alone.")
 	g.describe("Route", "auth", "loom requires a signed-in Loom session; omitted leaves the route open.")
-	g.prop("Route", "origin_pull")["enum"] = []OriginPullMode{OriginPullOptional, OriginPullRequired}
+	g.prop("Route", "origin_pull")["enum"] = []OriginPullMode{OriginPullOff, OriginPullOptional, OriginPullRequired}
 	g.describe("Route", "origin_pull", "Check the client certificate Cloudflare presents, minted with helios edge origin-pull mint: optional checks one that is presented, required refuses connections without one. Needs dns: proxied and the same value on every route to the host; omitted takes any connection.")
-	g.def("Route")["allOf"] = []any{condition(schemaObject{"required": []string{"origin_pull"}}, schemaObject{"required": []string{"dns"}, "properties": schemaObject{"dns": schemaObject{"const": DNSProxied}}})}
+	g.def("Route")["allOf"] = []any{condition(schemaObject{"required": []string{"origin_pull"}, "properties": schemaObject{"origin_pull": schemaObject{"enum": []OriginPullMode{OriginPullOptional, OriginPullRequired}}}}, schemaObject{"required": []string{"dns"}, "properties": schemaObject{"dns": schemaObject{"const": DNSProxied}}})}
 	g.prop("Health", "path")["pattern"] = `^(?:/.*|)$`
 	g.def("Health")["allOf"] = []any{condition(schemaObject{"required": []string{"command"}, "properties": schemaObject{"command": schemaObject{"minItems": 1}}}, properties(schemaObject{"path": schemaObject{"const": ""}}))}
 	g.describe("Health", "timeout", "Positive Go duration such as 90s. Default 60s.")
@@ -257,8 +258,7 @@ func (g *schemaGenerator) constrain() {
 	headers["propertyNames"] = schemaObject{"allOf": []any{stringsSchema("^[!#$%&'*+.^_`|~0-9A-Za-z-]+$"), schemaObject{"not": schemaObject{"pattern": "^(?:" + strings.Join(forbidden, "|") + ")$"}}}}
 	g.describe("Check", "headers_from_secrets", "Request header names mapped to existing UPPER_CASE app secret names. Requires context: edge and an HTTPS URL; values never enter the manifest.")
 	g.def("Check")["allOf"] = []any{condition(schemaObject{"required": []string{"headers_from_secrets"}, "properties": schemaObject{"headers_from_secrets": schemaObject{"minProperties": 1}}}, schemaObject{"required": []string{"context"}, "properties": schemaObject{"context": schemaObject{"const": "edge"}, "url": schemaObject{"pattern": "^https://"}}})}
-	g.prop("Check", "status")["minimum"] = 0
-	g.prop("Check", "status")["maximum"] = 599
+	g.prop("Check", "status")["anyOf"] = []any{schemaObject{"const": 0}, schemaObject{"minimum": 100, "maximum": 599}}
 	g.describe("Check", "within", "Positive Go duration such as 5s, limiting acceptable response time.")
 	g.prop("Preview", "of")["pattern"] = namePattern.String()
 	g.prop("Preview", "branch")["pattern"] = `^[^\r\n]*\S[^\r\n]*$`

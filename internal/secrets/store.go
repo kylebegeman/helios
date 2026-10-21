@@ -218,20 +218,23 @@ func (s *Store) SetAll(app string, changes map[string]*string) (int, error) {
 // Update records the changes change makes from the current values in one
 // new version, as SetAll does. The app's secrets are held from the read
 // to the write, so a change made meanwhile is never lost. When change
-// fails, nothing is written.
+// fails, nothing is written. With no changes, the current version is kept.
 func (s *Store) Update(app string, change func(current map[string]string) (map[string]*string, error)) (int, error) {
 	unlock, err := s.lock(app)
 	if err != nil {
 		return 0, err
 	}
 	defer unlock()
-	values, _, err := s.LoadCurrent(app)
+	values, version, err := s.LoadCurrent(app)
 	if err != nil {
 		return 0, err
 	}
 	changes, err := change(maps.Clone(values))
 	if err != nil {
 		return 0, err
+	}
+	if len(changes) == 0 {
+		return version, nil
 	}
 	for name, value := range changes {
 		if !ValidName(name) {
@@ -317,6 +320,18 @@ func (s *Store) write(app string, values map[string]string) (int, error) {
 	return next, nil
 }
 
+// Locks live beside the store so removing an app never unlinks a lock that a
+// waiting writer already opened. Keeping them outside Dir also leaves machine
+// backup and recovery inputs as app directories only.
+//
+// Older builds use Dir/app/.lock and cannot coordinate with this layout. When
+// upgrading or rolling back across layouts, drain CLI writers before switching
+// binaries and pause writes until the old daemon has stopped and its replacement
+// is ready. Restarting the daemon alone does not drain older CLI processes.
+func (s *Store) lockPath(app string) string {
+	return filepath.Join(filepath.Clean(s.Dir)+".locks", app+".lock")
+}
+
 // lock holds an app's secrets for one change, across processes: the CLI
 // and the daemon can both set secrets, and each change reads the current
 // version before writing the next.
@@ -324,11 +339,11 @@ func (s *Store) lock(app string) (func(), error) {
 	if !appPattern.MatchString(app) {
 		return nil, errors.New("invalid secrets app name")
 	}
-	dir := s.appDir(app)
-	if err := os.MkdirAll(dir, 0o700); err != nil {
+	path := s.lockPath(app)
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return nil, err
 	}
-	f, err := os.OpenFile(filepath.Join(dir, ".lock"), os.O_CREATE|os.O_RDWR, 0o600)
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0o600)
 	if err != nil {
 		return nil, err
 	}

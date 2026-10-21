@@ -101,3 +101,24 @@ func TestRouteForReflectsWorkloadAndRouteMutations(t *testing.T) {
 	delete(m.Workloads, "web")
 	assertRoute("/latest/users", "", "")
 }
+
+func TestValidationRefusesRoutesWithTheSameNormalizedPrefix(t *testing.T) {
+	for _, sameWorkload := range []bool{false, true} {
+		for _, paths := range [][2]string{{"/api", "/api/"}, {"", "/"}} {
+			m := &Manifest{App: "site", Workloads: map[string]Workload{
+				"first": {Kind: Web, Image: "image", Port: 8000, Routes: []Route{{Host: "site.example.com", Path: paths[0]}}},
+			}}
+			second := Route{Host: "site.example.com", Path: paths[1], Auth: AuthLoom}
+			if sameWorkload {
+				w := m.Workloads["first"]
+				w.Routes = append(w.Routes, second)
+				m.Workloads["first"] = w
+			} else {
+				m.Workloads["second"] = Workload{Kind: Web, Image: "image", Port: 8001, Routes: []Route{second}}
+			}
+			if err := m.Validate(); err == nil {
+				t.Errorf("accepted duplicate prefixes %q in one workload: %v", paths, sameWorkload)
+			}
+		}
+	}
+}

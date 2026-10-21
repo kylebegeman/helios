@@ -132,3 +132,41 @@ func TestOfflineCheckRejectsAdditionalYAMLDocuments(t *testing.T) {
 		t.Fatalf("%+v", got)
 	}
 }
+
+func TestOfflineCheckKeepsDockerfileLinksInsideTheirBuildContext(t *testing.T) {
+	for _, tc := range []struct {
+		name, target string
+		valid        bool
+	}{
+		{"sibling outside context", "../Dockerfile", false},
+		{"relative inside context", "deploy/Dockerfile", true},
+		{"absolute inside context", "", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := checkFixture(t, "app: api\nworkloads:\n  worker:\n    kind: worker\n    build: {context: server}\n")
+			inside := filepath.Join(dir, "server", "deploy", "Dockerfile")
+			if err := os.MkdirAll(filepath.Dir(inside), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			for _, path := range []string{inside, filepath.Join(dir, "Dockerfile")} {
+				if err := os.WriteFile(path, []byte("FROM scratch\n"), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			target := tc.target
+			if target == "" {
+				target = inside
+			}
+			if err := os.Symlink(target, filepath.Join(dir, "server", "Dockerfile")); err != nil {
+				t.Fatal(err)
+			}
+			got := CheckSource(dir, FileName)
+			if got.Valid != tc.valid {
+				t.Fatalf("%+v", got)
+			}
+			if !tc.valid && (len(got.Diagnostics) != 1 || got.Diagnostics[0].Path != "workloads.worker.build.dockerfile" || got.Diagnostics[0].Code != "source.outside") {
+				t.Fatalf("%+v", got)
+			}
+		})
+	}
+}

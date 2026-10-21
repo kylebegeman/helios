@@ -106,7 +106,7 @@ workloads:
   # no image and no port; the edge serves the directory itself.
   pages:
     kind: static
-    dir: public
+    dir: "public"
     routes:
       - host: acme.example.com
 
@@ -128,7 +128,7 @@ workloads:
   # no image and no port; the edge serves the directory itself.
   pages:
     kind: static
-    dir: dist
+    dir: "dist"
     routes:
       - host: acme.example.com
 

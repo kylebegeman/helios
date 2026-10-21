@@ -190,6 +190,44 @@ var (
 	loomSecretPattern   = regexp.MustCompile(`^[ -~]{16,512}$`)
 )
 
+// Validate checks complete effective values without changing the secrets store.
+// Callers applying a patch must merge it with current values first. Blank fields
+// use the same defaults as Set; generated storage passwords remain optional.
+func Validate(name string, values map[string]string) error {
+	def, ok := Lookup(name)
+	if !ok {
+		return fmt.Errorf("no integration named %q; there are %s", name, strings.Join(Names(), ", "))
+	}
+	known := map[string]bool{}
+	complete := make(map[string]string, len(def.Fields))
+	for _, f := range def.Fields {
+		known[f.Name] = true
+		v := strings.TrimSpace(values[f.Name])
+		if v == "" {
+			v = f.Default
+		}
+		if v == "" && !f.Optional {
+			return fmt.Errorf("%s needs %s (%s)", name, f.Name, f.Prompt)
+		}
+		if v != "" && len(f.Choices) > 0 {
+			match := false
+			for _, choice := range f.Choices {
+				match = match || choice == v
+			}
+			if !match {
+				return fmt.Errorf("%s.%s must be one of %s", name, f.Name, strings.Join(f.Choices, ", "))
+			}
+		}
+		complete[f.Name] = v
+	}
+	for k := range values {
+		if !known[k] {
+			return fmt.Errorf("%s has no field named %q", name, k)
+		}
+	}
+	return validate(name, complete)
+}
+
 // Set stores an integration's values in one new version of helios's
 // secrets and returns values it made up, such as a generated password,
 // so the caller can show them exactly once.
@@ -212,57 +250,59 @@ func Set(store *secrets.Store, name string, values map[string]string) (version i
 			return 0, nil, fmt.Errorf("%s has no field named %q", name, k)
 		}
 	}
-	current, err := Get(store, name)
-	if err != nil && !errors.Is(err, ErrNotSet) {
-		return 0, nil, err
-	}
 	generated = map[string]string{}
-	changes := map[string]*string{}
-	for _, f := range def.Fields {
-		v, named := values[f.Name]
-		v = strings.TrimSpace(v)
-		if !named {
-			v = current[f.Name]
-		}
-		if v == "" {
-			v = f.Default
-		}
-		if v == "" && name == StorageName && f.Name == "password" {
-			if v = current[f.Name]; v == "" {
-				var b [24]byte
-				if _, err := rand.Read(b[:]); err != nil {
-					return 0, nil, err
-				}
-				v = hex.EncodeToString(b[:])
-				generated[f.Name] = v
+	version, err = store.Update(App, func(all map[string]string) (map[string]*string, error) {
+		current := storedFields(def, all)
+		changes := map[string]*string{}
+		for _, f := range def.Fields {
+			v, named := values[f.Name]
+			v = strings.TrimSpace(v)
+			if !named {
+				v = current[f.Name]
 			}
-		}
-		if v == "" {
-			if !f.Optional {
-				return 0, nil, fmt.Errorf("%s needs %s (%s)", name, f.Name, f.Prompt)
+			if v == "" {
+				v = f.Default
 			}
-			changes[def.key(f.Name)] = nil
-			continue
-		}
-		if len(f.Choices) > 0 {
-			match := false
-			for _, c := range f.Choices {
-				if c == v {
-					match = true
+			if v == "" && name == StorageName && f.Name == "password" {
+				if v = current[f.Name]; v == "" {
+					var b [24]byte
+					if _, err := rand.Read(b[:]); err != nil {
+						return nil, err
+					}
+					v = hex.EncodeToString(b[:])
+					generated[f.Name] = v
 				}
 			}
-			if !match {
-				return 0, nil, fmt.Errorf("%s.%s must be one of %s", name, f.Name, strings.Join(f.Choices, ", "))
+			if v == "" {
+				if !f.Optional {
+					return nil, fmt.Errorf("%s needs %s (%s)", name, f.Name, f.Prompt)
+				}
+				changes[def.key(f.Name)] = nil
+				continue
 			}
+			if len(f.Choices) > 0 {
+				match := false
+				for _, c := range f.Choices {
+					if c == v {
+						match = true
+					}
+				}
+				if !match {
+					return nil, fmt.Errorf("%s.%s must be one of %s", name, f.Name, strings.Join(f.Choices, ", "))
+				}
+			}
+			value := v
+			changes[def.key(f.Name)] = &value
 		}
-		value := v
-		changes[def.key(f.Name)] = &value
-	}
-	if err := validate(name, fieldValues(def, changes)); err != nil {
+		if err := Validate(name, fieldValues(def, changes)); err != nil {
+			return nil, err
+		}
+		return changes, nil
+	})
+	if err != nil {
 		return 0, nil, err
 	}
-	version, err = store.SetAll(App, changes)
-	return version, generated, err
+	return version, generated, nil
 }
 
 func fieldValues(def Definition, changes map[string]*string) map[string]string {
@@ -279,7 +319,7 @@ func validate(name string, v map[string]string) error {
 	switch name {
 	case StorageName:
 		if v["kind"] == "s3" {
-			if _, err := parseEndpointURL(v["endpoint"]); err != nil {
+			if _, err := parseBaseEndpointURL(v["endpoint"]); err != nil {
 				return fmt.Errorf("storage.endpoint: %w", err)
 			}
 		} else if v["endpoint"] != "" {
@@ -290,7 +330,7 @@ func validate(name string, v map[string]string) error {
 		}
 	case CloudflareName:
 		if api := v["api"]; api != "" {
-			if _, err := parseEndpointURL(api); err != nil {
+			if _, err := parseBaseEndpointURL(api); err != nil {
 				return fmt.Errorf("cloudflare.api: %w", err)
 			}
 		}
@@ -299,13 +339,8 @@ func validate(name string, v map[string]string) error {
 		if err != nil || port < 1 || port > 65535 {
 			return fmt.Errorf("%s.smtp_port must be a port number", name)
 		}
-		for _, f := range []string{"from", "to"} {
-			for _, addr := range strings.Split(v[f], ",") {
-				addr = strings.TrimSpace(addr)
-				if _, err := mail.ParseAddress(addr); err != nil {
-					return fmt.Errorf("%s.%s: %q isn't an address", name, f, addr)
-				}
-			}
+		if _, _, err := emailAddresses(name, v); err != nil {
+			return err
 		}
 		if (v["smtp_user"] == "") != (v["smtp_password"] == "") {
 			return fmt.Errorf("%s: give both smtp_user and smtp_password, or neither", name)
@@ -354,16 +389,21 @@ func Get(store *secrets.Store, name string) (map[string]string, error) {
 	if err != nil {
 		return nil, err
 	}
+	out := storedFields(def, all)
+	if len(out) == 0 {
+		return nil, fmt.Errorf("%s: %w; run helios integration set %s", name, ErrNotSet, name)
+	}
+	return out, nil
+}
+
+func storedFields(def Definition, all map[string]string) map[string]string {
 	out := map[string]string{}
 	for _, f := range def.Fields {
 		if v, ok := all[def.key(f.Name)]; ok {
 			out[f.Name] = v
 		}
 	}
-	if len(out) == 0 {
-		return nil, fmt.Errorf("%s: %w; run helios integration set %s", name, ErrNotSet, name)
-	}
-	return out, nil
+	return out
 }
 
 // Remove drops an integration's values.
@@ -648,14 +688,30 @@ func loadEmail(store *secrets.Store, name string) (*Email, error) {
 	if err != nil {
 		return nil, err
 	}
-	port, _ := strconv.Atoi(v["smtp_port"])
-	e := &Email{Name: name, Host: v["smtp_host"], Port: port, User: v["smtp_user"], Password: v["smtp_password"], From: v["from"]}
-	for _, addr := range strings.Split(v["to"], ",") {
-		if a := strings.TrimSpace(addr); a != "" {
-			e.To = append(e.To, a)
-		}
+	from, to, err := emailAddresses(name, v)
+	if err != nil {
+		return nil, err
 	}
-	return e, nil
+	port, _ := strconv.Atoi(v["smtp_port"])
+	return &Email{Name: name, Host: v["smtp_host"], Port: port, User: v["smtp_user"], Password: v["smtp_password"], From: from, To: to}, nil
+}
+
+// emailAddresses keeps the SMTP envelope to mailboxes, even when a person
+// enters display names. Only the recipient field accepts an address list.
+func emailAddresses(name string, values map[string]string) (string, []string, error) {
+	from, err := mail.ParseAddress(values["from"])
+	if err != nil {
+		return "", nil, fmt.Errorf("%s.from: isn't an address", name)
+	}
+	recipients, err := mail.ParseAddressList(values["to"])
+	if err != nil || len(recipients) == 0 {
+		return "", nil, fmt.Errorf("%s.to: isn't an address list", name)
+	}
+	to := make([]string, 0, len(recipients))
+	for _, address := range recipients {
+		to = append(to, address.Address)
+	}
+	return from.Address, to, nil
 }
 
 // Pushover is the Pushover application and user alerts go to.
@@ -785,6 +841,19 @@ func parseEndpointURL(raw string) (*url.URL, error) {
 		if err != nil || number < 1 || number > 65535 {
 			return nil, errors.New("URL port must be 1 to 65535")
 		}
+	}
+	return u, nil
+}
+
+// Base endpoints have resource paths appended by their clients. A query would
+// swallow those paths and could expose a credential as public configuration.
+func parseBaseEndpointURL(raw string) (*url.URL, error) {
+	u, err := parseEndpointURL(raw)
+	if err != nil {
+		return nil, err
+	}
+	if u.RawQuery != "" || u.ForceQuery {
+		return nil, errors.New("base URL must not have a query")
 	}
 	return u, nil
 }

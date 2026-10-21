@@ -524,9 +524,11 @@ func ValidCheckHeader(name string) bool {
 	return true
 }
 
+const maxHostnameLength = 253
+
 var (
 	namePattern    = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$`)
-	hostPattern    = regexp.MustCompile(`^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,}$`)
+	hostPattern    = regexp.MustCompile(`^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$`)
 	envPattern     = regexp.MustCompile(`^[A-Z][A-Z0-9_]*$`)
 	sizePattern    = regexp.MustCompile(`^[0-9]+[kmg]$`)
 	capPattern     = regexp.MustCompile(`^[A-Z][A-Z0-9_]*$`)
@@ -722,8 +724,10 @@ func validateShape(at, name string, w Workload, fail func(format string, args ..
 			fail("%s: a cron workload has no routes or port", at)
 		}
 		if w.Timeout != "" {
-			if _, err := time.ParseDuration(w.Timeout); err != nil {
+			if d, err := time.ParseDuration(w.Timeout); err != nil {
 				fail("%s.timeout: %q isn't a duration such as 30m", at, w.Timeout)
+			} else if d <= 0 {
+				fail("%s.timeout: must be a positive duration such as 30m", at)
 			}
 		}
 	} else if w.Schedule != "" {
@@ -731,8 +735,10 @@ func validateShape(at, name string, w Workload, fail func(format string, args ..
 	} else if w.Timeout != "" && w.Kind != Release {
 		fail("%s: timeout is for cron and release workloads", at)
 	} else if w.Timeout != "" {
-		if _, err := time.ParseDuration(w.Timeout); err != nil {
+		if d, err := time.ParseDuration(w.Timeout); err != nil {
 			fail("%s.timeout: %q isn't a duration such as 10m", at, w.Timeout)
+		} else if d <= 0 {
+			fail("%s.timeout: must be a positive duration such as 10m", at)
 		}
 	}
 	if w.Singleton && w.Kind != Web && w.Kind != Worker {
@@ -847,7 +853,7 @@ func (m *Manifest) validateNames(at, name string, w Workload, names map[string]s
 func validateRoutes(at, name string, w Workload, claimed map[string]string, fail func(format string, args ...any)) {
 	for i, r := range w.Routes {
 		ra := fmt.Sprintf("%s.routes[%d]", at, i)
-		if !hostPattern.MatchString(r.Host) {
+		if !ValidHost(r.Host) {
 			fail("%s: host %q isn't a hostname", ra, r.Host)
 		}
 		path := r.Path
@@ -857,7 +863,7 @@ func validateRoutes(at, name string, w Workload, claimed map[string]string, fail
 		if !strings.HasPrefix(path, "/") || strings.Contains(path, "*") {
 			fail("%s: path %q must start with / and is a prefix, without wildcards", ra, r.Path)
 		}
-		key := r.Host + " " + path
+		key := r.Host + " " + r.NormalizedPath()
 		if other, taken := claimed[key]; taken {
 			fail("%s: %s %s is already routed to %s", ra, r.Host, path, other)
 		}
@@ -1160,7 +1166,7 @@ func (m *Manifest) validateChecks(fail func(format string, args ...any)) {
 		if !strings.HasPrefix(c.URL, "https://") && !strings.HasPrefix(c.URL, "http://") {
 			fail("checks[%d]: url must start with https:// or http://", i)
 		}
-		if c.Status < 0 || c.Status > 599 {
+		if c.Status != 0 && (c.Status < 100 || c.Status > 599) {
 			fail("checks[%d]: status must be an HTTP status", i)
 		}
 		if c.Within != "" {
@@ -1460,7 +1466,9 @@ func ValidApp(name string) bool { return namePattern.MatchString(name) && !reser
 
 // ValidHost reports whether a string is a hostname a route can use, by the
 // same rule a manifest is validated against.
-func ValidHost(host string) bool { return hostPattern.MatchString(host) }
+func ValidHost(host string) bool {
+	return len(host) <= maxHostnameLength && hostPattern.MatchString(host)
+}
 
 // GuardedRoutes lists the host and path prefix of every route that asks
 // for a sign-in, in the order the workloads are named.

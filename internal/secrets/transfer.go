@@ -103,14 +103,8 @@ func (s *Store) Import(app, name string, input io.Reader) (int, error) {
 	if json.Unmarshal(data, &t) != nil || t.App != app || t.Name != name || !fresh(t.Expires) {
 		return 0, errors.New("secret transfer is expired or does not match the destination")
 	}
-	current, version, err := s.LoadCurrent(app)
-	if err != nil {
-		return 0, err
-	}
-	if value, present := current[name]; present && value == t.Value {
-		return version, nil
-	}
-	return s.Set(app, name, t.Value)
+	_, version, err := s.mergeValues(app, map[string]string{name: t.Value})
+	return version, err
 }
 
 // ExportBundle seals every secret an app holds for another machine, so an
@@ -165,34 +159,8 @@ func (s *Store) ImportBundle(app string, input io.Reader) ([]string, error) {
 	if json.Unmarshal(data, &b) != nil || b.App != app || !fresh(b.Expires) {
 		return nil, errors.New("secret bundle is expired or does not match the destination")
 	}
-	current, _, err := s.LoadCurrent(app)
-	if err != nil {
-		return nil, err
-	}
-	names := make([]string, 0, len(b.Values))
-	for name := range b.Values {
-		names = append(names, name)
-	}
-	sort.Strings(names)
-	var stored []string
-	changes := map[string]*string{}
-	for _, name := range names {
-		if !ValidName(name) {
-			return nil, errors.New("the bundle names an invalid secret")
-		}
-		if value, present := current[name]; present && value == b.Values[name] {
-			continue
-		}
-		value := b.Values[name]
-		changes[name] = &value
-		stored = append(stored, name)
-	}
-	if len(changes) > 0 {
-		if _, err := s.SetAll(app, changes); err != nil {
-			return nil, err
-		}
-	}
-	return stored, nil
+	stored, _, err := s.mergeValues(app, b.Values)
+	return stored, err
 }
 
 // CopyAll copies every secret an app holds to another app on this
@@ -216,31 +184,38 @@ func (s *Store) CopyAll(from, to string) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	current, _, err := s.LoadCurrent(to)
-	if err != nil {
-		return nil, err
-	}
-	changes := map[string]*string{}
+	stored, _, err := s.mergeValues(to, values)
+	return stored, err
+}
+
+// mergeValues compares and writes against one locked destination snapshot, so
+// simultaneous copies and imports retain their idempotency.
+func (s *Store) mergeValues(app string, values map[string]string) ([]string, int, error) {
 	names := make([]string, 0, len(values))
-	for name, value := range values {
+	for name := range values {
 		if !ValidName(name) {
-			return nil, errors.New("source contains an invalid secret name")
+			return nil, 0, errors.New("source contains an invalid secret name")
 		}
-		if existing, present := current[name]; present && existing == value {
-			continue
-		}
-		v := value
-		changes[name] = &v
 		names = append(names, name)
 	}
-	if len(changes) == 0 {
-		return nil, nil
-	}
 	sort.Strings(names)
-	if _, err := s.SetAll(to, changes); err != nil {
-		return nil, err
+	var stored []string
+	version, err := s.Update(app, func(current map[string]string) (map[string]*string, error) {
+		changes := map[string]*string{}
+		for _, name := range names {
+			value := values[name]
+			if existing, present := current[name]; present && existing == value {
+				continue
+			}
+			changes[name] = &value
+			stored = append(stored, name)
+		}
+		return changes, nil
+	})
+	if err != nil {
+		return nil, 0, err
 	}
-	return names, nil
+	return stored, version, nil
 }
 
 func parseRecipient(recipient string) (age.Recipient, error) {
