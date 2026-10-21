@@ -134,23 +134,24 @@ func (j *Jobs) RunWith(ctx context.Context, rev *state.Revision, workload string
 		// likes, and is gone when it ends.
 		spec.ReadOnly = false
 	}
-	// Data access and image inspection may both wait while an operator
-	// places a hold. Check admission immediately before recording the run.
+	started := time.Now().UTC()
+	run := state.JobRun{App: rev.App, Workload: workload, Revision: rev.ID, Kind: kind, StartedAt: started, Container: spec.Name}
+	var id int64
 	if kind == JobCron {
 		at := opts.scheduledAt
 		if at.IsZero() {
-			at = time.Now().UTC()
+			at = started
 		}
-		hold, err := ActiveCronHold(ctx, j.Store, rev.App, workload, at)
-		if err != nil {
-			return -1, err
+		// A hold can arrive during data/image preflight. Its admission check
+		// and the durable run record must be one atomic store operation.
+		var heldUntil time.Time
+		id, heldUntil, err = j.Store.StartCronRun(ctx, run, at)
+		if err == nil && id == 0 {
+			return -1, fmt.Errorf("cron %s/%s is held until %s; its queued run was skipped", rev.App, workload, OperatorTime(heldUntil))
 		}
-		if hold != nil {
-			return -1, fmt.Errorf("cron %s/%s is held until %s; its queued run was skipped", rev.App, workload, OperatorTime(hold.FinishedAt))
-		}
+	} else {
+		id, err = j.Store.StartJobRun(ctx, run)
 	}
-	started := time.Now().UTC()
-	id, err := j.Store.StartJobRun(ctx, state.JobRun{App: rev.App, Workload: workload, Revision: rev.ID, Kind: kind, StartedAt: started, Container: spec.Name})
 	if err != nil {
 		return -1, err
 	}

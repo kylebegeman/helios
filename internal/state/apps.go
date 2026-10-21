@@ -376,6 +376,48 @@ func (s *Store) StartJobRun(ctx context.Context, run JobRun) (int64, error) {
 	return res.LastInsertId()
 }
 
+// StartCronRun atomically admits a scheduled occurrence against the latest
+// workload hold. A zero id and nonzero deadline mean that occurrence was held,
+// even if the hold ended before admission. One-off jobs use StartJobRun.
+func (s *Store) StartCronRun(ctx context.Context, run JobRun, scheduledAt time.Time) (int64, time.Time, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, time.Time{}, err
+	}
+	defer tx.Rollback()
+	// Make the decision in the INSERT itself: SQLite serializes it with
+	// HoldJob and EndJobHold, including writes from other store connections.
+	res, err := tx.ExecContext(ctx, `INSERT INTO job_runs (app, workload, revision, kind, started_at, container)
+		SELECT ?, ?, ?, 'cron', ?, ? WHERE NOT EXISTS (
+			SELECT 1 FROM (
+				SELECT finished_at FROM job_runs WHERE app = ? AND workload = ? AND kind = ?
+				ORDER BY started_at DESC, id DESC LIMIT 1
+			) WHERE finished_at > ?
+		)`, run.App, run.Workload, run.Revision, unix(run.StartedAt), run.Container, run.App, run.Workload, JobHold, unix(scheduledAt))
+	if err != nil {
+		return 0, time.Time{}, err
+	}
+	count, err := res.RowsAffected()
+	if err != nil {
+		return 0, time.Time{}, err
+	}
+	if count == 0 {
+		// Keep the write transaction until this read finishes, so feedback
+		// describes the hold that refused admission even during a release.
+		var until int64
+		err := tx.QueryRowContext(ctx, `SELECT finished_at FROM job_runs WHERE app = ? AND workload = ? AND kind = ? ORDER BY started_at DESC, id DESC LIMIT 1`, run.App, run.Workload, JobHold).Scan(&until)
+		return 0, fromUnix(until), err
+	}
+	id, err := res.LastInsertId()
+	if err != nil {
+		return 0, time.Time{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, time.Time{}, err
+	}
+	return id, time.Time{}, nil
+}
+
 // FinishJobRun records how a run ended.
 func (s *Store) FinishJobRun(ctx context.Context, id int64, exitCode int, runErr, output string, finished time.Time) error {
 	_, err := s.db.ExecContext(ctx, `UPDATE job_runs SET finished_at = ?, exit_code = ?, error = ?, output = ? WHERE id = ?`, unix(finished), exitCode, runErr, output, id)
