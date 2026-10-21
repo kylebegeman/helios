@@ -189,7 +189,9 @@ func (p *Prober) Observe(ctx context.Context) []Condition {
 	active, err := p.Store.ActiveRevisions(ctx)
 	if err != nil {
 		conditions = append(conditions, p.unobservedIncidents(ctx)...)
-		return append(conditions, Condition{Key: "host:state", Subject: "the state store", Severity: state.SeverityCritical, Message: err.Error()})
+		conditions = append(conditions, Condition{Key: "host:state", Subject: "the state store", Severity: state.SeverityCritical, Message: err.Error()})
+		// Watched URLs don't depend on the apps, so they are still checked.
+		return append(conditions, p.watches(ctx)...)
 	}
 	currentContainers := map[string]bool{}
 	for _, rev := range active {
@@ -696,10 +698,15 @@ func trimURLError(s string) string {
 	return s
 }
 
-// watches checks the URLs this machine watches from the outside.
+// watches checks the URLs this machine watches from the outside. A watch
+// list that can't be read holds every watch's incident, since none of
+// them was checked.
 func (p *Prober) watches(ctx context.Context) []Condition {
 	watches, err := p.Store.Watches(ctx)
-	if err != nil || len(watches) == 0 {
+	if err != nil {
+		return p.unobserved(ctx, "watch:")
+	}
+	if len(watches) == 0 {
 		return nil
 	}
 	conditions := make([]Condition, len(watches))

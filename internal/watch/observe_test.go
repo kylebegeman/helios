@@ -2,6 +2,7 @@ package watch
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -11,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"testing"
 	"time"
@@ -210,6 +212,154 @@ func TestDockerOutageCannotCertifyAppOrEdgeRecovery(t *testing.T) {
 		if open, err := w.Store.OpenIncidentByKey(ctx, key); err != nil || open == nil {
 			t.Fatalf("unobserved %s was reported recovered: %+v, %v", key, open, err)
 		}
+	}
+}
+
+// alterState changes the state database behind the store's back, the way
+// a damaged row would look to it.
+func alterState(t *testing.T, store *state.Store, query string) {
+	t.Helper()
+	db, err := sql.Open("sqlite", store.Path())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if _, err := db.Exec(query); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// failingWatch watches a site that answers 503 until it is told to be
+// healthy, and returns the watch's incident key.
+func failingWatch(t *testing.T, store *state.Store, now time.Time) (string, *atomic.Bool) {
+	t.Helper()
+	healthy := &atomic.Bool{}
+	site := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, _ *http.Request) {
+		if !healthy.Load() {
+			response.WriteHeader(http.StatusServiceUnavailable)
+		}
+	}))
+	t.Cleanup(site.Close)
+	if err := store.AddWatch(context.Background(), site.URL, now); err != nil {
+		t.Fatal(err)
+	}
+	return "watch:" + site.URL, healthy
+}
+
+// toldResolved reports whether a recovery of key was sent.
+func toldResolved(notifier *fakeNotifier, key string) bool {
+	for _, n := range notifier.sent {
+		if n.Key == key && n.Transition == TransitionResolved {
+			return true
+		}
+	}
+	return false
+}
+
+// A URL watched from the outside doesn't depend on the apps, so a state
+// store that can't list their revisions still checks it: a watch that
+// still fails stays open, and one that answers again recovers.
+func TestUnreadableRevisionsStillCheckWatches(t *testing.T) {
+	ctx := context.Background()
+	fake := dockertest.New(t)
+	fake.Add(dockertest.Container{Name: "bedrock-edge", Running: true})
+	notifier := &fakeNotifier{}
+	w, now := newWatcher(t, notifier)
+	key, healthy := failingWatch(t, w.Store, *now)
+	p := NewProber(w.Store)
+	p.Root = t.TempDir()
+	p.Now = func() time.Time { return *now }
+	round := func() map[string]Condition {
+		t.Helper()
+		*now = now.Add(time.Minute)
+		conditions := p.Observe(ctx)
+		if err := w.Round(ctx, conditions); err != nil {
+			t.Fatal(err)
+		}
+		byKey := map[string]Condition{}
+		for _, c := range conditions {
+			byKey[c.Key] = c
+		}
+		return byKey
+	}
+	for range DefaultOpenAfter {
+		round()
+	}
+	if open, err := w.Store.OpenIncidentByKey(ctx, key); err != nil || open == nil {
+		t.Fatalf("a failing watch opened no incident: %v", err)
+	}
+
+	body := json.RawMessage(`{"app":"hello","workloads":{"work":{"kind":"worker","image":"x"}}}`)
+	if err := w.Store.SaveRevision(ctx, state.Revision{App: "hello", ID: "r1", Status: state.RevisionActive, Manifest: body, CreatedAt: *now}); err != nil {
+		t.Fatal(err)
+	}
+	alterState(t, w.Store, `UPDATE revisions SET containers = 'unreadable' WHERE app = 'hello'`)
+	for range DefaultResolveAfter + 1 {
+		found := round()
+		if _, ok := found["host:state"]; !ok {
+			t.Fatalf("the revisions were read: %+v", found)
+		}
+		if c := found[key]; c.Unknown || c.Severity != state.SeverityCritical {
+			t.Fatalf("the watch wasn't checked: %+v", c)
+		}
+	}
+	if open, err := w.Store.OpenIncidentByKey(ctx, key); err != nil || open == nil || toldResolved(notifier, key) {
+		t.Fatalf("a watch that still fails was reported recovered: %+v, %v, %+v", open, err, notifier.sent)
+	}
+
+	healthy.Store(true)
+	for range DefaultResolveAfter {
+		round()
+	}
+	if open, err := w.Store.OpenIncidentByKey(ctx, key); err != nil || open != nil || !toldResolved(notifier, key) {
+		t.Fatalf("a watch that answers again didn't recover: %+v, %v, %+v", open, err, notifier.sent)
+	}
+}
+
+// A watch list that can't be read says nothing about the URLs on it, so
+// their incidents are held rather than reported recovered.
+func TestUnreadableWatchListHoldsWatchIncidents(t *testing.T) {
+	ctx := context.Background()
+	notifier := &fakeNotifier{}
+	w, now := newWatcher(t, notifier)
+	key, _ := failingWatch(t, w.Store, *now)
+	p := NewProber(w.Store)
+	p.Root = t.TempDir()
+	p.Now = func() time.Time { return *now }
+	p.Connect = func(context.Context) (*docker.Engine, error) { return nil, errors.New("Docker unavailable") }
+	round := func() []Condition {
+		t.Helper()
+		*now = now.Add(time.Minute)
+		conditions := p.Observe(ctx)
+		if err := w.Round(ctx, conditions); err != nil {
+			t.Fatal(err)
+		}
+		var watches []Condition
+		for _, c := range conditions {
+			if strings.HasPrefix(c.Key, "watch:") {
+				watches = append(watches, c)
+			}
+		}
+		return watches
+	}
+	for range DefaultOpenAfter {
+		round()
+	}
+	if open, err := w.Store.OpenIncidentByKey(ctx, key); err != nil || open == nil {
+		t.Fatalf("a failing watch opened no incident: %v", err)
+	}
+
+	alterState(t, w.Store, `UPDATE watches SET added_at = 'unreadable'`)
+	if _, err := w.Store.Watches(ctx); err == nil {
+		t.Fatal("the watch list can still be read")
+	}
+	for range DefaultResolveAfter + 1 {
+		if found := round(); len(found) != 1 || found[0].Key != key || !found[0].Unknown {
+			t.Fatalf("the watch's incident wasn't held: %+v", found)
+		}
+	}
+	if open, err := w.Store.OpenIncidentByKey(ctx, key); err != nil || open == nil || toldResolved(notifier, key) {
+		t.Fatalf("a watch nobody could check was reported recovered: %+v, %v, %+v", open, err, notifier.sent)
 	}
 }
 

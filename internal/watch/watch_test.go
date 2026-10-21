@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -351,5 +352,79 @@ func TestAFailedRecoveryNoticeIsRetriedAfterResolution(t *testing.T) {
 	}
 	if len(notifier.sent) != 2 {
 		t.Fatal("successful recovery notice repeated")
+	}
+}
+
+// held is a notice a notifier holds back on purpose, for to to send.
+type held struct{ to string }
+
+func (h *held) Error() string { return h.to + " is to send this" }
+func (h *held) Held() bool    { return true }
+
+// holding is a notifier that holds every notice for whoever to names, and
+// delivers once it names nobody.
+type holding struct {
+	to   string
+	sent []Notice
+}
+
+func (h *holding) Notify(_ context.Context, n Notice) error {
+	if h.to != "" {
+		return &held{to: h.to}
+	}
+	h.sent = append(h.sent, n)
+	return nil
+}
+
+// A notice the notifier holds back on purpose is a wait, not a failure.
+// The incident keeps it as its notify error, so it is asked about again
+// each round and shows who it waits for, but the log says it is held only
+// when the hold begins or moves to someone else, and never that the alert
+// wasn't delivered. A recovery is held the same way.
+func TestAHeldNoticeIsLoggedOnceAndNeverAsUndelivered(t *testing.T) {
+	ctx := context.Background()
+	n := &holding{to: "web1"}
+	w, now := newWatcher(t, n)
+	var logged []string
+	w.Log = func(format string, args ...any) { logged = append(logged, fmt.Sprintf(format, args...)) }
+	round := shopRound(t, w, now)
+	for range DefaultOpenAfter + 3 {
+		round(down("shop"))
+	}
+	if inc := round(down("shop")); inc == nil || inc.NotifyError != "web1 is to send this" || !inc.NotifiedAt.IsZero() {
+		t.Fatalf("the open isn't held for web1: %+v", inc)
+	}
+	n.to = "web2"
+	round(down("shop"))
+	n.to = ""
+	if inc := round(down("shop")); inc == nil || inc.NotifyError != "" || inc.NotifiedAt.IsZero() {
+		t.Fatalf("the open wasn't sent once nothing held it: %+v", inc)
+	}
+
+	n.to = "web1"
+	for range DefaultResolveAfter + 3 {
+		round()
+	}
+	if pending, err := w.Store.PendingResolvedIncidentNotices(ctx); err != nil || len(pending) != 1 || pending[0].NotifyError != "web1 is to send this" {
+		t.Fatalf("the recovery isn't held for web1: %+v %v", pending, err)
+	}
+	n.to = ""
+	round()
+	if pending, err := w.Store.PendingResolvedIncidentNotices(ctx); err != nil || len(pending) != 0 || len(n.sent) != 2 {
+		t.Fatalf("sent %+v, pending %+v %v", n.sent, pending, err)
+	}
+
+	var heldLines []string
+	for _, line := range logged {
+		if strings.HasPrefix(line, "alert not delivered") {
+			t.Fatalf("a held notice was logged as undelivered:\n%s", strings.Join(logged, "\n"))
+		}
+		if strings.HasPrefix(line, "alert held") {
+			heldLines = append(heldLines, line)
+		}
+	}
+	want := []string{"alert held: shop: web1 is to send this", "alert held: shop: web2 is to send this", "alert held: shop: web1 is to send this"}
+	if strings.Join(heldLines, "\n") != strings.Join(want, "\n") {
+		t.Fatalf("logged %q, want %q", heldLines, want)
 	}
 }

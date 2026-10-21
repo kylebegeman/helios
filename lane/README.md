@@ -84,8 +84,8 @@ answering SSH as soon as `m2`'s host setup installs Docker. A VM created
 before this keeps the default bridge; `lane/vm.sh up` says so, and
 `make lane-reset` replaces it.
 
-The local loopback VM proves `m1`, `m2`, `product`, `signed`, and
-`originpull`. Public certificate, external DNS and public webhook proofs
+The local loopback VM proves `m1`, `m2`, `product`, `signed`, `originpull`,
+and `peer`. Public certificate, external DNS and public webhook proofs
 require the dedicated externally reachable SSH machine described below.
 The runner refuses those scopes on the loopback VM and names the missing
 prerequisite.
@@ -153,6 +153,7 @@ locally created QEMU machine.
 | `m6` | Git push, app isolation, DNS stand-in, webhook, remote deploy | `m5`'s apps; explicit `LANE_BEGAMIN_REPO`, `LANE_SITE_URL` |
 | `signed` | The daemon on its own and reconcile on its own, each from a stock 755 root:root `/etc/bedrock`, make it 715 root:bedrock, so the push user passes through to the signing policy without listing it; a signed pushed tip deploys and names its signer; unsigned, unknown-key, GPG and other-namespace tips and uploaded trees are refused with nothing built; an app without the policy deploys as before; the gitdeploy signing and webhook tests on the guest's git and OpenSSH | `m2`; no public DNS |
 | `originpull` | Required origin pull refused until a CA is trusted; the minted leaf is a year's client certificate in a new file; optional checks a presented certificate and logs its name; required takes only the minted leaf, redirects port 80 and answers a mismatched name with 421; a `dns: direct` host beside it unchanged; `forget` keeps a required host's last CA; rotation without a gap; the edge restored without `origin_pull` | `m2`; no public DNS |
+| `peer` | The daemon's peer listener on loopback answers only a registered key, with 401 and `Helios-Peer` otherwise, serves the summary with every field, takes a pushed view with 204 and serves none of the daemon's API; a Mac-style observer in a second state directory reads it and pushes its view, and finds its summary refused with the daemon stopped; `peer ls` shows names and public URLs only; neither the journal nor `helios alerts --json` names the port or the listen address | `m2`; no public DNS |
 | `m7` | Generated/derived secrets, release order, singleton recovery, pgvector, object store, backup/restore | Prepared host; storage integration; public wildcard DNS |
 | `cloudflare` | Records made, retained, pruned and removed against Cloudflare itself | `m6`; real integration token already on target; explicit `--real-cloudflare` |
 
@@ -309,3 +310,32 @@ Cloudflare itself presenting the leaf, the dashboard upload, the zone's
 SSL/TLS mode and public certificate issuance stay outside this proof.
 [Authenticated origin pulls](../README.md#authenticated-origin-pulls) covers
 those steps.
+
+## Peer watch proof
+
+```sh
+lane/prove.sh --config /absolute/path/to/lane.env peer
+```
+
+The guest has no mesh, so the daemon's peer listener answers on guest
+loopback, at a port no edge uses. A second state directory on the guest,
+with no daemon of its own, plays the Mac: its key is registered with the
+daemon, and `helios peer observe` reads the summary and pushes its view
+the way launchd runs it on a Mac. curl presents a second registered key,
+made on the guest and never printed, to check the listener's answers
+directly. The proof stops the daemon to show the observer finds its
+summary refused, and starts it again.
+
+It needs the lane after `m2` (the runner refuses an unprepared host),
+without peer watch set up and with nothing listening on its port; it
+names what is in the way. It removes the peer configuration and the
+observer's state directory when it exits, and a run that was killed is
+cleaned up by the next one.
+
+Two servers watching each other, paging once and needing a majority stay
+outside this proof: a second daemon on the guest would share the first's
+hooks socket. `TestTwoObserversPageOnce` and
+`TestThreeObserversNeedAMajority` in `internal/peer` run them on real
+listeners instead, and `TestNoMeshAddressLeaves` in `internal/daemon`
+checks what a daemon says over many failed rounds.
+[Peer watch](../docs/features/peer-watch.md) covers setup and who pages.

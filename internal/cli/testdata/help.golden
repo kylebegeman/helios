@@ -30,6 +30,7 @@ Available Commands:
   logs             Show a workload's output; the app's only workload when there is one.
   ls               List the apps on this machine: owner, hosts, repository, last deploy, last backup.
   move             Move an app, and its data, to another machine.
+  peer             Other machines this one watches, and the ones allowed to read it. Kept sealed.
   preview          Run a branch of an app beside it, behind a sign-in.
   ps               List apps, their workloads and what is running.
   psql             Open psql on the app's database.
@@ -1517,6 +1518,129 @@ Flags:
       --manifest string   the source manifest (default "helios.yaml")
       --plan              show the plan and change nothing
       --yes               apply without asking
+
+Global Flags:
+      --json                  print JSON, one object per line
+      --socket string         the daemon's socket; the local kernel is used when nothing answers (default "/run/bedrock/bedrock.sock")
+      --state-dir string      where helios keeps its state (default "~/.bedrock")
+      --target string         operate on this explicitly named SSH target
+      --targets-file string   the local named-target configuration (default "~/.bedrock/targets.json")
+== helios peer (hidden false)
+Other machines this one watches, and the ones allowed to read it. Kept sealed.
+
+Usage:
+  helios peer [command]
+
+Available Commands:
+  add         Watch a peer with --mesh and --public, let it read this machine with --key, or both. Adding again updates it.
+  init        Name this machine to its peers and make its peer key. A server also says where it answers them.
+  key         Print the fingerprint peers register for this machine, never the key itself.
+  ls          List the peers by name and public URL. Mesh addresses and keys are never shown.
+  observe     Look at every peer once and tell each what this machine saw. A Mac runs it every minute; it never pages.
+  rm          Stop watching a peer and stop letting it read this machine.
+
+Global Flags:
+      --json                  print JSON, one object per line
+      --socket string         the daemon's socket; the local kernel is used when nothing answers (default "/run/bedrock/bedrock.sock")
+      --state-dir string      where helios keeps its state (default "~/.bedrock")
+      --target string         operate on this explicitly named SSH target
+      --targets-file string   the local named-target configuration (default "~/.bedrock/targets.json")
+
+Use "helios peer [command] --help" for more information about a command.
+== helios peer add (hidden false)
+Watch a peer with --mesh and --public, let it read this machine with --key, or both. Adding again updates it.
+
+Usage:
+  helios peer add <name> [flags]
+
+Flags:
+      --key string           the peer's key fingerprint, from helios peer key there, to let it read this machine
+      --mesh string          where the peer answers on the mesh, as host:port
+      --public stringArray   the peer's public URL (repeatable)
+
+Global Flags:
+      --json                  print JSON, one object per line
+      --socket string         the daemon's socket; the local kernel is used when nothing answers (default "/run/bedrock/bedrock.sock")
+      --state-dir string      where helios keeps its state (default "~/.bedrock")
+      --target string         operate on this explicitly named SSH target
+      --targets-file string   the local named-target configuration (default "~/.bedrock/targets.json")
+== helios peer init (hidden false)
+Name this machine to its peers and make its peer key. A server also says where it answers them.
+Name this machine to its peers and make its peer key. A server also says where it answers them.
+
+Running it again changes this machine's name, listen address and public
+URLs, and keeps its key.
+Usage:
+  helios peer init [flags]
+
+Flags:
+      --listen string        where this machine answers its peers: its mesh IP address and a port
+      --name string          this machine's name to its peers
+      --public stringArray   this machine's own public URL, checked before it judges a peer (repeatable)
+
+Global Flags:
+      --json                  print JSON, one object per line
+      --socket string         the daemon's socket; the local kernel is used when nothing answers (default "/run/bedrock/bedrock.sock")
+      --state-dir string      where helios keeps its state (default "~/.bedrock")
+      --target string         operate on this explicitly named SSH target
+      --targets-file string   the local named-target configuration (default "~/.bedrock/targets.json")
+== helios peer key (hidden false)
+Print the fingerprint peers register for this machine, never the key itself.
+
+Usage:
+  helios peer key [flags]
+
+Flags:
+      --rotate   replace the key; every peer must register the new one
+
+Global Flags:
+      --json                  print JSON, one object per line
+      --socket string         the daemon's socket; the local kernel is used when nothing answers (default "/run/bedrock/bedrock.sock")
+      --state-dir string      where helios keeps its state (default "~/.bedrock")
+      --target string         operate on this explicitly named SSH target
+      --targets-file string   the local named-target configuration (default "~/.bedrock/targets.json")
+== helios peer ls (hidden false)
+List the peers by name and public URL. Mesh addresses and keys are never shown.
+
+Usage:
+  helios peer ls [flags]
+
+Global Flags:
+      --json                  print JSON, one object per line
+      --socket string         the daemon's socket; the local kernel is used when nothing answers (default "/run/bedrock/bedrock.sock")
+      --state-dir string      where helios keeps its state (default "~/.bedrock")
+      --target string         operate on this explicitly named SSH target
+      --targets-file string   the local named-target configuration (default "~/.bedrock/targets.json")
+== helios peer observe (hidden false)
+Look at every peer once and tell each what this machine saw. A Mac runs it every minute; it never pages.
+Look at every peer once and tell each what this machine saw. A Mac runs it every minute; it never pages.
+
+Each server counts the views while they are fresh, and the server elected to
+page says so when this machine stops sending them. It prints one line per
+server and exits 0 even when a server can't be reached. With --changes it
+prints the lines, each with the time, only when they differ from the last
+run with --changes, so its log grows only when something changes. --install
+has launchd run it that way every minute on macOS; elsewhere, run it from
+cron with --changes.
+Usage:
+  helios peer observe [flags]
+
+Flags:
+      --changes     print only when the lines differ from the last run with --changes, each with the time
+      --install     on macOS, have launchd run this every minute
+      --uninstall   stop launchd running this and remove its launch agent
+
+Global Flags:
+      --json                  print JSON, one object per line
+      --socket string         the daemon's socket; the local kernel is used when nothing answers (default "/run/bedrock/bedrock.sock")
+      --state-dir string      where helios keeps its state (default "~/.bedrock")
+      --target string         operate on this explicitly named SSH target
+      --targets-file string   the local named-target configuration (default "~/.bedrock/targets.json")
+== helios peer rm (hidden false)
+Stop watching a peer and stop letting it read this machine.
+
+Usage:
+  helios peer rm <name> [flags]
 
 Global Flags:
       --json                  print JSON, one object per line
