@@ -129,6 +129,17 @@ func loadLegs(sec *secrets.Store, store *state.Store) []legSpec {
 	return legs
 }
 
+// LegNames names each alert leg set up now by the name its deliveries are
+// recorded under: each mail server by its own name, then pushover and
+// ntfy. One whose integration can't be read is named too.
+func LegNames(sec *secrets.Store) []string {
+	var names []string
+	for _, l := range loadLegs(sec, nil) {
+		names = append(names, l.name)
+	}
+	return names
+}
+
 // LoadFanout builds the fan-out from the integrations set up now: one
 // email leg that fails over through the mail servers in order, a phone
 // leg for each of Pushover and ntfy, and the Loom leg.

@@ -10,6 +10,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/kylebegeman/helios/internal/manifest"
 )
 
 func TestMachineRecoveryImportsInactiveAppAndHistoryWithoutReplacingAuthority(t *testing.T) {
@@ -84,6 +86,45 @@ func TestMachineRecoveryConflictsAndMissingSecretsRollBackEverything(t *testing.
 	revisions, _ := target.Revisions(ctx, "site")
 	if len(revisions) != 1 || revisions[0].ID != "target" {
 		t.Fatalf("target overwritten: %+v", revisions)
+	}
+}
+
+func TestMachineRecoveryKeepsTheTargetsOwnHostDiskHistory(t *testing.T) {
+	ctx := context.Background()
+	source, target := open(t), open(t)
+	hour := time.Date(2026, 10, 20, 10, 0, 0, 0, time.UTC)
+	hostDisk := func(store *Store, at time.Time, used float64) {
+		t.Helper()
+		if err := store.MaxSignal(ctx, Signal{Hour: at, App: manifest.ReservedApp, Key: SignalHostDiskRoot, Metric: SignalHostDiskUsed, Value: used}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// The target came up and began sampling before the source's last backup,
+	// so both hold the root disk for 11:00 and 12:00.
+	for i := range 3 {
+		hostDisk(source, hour.Add(time.Duration(i)*time.Hour), 100)
+	}
+	for i := 1; i < 4; i++ {
+		hostDisk(target, hour.Add(time.Duration(i)*time.Hour), 40)
+	}
+	if err := source.AddSignal(ctx, Signal{Hour: hour, App: "site", Key: "site.example.com", Metric: SignalRequests, Value: 7, Samples: 1}); err != nil {
+		t.Fatal(err)
+	}
+	if err := target.ImportMachineRecovery(ctx, source.Path(), "host-disk", nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	rows, err := target.Signals(ctx, manifest.ReservedApp, hour)
+	if err != nil || len(rows) != 3 {
+		t.Fatalf("root disk rollups: %+v, %v", rows, err)
+	}
+	for i, row := range rows {
+		if !row.Hour.Equal(hour.Add(time.Duration(i+1)*time.Hour)) || row.Value != 40 {
+			t.Fatalf("source disk history mixed into the target's: %+v", rows)
+		}
+	}
+	traffic, err := target.Signals(ctx, "site", hour)
+	if err != nil || len(traffic) != 1 || traffic[0].Value != 7 {
+		t.Fatalf("app signals not imported: %+v, %v", traffic, err)
 	}
 }
 

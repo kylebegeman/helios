@@ -42,6 +42,9 @@ type Notice struct {
 	Transition string
 	Severity   string
 	Host       string
+	// NotifiedAt is when the incident was last told, zero while it never
+	// has been.
+	NotifiedAt time.Time
 	// Message and OpenedAt are the incident's as of this notice. The
 	// incident is saved only after its notice goes, so a leg that needs
 	// them reads them here: a warning that became an outage is still the
@@ -67,6 +70,15 @@ const (
 // Notifier delivers notices.
 type Notifier interface {
 	Notify(ctx context.Context, n Notice) error
+}
+
+// Held is the error of a notice a notifier holds back on purpose, for
+// someone else to send: a wait, not a failure. The incident keeps it as
+// its notify error and the notice is asked for again each round, as a
+// failed one is, but the watcher logs only when the hold begins or moves.
+type Held interface {
+	error
+	Held() bool
 }
 
 // NoAlertsSetUp is the notify error of an incident nobody can be told
@@ -355,8 +367,16 @@ func (w *Watcher) record(inc *state.Incident, n Notice, err error, now time.Time
 		delete(w.owed, inc.ID)
 		return
 	}
+	was := inc.NotifyError
 	inc.NotifyError = err.Error()
 	w.owed[inc.ID] = owedNotice{transition: n.Transition, told: told || retried && before.told}
+	var held Held
+	if errors.As(err, &held) && held.Held() {
+		if inc.NotifyError != was {
+			w.Log("alert held: %s: %v", inc.Subject, err)
+		}
+		return
+	}
 	w.Log("alert not delivered: %v", err)
 }
 
@@ -377,7 +397,7 @@ func (w *Watcher) openNotice(inc state.Incident) Notice {
 	fmt.Fprintf(&b, "%s\n\n", inc.Message)
 	fmt.Fprintf(&b, "Since %s (%s), seen in %d rounds.\n", inc.OpenedAt.Format("2006-01-02 15:04 UTC"), ago(inc.OpenedAt, w.Now()), inc.Observations)
 	fmt.Fprintf(&b, "Machine: %s\n\nhelios status and helios alerts on the machine show more. %s\n", w.Hostname, again)
-	return Notice{Subject: subject, Body: b.String(), IncidentID: inc.ID, Key: inc.Key, Transition: transition, Severity: inc.Severity, Host: w.Hostname,
+	return Notice{Subject: subject, Body: b.String(), IncidentID: inc.ID, Key: inc.Key, Transition: transition, Severity: inc.Severity, Host: w.Hostname, NotifiedAt: inc.NotifiedAt,
 		Message: inc.Message, OpenedAt: inc.OpenedAt}
 }
 
@@ -388,7 +408,7 @@ func (w *Watcher) resolvedNotice(inc state.Incident) Notice {
 	}
 	subject := fmt.Sprintf("%s: %s %s", w.Hostname, inc.Subject, word)
 	body := fmt.Sprintf("%s after %s.\n\nIt was: %s\n\nMachine: %s\n", verb, ago(inc.OpenedAt, inc.ResolvedAt), inc.Message, w.Hostname)
-	return Notice{Subject: subject, Body: body, IncidentID: inc.ID, Key: inc.Key, Transition: TransitionResolved, Severity: inc.Severity, Host: w.Hostname,
+	return Notice{Subject: subject, Body: body, IncidentID: inc.ID, Key: inc.Key, Transition: TransitionResolved, Severity: inc.Severity, Host: w.Hostname, NotifiedAt: inc.NotifiedAt,
 		Message: inc.Message, OpenedAt: inc.OpenedAt}
 }
 

@@ -711,6 +711,18 @@ rounds too, rather than at the next daily repeat. One that eases, an outage
 back to a warning, stays the outage until the milder state has held two
 rounds, so an outage that flaps is told once.
 
+A machine that is down can't say so, so machines that run Helios watch each
+other with `helios peer`. Every minute each server asks the others for a
+short summary over the mesh, checks their edge over the mesh, and checks their
+public URLs from the outside. Together the three answers tell a machine that
+is down from a Helios that has stopped, a broken mesh or a failing edge, and
+one healthy machine sends the page for all of them. A peer that answers none
+of the three is critical once most of the machines watching it agree. The
+summary also shows what is quietly wrong on a peer: a backup over 36 hours
+old, an overdue restore drill, or a way of sending alerts that has delivered
+nothing in 8 days. A Mac can add its own view every minute and never pages.
+See [peer watch](docs/features/peer-watch.md).
+
 Alerts go out every way that is set up, all at once, and every incident told
 in a round goes out together, so a slow way, such as Loom while it collects
 an outage's evidence, never holds back a page. Email goes through the
@@ -753,9 +765,37 @@ A backup stops an app's writers for at most 30 minutes. A writer the backup
 stopped is not an alert until the pause has lasted 35 minutes, and then it is
 a critical one.
 
+A disk with under 5 GB free is critical. The daemon also keeps how much of the
+disk is in use each hour for 90 days, and each minute of the last 6 hours in
+memory. It fits a trend through each that a few odd samples can't swing. A lone
+step each way, such as a cleanup or a large download, is set aside so only
+steady growth counts. The 12 samples either side of a step say its size, so a
+temp file that sits for a few samples can't pass for one. A passing bump, such
+as a temp file or a nightly dump, is smoothed over, and so is a step undone
+within 24 samples. Repeated steps, such as a nightly import, are read as the
+rhythm they are. A disk the 7 day trend fills within 14 days is a warning, and
+within 48 hours it is critical. A disk the 6 hour trend fills within 6 hours, as
+a runaway log does, is critical too, but only while usage still climbs at half
+that rate or more. Usage still climbs while it has reached its high, give or
+take the noise, within the last 40 minutes, or while it comes in bursts, three
+or more in a row, and the next is no later than one and a half times the longest
+wait between them so far. It has to climb both as sampled and with the steps
+set aside. A cleanup doesn't stop the climb: up to 40 minutes of a real fall
+don't count, and after it the climb counts again from the bottom. The rate
+counts only the rises, across whole bursts in the last 2 hours, or else the
+newest two, so a runaway that writes every hour reads the same between its
+bursts as at them. One download is one burst, so the disk goes quiet 40 minutes
+after it ends. A runaway that has slowed stays critical while its slower rate
+still fills the disk within 6 hours, and the alert then goes by that rate. The
+alert, about free disk space, says how fast the disk is filling and which app's
+data grew most. A disk with under 10% free is critical until there are 2 days of
+hourly samples. After that it is a warning while the 7 day trend lasts beyond 14
+days or isn't growing.
+
 | Command | Shows |
 |---|---|
 | `helios alerts` | what is wrong now, and what was |
+| `helios peer ls` | the machines this one watches, and the ones that may read it |
 | `helios status` | health beside each app's requests, errors, p95, CPU, memory and disk |
 | `helios ls` | the registry: owner, hosts, repository, last deploy, last backup |
 | `helios exposure` | what each container may do and what reaches it |
@@ -1013,7 +1053,7 @@ on an older Helios says to upgrade it before `--revision`, `--job`,
 
 | | |
 |---|---|
-| **Machine** | `target` · `capabilities` · `host` · `daemon` · `doctor` · `upgrade` · `version` · `status` · `alerts` · `watch` |
+| **Machine** | `target` · `capabilities` · `host` · `daemon` · `doctor` · `upgrade` · `version` · `status` · `alerts` · `watch` · `peer` |
 | **Apps** | `init` · `check` · `launch` · `deploy` · `preview` · `rollback` · `remove` · `move` · `ls` · `ps` · `logs` · `history` · `gc` |
 | **Data** | `backup` · `backups` · `restore` · `recover` · `rehearse` · `drill` · `psql` |
 | **Access** | `secret` · `integration` · `git` · `exec` · `run` · `jobs` · `cron` |
@@ -1145,6 +1185,7 @@ remains available for initial binary installation.
 | [docs/features/safe-moves.md](docs/features/safe-moves.md) | source fencing and deliberate target cutover |
 | [docs/features/release-safety.md](docs/features/release-safety.md) | release rehearsal and data-aware rollback |
 | [docs/features/deployment-sources.md](docs/features/deployment-sources.md) | approved source captures, safe retries and cleanup |
+| [docs/features/peer-watch.md](docs/features/peer-watch.md) | machines that watch each other, and which one pages |
 | [docs/operations/incident-review.md](docs/operations/incident-review.md) | the blank review `helios alerts review` fills in |
 | [docs/technical/performance.md](docs/technical/performance.md) | benchmark workloads, repeated comparisons and optimization results |
 | [docs/technical/minio-image-availability.md](docs/technical/minio-image-availability.md) | open object-service image distribution issue |

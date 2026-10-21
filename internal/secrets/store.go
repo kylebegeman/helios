@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -211,12 +212,24 @@ func (s *Store) Set(app, name, value string) (int, error) {
 // SetAll records several values in one new version. A nil value in the
 // map removes the name. Names outside the map are kept.
 func (s *Store) SetAll(app string, changes map[string]*string) (int, error) {
+	return s.Update(app, func(map[string]string) (map[string]*string, error) { return changes, nil })
+}
+
+// Update records the changes change makes from the current values in one
+// new version, as SetAll does. The app's secrets are held from the read
+// to the write, so a change made meanwhile is never lost. When change
+// fails, nothing is written.
+func (s *Store) Update(app string, change func(current map[string]string) (map[string]*string, error)) (int, error) {
 	unlock, err := s.lock(app)
 	if err != nil {
 		return 0, err
 	}
 	defer unlock()
 	values, _, err := s.LoadCurrent(app)
+	if err != nil {
+		return 0, err
+	}
+	changes, err := change(maps.Clone(values))
 	if err != nil {
 		return 0, err
 	}
