@@ -41,6 +41,14 @@ func configureTargets(root *cobra.Command, a *app) {
 		if err := validateEnvironmentAliases(cmd); err != nil {
 			return err
 		}
+		if cmd.Annotations["host-local-extract"] == "true" {
+			if a.targetName != "" {
+				return errors.New("backup extract must run directly on the host; omit --target")
+			}
+			if !cmd.Flags().Changed("socket") || a.socket != "" {
+				return errors.New("backup extract requires explicit --socket= to use this operator binary locally")
+			}
+		}
 		a.remoteStateFlags = make([]string, 0, 2)
 		if cmd.Flags().Changed("state-dir") || a.stateDir != defaultStateDir() {
 			a.remoteStateFlags = append(a.remoteStateFlags, "--state-dir="+a.stateDir)

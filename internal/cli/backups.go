@@ -27,6 +27,7 @@ func newBackup(a *app) *cobra.Command {
 		},
 	}
 	a.mutatingFlags(cmd, &planOnly)
+	cmd.AddCommand(newBackupExtract(a))
 	return cmd
 }
 
@@ -144,4 +145,25 @@ func backupAppName(name string) string {
 		return manifest.ReservedApp
 	}
 	return name
+}
+
+// newBackupExtract deliberately uses the new binary's local kernel. An existing
+// daemon can remain on v0.7.17; no upgrade or remote dispatch is involved.
+func newBackupExtract(a *app) *cobra.Command {
+	var planOnly bool
+	var in apps.BackupExtractInput
+	cmd := &cobra.Command{
+		Use: "extract <app>", Short: "Extract exact backup files into new private staging, using --socket=.",
+		Long: "Extract 1 to 16 exact regular files (at most 8 GiB total) without changing app data.\n\nRun directly on the host with an explicit empty --socket= and the existing\n--state-dir. The destination must not exist; its parent must be owner-only\nmode 0700. Every attempt leaves a private fence. Inspect incomplete outcomes\nprivately; never retry into the same directory. No Bao recovery is performed.",
+		Args: cobra.ExactArgs(1), Annotations: map[string]string{"host-local-extract": "true"},
+		RunE: func(cmd *cobra.Command, args []string) error {
+			in.App = args[0]
+			return a.operate(cmd.Context(), apps.BackupExtractKind, in, planOnly)
+		},
+	}
+	cmd.Flags().StringVar(&in.Snapshot, "snapshot", "", "required full lowercase 64-hex snapshot ID")
+	cmd.Flags().StringArrayVar(&in.Paths, "path", nil, "exact regular-file path beneath /data; repeat for each file")
+	cmd.Flags().StringVar(&in.Destination, "destination", "", "new absolute private staging directory")
+	a.mutatingFlags(cmd, &planOnly)
+	return cmd
 }

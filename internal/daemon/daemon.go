@@ -103,6 +103,7 @@ func Registry(store *state.Store, sec *secrets.Store, socket, stateDir string) k
 	reg.Add(app.Drop{Store: store, Secrets: sec, Addresses: addresses})
 	backup := app.Backup{Store: store, Secrets: sec, StateDir: stateDir, Hostname: hostname, Profile: host.ProfilePath}
 	reg.Add(backup)
+	reg.Add(app.BackupExtract{Secrets: sec, StateDir: stateDir})
 	reg.Add(app.MoveCapture{Backup: backup})
 	reg.Add(app.MoveStage{Deploy: deploy, Hostname: hostname})
 	reg.Add(app.MoveTest{Deploy: deploy, Hostname: hostname})

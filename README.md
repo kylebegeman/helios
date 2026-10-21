@@ -864,6 +864,9 @@ scheduled run goes through.
 | `helios restore <app>` | bring data onto a machine that doesn't run the app yet |
 | `helios backups` | list what happened |
 
+For selected files retained in private staging, see the
+[host-local extraction operator](docs/operations/backup-extract.md).
+
 `helios drill` uses an internal network with no outbound access, starts all
 long-running workloads before probing readiness, and never runs release or cron
 jobs. Privileged workloads cannot be safely drilled, and workloads that require

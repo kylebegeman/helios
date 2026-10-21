@@ -141,11 +141,42 @@ Back the app's data up to its bucket now. "helios" backs up the machine's own st
 
 Usage:
   helios backup <app> [flags]
+  helios backup [command]
+
+Available Commands:
+  extract     Extract exact backup files into new private staging, using --socket=.
 
 Flags:
       --digest string   apply only if the plan is still the one with this digest; implies --yes
       --plan            show the plan and change nothing
       --yes             apply without asking
+
+Global Flags:
+      --json                  print JSON, one object per line
+      --socket string         the daemon's socket; the local kernel is used when nothing answers (default "/run/bedrock/bedrock.sock")
+      --state-dir string      where helios keeps its state (default "~/.bedrock")
+      --target string         operate on this explicitly named SSH target
+      --targets-file string   the local named-target configuration (default "~/.bedrock/targets.json")
+
+Use "helios backup [command] --help" for more information about a command.
+== helios backup extract (hidden false)
+Extract exact backup files into new private staging, using --socket=.
+Extract 1 to 16 exact regular files (at most 8 GiB total) without changing app data.
+
+Run directly on the host with an explicit empty --socket= and the existing
+--state-dir. The destination must not exist; its parent must be owner-only
+mode 0700. Every attempt leaves a private fence. Inspect incomplete outcomes
+privately; never retry into the same directory. No Bao recovery is performed.
+Usage:
+  helios backup extract <app> [flags]
+
+Flags:
+      --destination string   new absolute private staging directory
+      --digest string        apply only if the plan is still the one with this digest; implies --yes
+      --path stringArray     exact regular-file path beneath /data; repeat for each file
+      --plan                 show the plan and change nothing
+      --snapshot string      required full lowercase 64-hex snapshot ID
+      --yes                  apply without asking
 
 Global Flags:
       --json                  print JSON, one object per line
