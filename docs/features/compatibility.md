@@ -12,7 +12,10 @@ schema through a read-only inspection before opening the file for writes or
 WAL changes. Schema changes live in the migration sequence; generated manifest
 schema stays aligned with the Go validator.
 
-An upgrade probes the actual candidate binary before switching. It checks
+An upgrade binds its plan digest to the candidate binary's SHA-256 checksum
+and checks the bytes again before staging and before the atomic switch. A
+changed binary needs a new inspected plan, even when it reports the same
+version. The upgrade probes the actual candidate binary before switching. It checks
 contract versions, required capabilities and the state reader range, then
 writes a private consistent SQLite checkpoint before staging the binary.
 Checkpoint metadata is bound to the kernel operation ID so an interrupted
