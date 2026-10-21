@@ -7,6 +7,8 @@ import (
 	"maps"
 	"slices"
 	"sort"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/kylebegeman/helios/internal/app"
@@ -50,7 +52,9 @@ type Summary struct {
 	Recovered []SummaryRecovery `json:"recovered,omitempty"`
 }
 
-// SummaryIncident is one of a machine's open incidents.
+// SummaryIncident is one of a machine's open incidents. A URL watch is
+// identified by its incident ID, keeping its URL, which may hold private
+// addresses or credentials, on the watched machine.
 type SummaryIncident struct {
 	Key        string `json:"key"`
 	Subject    string `json:"subject"`
@@ -254,7 +258,12 @@ func Build(ctx context.Context, d Deps, name string) (Summary, error) {
 			_, held := deferredTo(i.NotifyError)
 			told, owed, tells = last.told(i), owed && !held, last.tells(i, now)
 		}
-		s.Incidents = append(s.Incidents, SummaryIncident{Key: i.Key, Subject: i.Subject, Severity: i.Severity,
+		key, subject := i.Key, i.Subject
+		if strings.HasPrefix(key, "watch:") {
+			id := strconv.FormatInt(i.ID, 10)
+			key, subject = "watch:"+id, "watched URL (incident "+id+")"
+		}
+		s.Incidents = append(s.Incidents, SummaryIncident{Key: key, Subject: subject, Severity: i.Severity,
 			OpenedAgeS: age(now, i.OpenedAt), ToldAgeS: ageIf(now, told), Tells: tells, Owed: owed})
 	}
 	if s.Backups, err = backups(ctx, d.Store, now); err != nil {

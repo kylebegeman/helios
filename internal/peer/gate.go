@@ -230,12 +230,18 @@ func (g *Gate) send(ctx context.Context, n watch.Notice, finishing bool) error {
 	n.Retry = n.Retry && tried
 	s.sending[n.Key]++
 	s.mu.Unlock()
+	// The watch recovers a notifier panic as a failed notice. End the
+	// in-flight marker even when delivery unwinds through that recovery.
+	defer func() {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		if s.sending[n.Key]--; s.sending[n.Key] <= 0 {
+			delete(s.sending, n.Key)
+		}
+	}()
 	err := g.Next.Notify(ctx, n)
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.sending[n.Key]--; s.sending[n.Key] <= 0 {
-		delete(s.sending, n.Key)
-	}
 	var missed *watch.DeliveryError
 	told := err == nil || errors.As(err, &missed) && missed.Partial()
 	if err == nil {

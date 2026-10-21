@@ -82,12 +82,24 @@ func OperationsAround(ctx context.Context, store *state.Store, inc state.Inciden
 // Loom and its resolution. An operation is listed once however many
 // sources hold it, as the store has it now when it still does: the
 // evidence may have caught it before it finished. Step notes, errors and
-// log lines are left out.
+// log lines are left out. Revision, commit and signer details come only
+// from redacted evidence.
 func (r *Review) Timeline() []Event {
 	var events []Event
 	add := func(at time.Time, what string) {
 		if !at.IsZero() {
 			events = append(events, Event{At: at.UTC(), What: what})
+		}
+	}
+	// Evidence has already redacted the change's identifying details. The
+	// live operation may finish later, but must not restore its raw input.
+	redacted := map[string]Change{}
+	if e := r.Evidence; e != nil {
+		for _, c := range e.RecentDeploys {
+			redacted[c.Operation] = c
+		}
+		if e.LastChange != nil {
+			redacted[e.LastChange.Operation] = *e.LastChange
 		}
 	}
 	listed := map[string]bool{}
@@ -115,7 +127,14 @@ func (r *Review) Timeline() []Event {
 	}
 	for _, op := range r.Operations {
 		if op.Kind == apps.DeployKind || op.Kind == apps.RollbackKind {
-			change(changeOf(op))
+			// Raw input from later changes has no known secret set here.
+			// Only evidence may supply revision, commit and signer details.
+			c := Change{Operation: op.ID, Kind: op.Kind, App: op.Target, StartedAt: op.StartedAt, FinishedAt: op.FinishedAt, Outcome: string(op.Status)}
+			if safe, ok := redacted[op.ID]; ok {
+				safe.StartedAt, safe.FinishedAt, safe.Outcome = c.StartedAt, c.FinishedAt, c.Outcome
+				c = safe
+			}
+			change(c)
 			continue
 		}
 		// One created as the incident opened is read from both sides of it.
@@ -127,7 +146,7 @@ func (r *Review) Timeline() []Event {
 		add(op.FinishedAt, fmt.Sprintf("%s finished: %s (%s)", operationName(op.Kind, op.Target), op.Status, op.ID))
 	}
 	inc := r.Incident
-	subject := inc.Subject
+	subject := (&redactor{}).String(inc.Subject)
 	if e := r.Evidence; e != nil {
 		subject = e.Incident.Subject
 		if e.LastChange != nil {
@@ -183,9 +202,12 @@ type reviewRow struct{ At, What string }
 // Write prints r's review in Markdown.
 func (r *Review) Write(w io.Writer) error {
 	inc := r.Incident
+	// Without evidence there is no known secret set to redact the message.
+	// Identifying fields still get the credential and private-address patterns.
+	var shapes redactor
 	p := reviewPage{
-		ID: strconv.FormatInt(inc.ID, 10), Subject: inc.Subject, Key: inc.Key, Severity: inc.Severity,
-		Host: r.Host, Opened: reviewTime(inc.OpenedAt), Message: inc.Message,
+		ID: strconv.FormatInt(inc.ID, 10), Subject: shapes.String(inc.Subject), Key: shapes.String(inc.Key), Severity: inc.Severity,
+		Host: shapes.String(r.Host), Opened: reviewTime(inc.OpenedAt), Message: messageOmitted,
 	}
 	if e := r.Evidence; e != nil {
 		p.Subject, p.Key, p.Message = e.Incident.Subject, e.Incident.Key, e.Incident.Message

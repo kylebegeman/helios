@@ -358,6 +358,18 @@ func TestTheSummaryPathReadsWhatHeliosAnswers(t *testing.T) {
 		{"it answers a page", func(rw http.ResponseWriter, _ *http.Request) { _, _ = io.WriteString(rw, "<html>") }, WordFailed},
 		{"its summary is just short enough", padded(MaxSummaryBytes - 100), WordOK},
 		{"its summary is too long", padded(MaxSummaryBytes), WordFailed},
+		{"one summary, then more than the limit", func(rw http.ResponseWriter, _ *http.Request) {
+			_, _ = io.WriteString(rw, `{"name":"web2","last_round_age_s":30}`+strings.Repeat(" ", MaxSummaryBytes))
+		}, WordFailed},
+		{"two summaries", func(rw http.ResponseWriter, _ *http.Request) {
+			_, _ = io.WriteString(rw, `{"name":"web2","last_round_age_s":30}{"name":"web3"}`)
+		}, WordFailed},
+		{"a summary followed by garbage", func(rw http.ResponseWriter, _ *http.Request) {
+			_, _ = io.WriteString(rw, `{"name":"web2","last_round_age_s":30}broken`)
+		}, WordFailed},
+		{"null is not a summary", func(rw http.ResponseWriter, _ *http.Request) {
+			_, _ = io.WriteString(rw, `null`)
+		}, WordFailed},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			srv := serving(t, tc.answer)

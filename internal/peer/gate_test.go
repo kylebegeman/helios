@@ -282,6 +282,41 @@ func TestInFlightSenderIsNotDoubled(t *testing.T) {
 	}
 }
 
+type panickingFanout struct {
+	src     *Source
+	sending []string
+}
+
+func (f *panickingFanout) Notify(context.Context, watch.Notice) error {
+	f.sending = f.src.Last().Sending
+	panic("a defect in alert delivery")
+}
+
+// The watch catches a notifier panic as a failed notice. The peer gate
+// must also end its in-flight marker, so another observer can cover it
+// without waiting for a send that has already stopped.
+func TestAPanickingSenderNoLongerReadsAsSending(t *testing.T) {
+	p := paging(t)
+	fanout := &panickingFanout{src: p.src}
+	p.gate.Next = fanout
+	p.down("web3")
+	p.rounds(t, watch.DefaultOpenAfter)
+	if !slices.Equal(fanout.sending, []string{"peer:web3"}) {
+		t.Fatalf("the page was not shown sending while delivery had it: %v", fanout.sending)
+	}
+	if inc := p.open(t, "peer:web3"); inc.NotifyError == "" || !inc.NotifiedAt.IsZero() {
+		t.Fatal("the panicking notifier was not recorded as a failed notice")
+	}
+	if got := p.src.Last().Sending; len(got) != 0 {
+		t.Fatalf("a send that panicked is still shown in flight: %v", got)
+	}
+	p.gate.Next = p.fanout
+	p.rounds(t, 1)
+	if inc := p.open(t, "peer:web3"); inc.NotifyError != "" || inc.NotifiedAt.IsZero() || len(p.fanout.sent) != 1 {
+		t.Fatal("the failed page was not retried successfully")
+	}
+}
+
 // A sender whose summary shows a page owed, every leg of its fan-out
 // having failed, is covered at once: the observer holding the page sends
 // it through its own fan-out without waiting out HandoffWait, and the

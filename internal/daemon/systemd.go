@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -53,6 +54,13 @@ LimitNOFILE=65536
 WantedBy=multi-user.target
 `
 
+func daemonUnit(executable string) string {
+	// systemd unquotes C-style strings and expands percent specifiers. The
+	// ':' prefix also keeps literal dollar signs out of environment expansion.
+	command := strconv.Quote(":" + strings.ReplaceAll(executable, "%", "%%"))
+	return fmt.Sprintf(unitTemplate, command)
+}
+
 // RollbackUnitPath is the unit systemd runs when the daemon can't start.
 const RollbackUnitPath = "/etc/systemd/system/bedrock-rollback.service"
 
@@ -90,7 +98,7 @@ func Install(ctx context.Context, out io.Writer) error {
 		path, content string
 		mode          os.FileMode
 	}{
-		{UnitPath, fmt.Sprintf(unitTemplate, exe), 0o644},
+		{UnitPath, daemonUnit(exe), 0o644},
 		{RollbackUnitPath, rollbackUnit, 0o644},
 		{host.RollbackScript, host.RollbackScriptContent, 0o755},
 	} {

@@ -137,6 +137,11 @@ func (s *Server) Addr() net.Addr {
 func (s *Server) Stop() {
 	s.mu.Lock()
 	server := s.server
+	if s.listener != nil {
+		// Serve may not have registered the listener with net/http yet.
+		// Close what Start opened even when Shutdown cannot see it.
+		_ = s.listener.Close()
+	}
 	s.server, s.listener = nil, nil
 	s.mu.Unlock()
 	if server == nil {

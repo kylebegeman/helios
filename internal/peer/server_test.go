@@ -409,6 +409,34 @@ func TestSummaryIsBuiltAtMostEveryTenSeconds(t *testing.T) {
 	}
 }
 
+// Stop owns the listener even before Serve has registered it with net/http.
+// Hold Start's state just before its new goroutine runs to reproduce that
+// scheduling order without a timing race.
+func TestStopClosesAListenerBeforeServingStarts(t *testing.T) {
+	w := setUpWeb1(t)
+	s := w.server(t)
+	listener, err := net.Listen("tcp", at(in("127.0.0.0/8"), 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = listener.Close() })
+	s.server, s.listener = s.httpServer(context.Background()), listener
+	s.Stop()
+	if s.Addr() != nil {
+		t.Fatal("a stopped server still reports a listen address")
+	}
+	conn, err := net.DialTimeout("tcp", listener.Addr().String(), time.Second)
+	if err == nil {
+		conn.Close()
+		t.Fatal("Stop returned while its listener still accepted connections")
+	}
+	restarted, err := net.Listen("tcp", listener.Addr().String())
+	if err != nil {
+		t.Fatal("Stop left its listen port in use")
+	}
+	restarted.Close()
+}
+
 // Starting where the address isn't on this machine says so, without
 // the address.
 func TestListeningWhereTheAddressIsNotUpSaysSo(t *testing.T) {
