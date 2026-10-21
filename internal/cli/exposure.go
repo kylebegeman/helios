@@ -178,7 +178,13 @@ func newExposure(a *app) *cobra.Command {
 				report.Containers = mine
 			}
 			if a.json {
-				return json.NewEncoder(a.stdout).Encode(report)
+				if err := json.NewEncoder(a.stdout).Encode(report); err != nil {
+					return err
+				}
+				if len(report.Shared) > 0 {
+					return quietError{code: 1}
+				}
+				return nil
 			}
 			w := tabwriter.NewWriter(a.stdout, 0, 4, 2, ' ', 0)
 			fmt.Fprintln(w, "CONTAINER\tROLE\tUSER\tPRIVILEGES\tROOT FS\tNETWORKS\tPORTS\tMOUNTS\tLIMITS")

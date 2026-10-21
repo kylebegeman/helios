@@ -118,20 +118,9 @@ func addHostBootstrap(parent *cobra.Command, a *app) {
 					return err
 				}
 				dest := filepath.Join(dir, hash)
-				copy, err := os.OpenFile(dest, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
-				if err != nil {
+				if err := writeBootstrapCache(dest, f); err != nil {
 					runner.Close()
 					return err
-				}
-				_, copyErr := io.Copy(copy, f)
-				closeErr := copy.Close()
-				if copyErr != nil {
-					runner.Close()
-					return copyErr
-				}
-				if closeErr != nil {
-					runner.Close()
-					return closeErr
 				}
 				in.BinaryPath = dest
 			}
@@ -199,4 +188,25 @@ func newHostProfiles(a *app) *cobra.Command {
 	}}
 	cmd.AddCommand(create, check)
 	return cmd
+}
+
+// Publish only complete, synced copies without following a destination symlink
+// or modifying the recovery binary held open by another reader.
+func writeBootstrapCache(path string, source io.Reader) error {
+	f, err := os.CreateTemp(filepath.Dir(path), ".bootstrap-cache-*")
+	if err != nil {
+		return err
+	}
+	defer os.Remove(f.Name())
+	if _, err = io.Copy(f, source); err == nil {
+		err = f.Sync()
+	}
+	closeErr := f.Close()
+	if err == nil {
+		err = closeErr
+	}
+	if err != nil {
+		return err
+	}
+	return os.Rename(f.Name(), path)
 }

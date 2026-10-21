@@ -172,7 +172,10 @@ func (s *Store) Activate(ctx context.Context, app, id string, now time.Time) err
 		}
 		return err
 	}
-	if _, err := tx.ExecContext(ctx, `UPDATE revisions SET status = ? WHERE app = ? AND status = ? AND id <> ?`, string(RevisionRetired), app, string(RevisionPrevious), id); err != nil {
+	// A recovered switch can repeat after activation but before its edge
+	// update is journaled. Rotate history only when another revision is active,
+	// so repeating the same activation keeps its rollback revision.
+	if _, err := tx.ExecContext(ctx, `UPDATE revisions SET status = ? WHERE app = ? AND status = ? AND id <> ? AND EXISTS (SELECT 1 FROM revisions WHERE app = ? AND status = ? AND id <> ?)`, string(RevisionRetired), app, string(RevisionPrevious), id, app, string(RevisionActive), id); err != nil {
 		return err
 	}
 	if _, err := tx.ExecContext(ctx, `UPDATE revisions SET status = ? WHERE app = ? AND status = ? AND id <> ?`, string(RevisionPrevious), app, string(RevisionActive), id); err != nil {

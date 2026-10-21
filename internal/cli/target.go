@@ -277,11 +277,14 @@ func (a *app) dispatchTarget(cmd *cobra.Command, args []string) error {
 	fmt.Fprintf(a.stderr, "Target %s (%s), machine %s\n", a.targetName, t.SSH, t.MachineID)
 	args = append([]string{}, args...)
 	omit := map[string]bool{"plan": true, "yes": true, "digest": true, "json": true, "state-dir": true, "socket": true}
-	var input io.Reader = os.Stdin
+	var input io.Reader
 	var replay []byte
 	sourceHash := ""
 	localSource := ""
 	command := strings.TrimPrefix(cmd.CommandPath(), cmd.Root().Name()+" ")
+	if targetReadsStdin(cmd, command, args) {
+		input = os.Stdin
+	}
 	input, err = a.targetCredentialInput(cmd.Context(), t, command, args, input)
 	if err != nil {
 		return err
@@ -618,6 +621,33 @@ func (a *app) dispatchTarget(cmd *cobra.Command, args []string) error {
 		return remoteExit(err)
 	}
 	return quietError{0}
+}
+
+// SSH reads its input eagerly, even when the target command ignores it.
+// Attach this process's stdin only to workflows that actually consume it;
+// certificates, identity files and handoffs are attached separately above.
+func targetReadsStdin(cmd *cobra.Command, command string, args []string) bool {
+	if planOnly, _ := cmd.Flags().GetBool("plan"); planOnly {
+		return false
+	}
+	switch command {
+	case "secret set", "secret import", "integration set", "integration import", "psql", "receive", "git hook", "git serve":
+		return true
+	case "exec":
+		return execReadsStdin(cmd)
+	case "run":
+		stdin, _ := cmd.Flags().GetBool("stdin")
+		return stdin
+	case "recover":
+		stdin, _ := cmd.Flags().GetBool("identity-stdin")
+		return stdin
+	case "move secrets":
+		accept, _ := cmd.Flags().GetBool("accept")
+		return accept
+	case "git allow":
+		return strings.Join(args[1:], " ") == ""
+	}
+	return false
 }
 
 // setsOriginPull reports whether the manifest a command sends from source

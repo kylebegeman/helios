@@ -26,7 +26,7 @@ Who or what was affected, for how long:
 | 2026-10-20 14:02:05 | incident 5 opened: api went critical |
 | 2026-10-20 14:02:09 | Loom delivery: delivered |
 | 2026-10-20 14:03:05 | app.deploy of api finished: succeeded (op-deploy) |
-| 2026-10-20 14:07:05 | app.rollback of api started: revision r1 (op-rollback) |
+| 2026-10-20 14:07:05 | app.rollback of api started (op-rollback) |
 | 2026-10-20 14:08:05 | app.rollback of api finished: succeeded (op-rollback) |
 | 2026-10-20 14:14:05 | incident 5 resolved after 12m0s |
 | 2026-10-20 14:14:05 | the last alert about it went out |

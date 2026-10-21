@@ -74,7 +74,8 @@ func MachineIdentity(keyPath string, readFile func(string) ([]byte, error), osID
 		if err == nil {
 			recipient, err := age.ParseX25519Recipient(strings.TrimSpace(string(data)))
 			if err != nil {
-				return "", fmt.Errorf("machine public recipient: %w", err)
+				// The parser includes the rejected input, which may be a private key.
+				return "", errors.New("machine public recipient: invalid age X25519 recipient")
 			}
 			return "age:" + recipient.String(), nil
 		}

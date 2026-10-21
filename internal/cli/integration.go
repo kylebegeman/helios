@@ -127,20 +127,29 @@ func newIntegration(a *app) *cobra.Command {
 // list its zones would fail the first deploy that needs a record, later
 // and less clearly.
 func verifyCloudflare(ctx context.Context, a *app, values, current map[string]string) error {
-	token, api := values["token"], values["api"]
-	if token == "" {
-		token = current["token"]
+	effective := make(map[string]string, len(current)+len(values))
+	for k, v := range current {
+		effective[k] = v
 	}
-	if _, named := values["api"]; !named {
-		api = current["api"]
+	for k, v := range values {
+		effective[k] = strings.TrimSpace(v)
 	}
+	if err := integration.Validate(integration.CloudflareName, effective); err != nil {
+		return err
+	}
+	token, api := effective["token"], effective["api"]
 	client := cloudflare.New(token)
 	if api != "" {
 		client.Base = api
 	}
 	zones, err := client.Verify(ctx)
 	if err != nil {
-		return fmt.Errorf("the cloudflare token doesn't work: %w", err)
+		// API response bodies and transport errors can echo credentials.
+		// No remote error text is safe to print at this credential boundary.
+		if ctx.Err() != nil {
+			return fmt.Errorf("cloudflare token verification stopped: %w", ctx.Err())
+		}
+		return errors.New("the cloudflare token could not be verified; check its permissions, the API endpoint and network connection")
 	}
 	fmt.Fprintf(a.stderr, "the token sees %d zone(s): %s\n", len(zones), strings.Join(zones, ", "))
 	return nil

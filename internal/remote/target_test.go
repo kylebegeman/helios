@@ -3,9 +3,11 @@ package remote
 import (
 	"context"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestShellArgumentsRemainData(t *testing.T) {
@@ -34,7 +36,7 @@ func TestPinnedConnectionsAndExplicitSudo(t *testing.T) {
 		t.Fatal(err)
 	}
 	joined := strings.Join(cmd.Args, "\n")
-	for _, want := range []string{"StrictHostKeyChecking=yes", "BatchMode=yes", "UserKnownHostsFile=/tmp/known hosts", "'sudo' '-n' '--' '/usr/local/bin/bedrock'"} {
+	for _, want := range []string{"StrictHostKeyChecking=yes", "BatchMode=yes", `UserKnownHostsFile="/tmp/known hosts"`, "'sudo' '-n' '--' '/usr/local/bin/bedrock'"} {
 		if !strings.Contains(joined, want) {
 			t.Fatalf("missing %s in %s", want, joined)
 		}
@@ -91,6 +93,47 @@ func TestBindingIncludesRemoteStateAndSocket(t *testing.T) {
 		changed.StateArgs = args
 		if _, err := changed.UnscopeDigest(token); err == nil {
 			t.Fatal("different remote state or socket accepted approval")
+		}
+	}
+}
+
+// -G asks OpenSSH to parse configuration without connecting to a machine.
+func TestKnownHostsPathIsOneLiteralSSHConfigurationValue(t *testing.T) {
+	ssh, err := exec.LookPath("ssh")
+	if err != nil {
+		t.Skip("OpenSSH is unavailable")
+	}
+	for _, path := range []string{
+		`/tmp/known hosts`,
+		`/tmp/known"hosts`,
+		`/tmp/known\"hosts`,
+		"/tmp/known\thosts",
+	} {
+		t.Run(path, func(t *testing.T) {
+			tr := Transport{Program: []string{ssh, "-G", "-F", os.DevNull}}
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			cmd, err := tr.Command(ctx, Target{SSH: "fixture.invalid", KnownHostsFile: path}, "true")
+			if err != nil {
+				t.Fatal(err)
+			}
+			data, err := cmd.CombinedOutput()
+			if err != nil {
+				t.Fatalf("OpenSSH could not parse known-hosts path: %v: %s", err, data)
+			}
+			_, setting, ok := strings.Cut(string(data), "\nuserknownhostsfile ")
+			got, _, _ := strings.Cut(setting, "\n")
+			if !ok || got != path {
+				t.Fatalf("OpenSSH changed known-hosts path: got %q, want %q", got, path)
+			}
+		})
+	}
+}
+
+func TestTargetAcceptsIPv6WithoutAnExplicitSSHUser(t *testing.T) {
+	for _, destination := range []string{"::1", "::ffff:192.0.2.1", "2001:db8::1", "root@::1"} {
+		if err := (Target{SSH: destination}).Validate(); err != nil {
+			t.Errorf("refused IPv6 destination %q: %v", destination, err)
 		}
 	}
 }

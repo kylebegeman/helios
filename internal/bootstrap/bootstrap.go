@@ -14,6 +14,8 @@ import (
 
 	"filippo.io/age"
 
+	"github.com/kylebegeman/helios/internal/compat"
+	"github.com/kylebegeman/helios/internal/host"
 	"github.com/kylebegeman/helios/internal/integration"
 	"github.com/kylebegeman/helios/internal/kernel"
 	"github.com/kylebegeman/helios/internal/release"
@@ -201,6 +203,7 @@ printf '%s  %s\n' "$want" "$work/bedrock" | sha256sum -c - >/dev/null
 chmod 755 "$work/bedrock"
 if test -e "$binary"; then
  test "$(sha256sum "$binary" | cut -d ' ' -f 1)" = "$want" || { printf 'Target already has a different helios build; use helios upgrade first.\n' >&2; exit 1; }
+ chmod 755 "$binary"
 else
  install -d "$(dirname "$binary")"
  install -m 755 "$work/bedrock" "$binary.next"
@@ -217,13 +220,18 @@ printf 'Pinned binary installed and checksum verified.\n'`
 		if err := d.Transport.Run(ctx, in.Target, []string{"capabilities", "--json"}, nil, &boundedResponse{buffer: &out}, io.Discard); err != nil {
 			return err
 		}
-		var c struct {
-			APIVersion      int    `json:"api_version"`
-			ManifestVersion int    `json:"manifest_version"`
-			MachineID       string `json:"machine_id"`
-		}
-		if json.Unmarshal(out.Bytes(), &c) != nil || c.APIVersion != 1 || c.ManifestVersion != 1 || c.MachineID != in.Target.MachineID {
+		var c compat.Info
+		if json.Unmarshal(out.Bytes(), &c) != nil || c.MachineID != in.Target.MachineID {
 			return errors.New("installed binary capabilities or machine identity are incompatible")
+		}
+		// A missing database starts at the candidate's own schema version.
+		// An explicit zero still identifies existing unversioned state.
+		persisted := c.StateVersion
+		if c.PersistedStateVersion != nil {
+			persisted = *c.PersistedStateVersion
+		}
+		if err := c.AcceptsState(persisted); err != nil {
+			return fmt.Errorf("installed binary compatibility: %w", err)
 		}
 		out.Reset()
 		if err := d.Transport.Run(ctx, in.Target, []string{"version", "--json"}, nil, &boundedResponse{buffer: &out}, io.Discard); err != nil {
@@ -268,6 +276,9 @@ printf 'Pinned binary installed and checksum verified.\n'`
 		})
 	}
 	p := in.Profile.Host
+	if p.WebFrom == "" {
+		p.WebFrom = host.WebFromAnyone
+	}
 	add("host", fmt.Sprintf("apply host profile %s, swap %d GiB, timezone %s, web %s", p.Hostname, p.SwapGiB, p.Timezone, p.WebFrom), func(ctx context.Context, out io.Writer) error {
 		args := []string{"host", "setup", "--hostname=" + p.Hostname, fmt.Sprintf("--swap=%d", p.SwapGiB), "--timezone=" + p.Timezone, "--yes"}
 		if p.WebFrom != "" {

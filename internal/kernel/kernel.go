@@ -347,7 +347,7 @@ func (e *Engine) recoverOperation(ctx context.Context, op *state.Operation, emit
 	switch {
 	case planErr != nil:
 		return e.abandon(ctx, op, "interrupted, and the plan can't be rebuilt: "+planErr.Error(), emit)
-	case view.Digest != op.PlanDigest:
+	case !recordedPlanMatches(op, view):
 		return e.abandon(ctx, op, "interrupted, and the plan changed since it started", emit)
 	}
 	emit(Event{Type: EventResumed, Operation: op.ID, At: e.now(), Plan: view,
@@ -358,6 +358,24 @@ func (e *Engine) recoverOperation(ctx context.Context, op *state.Operation, emit
 	}
 	_, err := e.apply(ctx, op, plan, view, emit)
 	return err
+}
+
+// recordedPlanMatches compares the semantic fields as well as the digest.
+// Legacy separator hashes can collide, so their equality alone never permits
+// recovery. Unchanged legacy plans retain their original journal and receipt
+// digest even when the current encoding gives them a different one.
+func recordedPlanMatches(op *state.Operation, fresh *PlanView) bool {
+	var saved PlanView
+	if json.Unmarshal(op.Plan, &saved) != nil || saved.Kind != fresh.Kind || saved.Target != fresh.Target || saved.Recovery != fresh.Recovery || len(saved.Steps) != len(fresh.Steps) {
+		return false
+	}
+	for i, st := range saved.Steps {
+		current := fresh.Steps[i]
+		if st.Index != current.Index || st.Name != current.Name || st.Change != current.Change {
+			return false
+		}
+	}
+	return op.PlanDigest == digestPlan(&saved) || op.PlanDigest == legacyPlanDigest(&saved)
 }
 
 // abandon ends a recovered operation as failed without applying it again,
@@ -454,7 +472,7 @@ func (e *Engine) compensate(ctx context.Context, op *state.Operation, plan *Plan
 		out := newLineWriter(func(line string) {
 			emit(Event{Type: EventStepOutput, Operation: op.ID, At: e.now(), Step: &StepView{Index: i, Name: st.Name, Undoing: true}, Line: line})
 		})
-		undoErr := st.Undo(ctx, out)
+		undoErr := st.Undo(withOperationID(ctx, op.ID), out)
 		out.Flush()
 		finished := e.now()
 		status, errText := state.StepUndone, ""
@@ -481,6 +499,9 @@ func journalFits(id string, steps []state.Step, plan *Plan) string {
 		return fmt.Sprintf("the journal of %s holds %d step(s) for a plan of %d; it can't be applied", id, len(steps), len(plan.Steps))
 	}
 	for i, st := range steps {
+		if st.Index != i {
+			return fmt.Sprintf("the journal of %s records step %d at index %d; it can't be applied", id, i+1, st.Index)
+		}
 		if st.Name != plan.Steps[i].Name {
 			return fmt.Sprintf("the journal of %s names step %d %q where the plan says %q; it can't be applied", id, i+1, st.Name, plan.Steps[i].Name)
 		}
@@ -611,7 +632,7 @@ func buildReceipt(op *state.Operation, steps []state.Step) *Receipt {
 	}
 	for _, st := range steps {
 		sv := StepView{Index: st.Index, Name: st.Name, Status: st.Status, Attempts: st.Attempts, Error: st.Error}
-		if st.Index < len(view.Steps) {
+		if st.Index >= 0 && st.Index < len(view.Steps) {
 			sv.Change, sv.Note = view.Steps[st.Index].Change, view.Steps[st.Index].Note
 		}
 		if !st.StartedAt.IsZero() && !st.FinishedAt.IsZero() {
@@ -636,7 +657,32 @@ func NewID(now time.Time) string {
 	return "op-" + now.UTC().Format("20060102-150405") + "-" + tail.String()
 }
 
+// Escape field separators and their escape character so descriptions cannot
+// impersonate another field or step. Ordinary plans retain their existing
+// digests, including during upgrade recovery.
+var planDigestEscaper = strings.NewReplacer("\\", "\\\\", "\n", "\\n", "\t", "\\t")
+
 func digestPlan(view *PlanView) string {
+	h := sha256.New()
+	escaped := strings.ContainsAny(view.Kind, "\\\n\t") || strings.ContainsAny(view.Target, "\\\n\t") || strings.ContainsAny(string(view.Recovery), "\\\n\t")
+	for _, st := range view.Steps {
+		escaped = escaped || strings.ContainsAny(st.Name, "\\\n\t") || strings.ContainsAny(st.Change, "\\\n\t")
+	}
+	if escaped {
+		// The NUL prefix cannot be the start of a registered legacy kind.
+		// Keep escaped digests separate from every legacy literal-escape hash.
+		io.WriteString(h, "\x00helios-plan-escaped-v1\n")
+	}
+	fmt.Fprintf(h, "%s\n%s\n%s\n", planDigestEscaper.Replace(view.Kind), planDigestEscaper.Replace(view.Target), planDigestEscaper.Replace(string(view.Recovery)))
+	for _, st := range view.Steps {
+		fmt.Fprintf(h, "%d\t%s\t%s\n", st.Index, planDigestEscaper.Replace(st.Name), planDigestEscaper.Replace(st.Change))
+	}
+	return hex.EncodeToString(h.Sum(nil))[:24]
+}
+
+// legacyPlanDigest is used only to validate a persisted plan during recovery,
+// after its semantic fields have been compared with the freshly built plan.
+func legacyPlanDigest(view *PlanView) string {
 	h := sha256.New()
 	fmt.Fprintf(h, "%s\n%s\n%s\n", view.Kind, view.Target, view.Recovery)
 	for _, st := range view.Steps {

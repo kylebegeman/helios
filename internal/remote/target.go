@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -18,6 +19,8 @@ import (
 )
 
 const ConfigVersion = 1
+
+const maxConfigSize = 1 << 20
 
 // Target contains connection settings, never credential values.
 type Target struct {
@@ -39,7 +42,7 @@ var namePattern = regexp.MustCompile(`^[a-z][a-z0-9-]{0,39}$`)
 var destinationPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.@:\[\]-]*$`)
 
 func (t Target) Validate() error {
-	if !destinationPattern.MatchString(t.SSH) {
+	if !destinationPattern.MatchString(t.SSH) && net.ParseIP(t.SSH) == nil {
 		return errors.New("SSH destination must be a host or an SSH configuration alias, optionally user@host")
 	}
 	if t.Port < 0 || t.Port > 65535 {
@@ -67,11 +70,11 @@ func Load(path string) (Config, error) {
 		return Config{}, err
 	}
 	defer f.Close()
-	data, err := io.ReadAll(io.LimitReader(f, (1<<20)+1))
+	data, err := io.ReadAll(io.LimitReader(f, maxConfigSize+1))
 	if err != nil {
 		return Config{}, err
 	}
-	if len(data) > 1<<20 {
+	if len(data) > maxConfigSize {
 		return Config{}, errors.New("target configuration is oversized")
 	}
 	var c Config
@@ -116,6 +119,10 @@ func Save(path string, c Config) error {
 	if err != nil {
 		return err
 	}
+	data = append(data, '\n')
+	if len(data) > maxConfigSize {
+		return errors.New("target configuration is oversized")
+	}
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return err
 	}
@@ -126,7 +133,7 @@ func Save(path string, c Config) error {
 	name := f.Name()
 	defer os.Remove(name)
 	if err = f.Chmod(0o600); err == nil {
-		_, err = f.Write(append(data, '\n'))
+		_, err = f.Write(data)
 	}
 	if err == nil {
 		err = f.Sync()
@@ -173,7 +180,10 @@ func (tr Transport) Command(ctx context.Context, t Target, script string) (*exec
 		args = append(args, "-i", t.IdentityFile, "-o", "IdentitiesOnly=yes")
 	}
 	if t.KnownHostsFile != "" {
-		args = append(args, "-o", "UserKnownHostsFile="+t.KnownHostsFile)
+		// OpenSSH parses -o as configuration syntax after argv parsing.
+		// Keep spaces, quotes and backslashes inside one filename.
+		path := strings.NewReplacer(`\`, `\\`, `"`, `\"`).Replace(t.KnownHostsFile)
+		args = append(args, "-o", `UserKnownHostsFile="`+path+`"`)
 	}
 	args = append(args, "--", t.SSH, script)
 	return exec.CommandContext(ctx, program[0], args...), nil

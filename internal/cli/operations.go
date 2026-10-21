@@ -127,7 +127,11 @@ func (a *app) follow(ctx context.Context, runner api.Runner, r *ui.Renderer, id 
 	// planned one isn't: once its run is broken off, nothing starts it.
 	heard := time.Now()
 	for {
-		receipt, err := runner.Receipt(ctx, id)
+		// A daemon may accept the connection without answering. Bound each
+		// read too, so it cannot bypass the promised absence deadline.
+		readCtx, cancel := context.WithTimeout(ctx, min(2*time.Second, followPatience))
+		receipt, err := runner.Receipt(readCtx, id)
+		cancel()
 		switch {
 		case ctx.Err() != nil:
 			return nil, fmt.Errorf("stopped following %s; the daemon carries on with it", id)
