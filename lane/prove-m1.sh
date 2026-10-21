@@ -21,34 +21,9 @@ run 'chmod 755 /usr/local/bin/bedrock.new && mv -f /usr/local/bin/bedrock.new /u
 echo "== install the daemon"
 run 'bedrock daemon install && bedrock daemon status'
 
-echo "== start a slow operation through the daemon, in the background on the box"
-run 'rm -rf /var/lib/bedrock/exercise; nohup bedrock kernel exercise --dir /var/lib/bedrock/exercise --steps 6 --step-duration 3s --yes > /var/lib/bedrock/exercise.log 2>&1 &'
-sleep 8
-
-echo "== kill the daemon with SIGKILL while step 3 runs"
-run 'pid=$(systemctl show -p MainPID --value bedrock); echo "daemon pid $pid"; kill -9 "$pid"; sleep 1; systemctl show -p ActiveState,SubState,NRestarts bedrock | tr "\n" " "; echo'
-
-echo "== wait for the operation to finish under the restarted daemon"
-for _ in $(seq 1 30); do
-  status=$(run 'bedrock history --json --limit 1' | python3 -c 'import json,sys; rows=json.load(sys.stdin); print(rows[0]["status"] if rows else "none")')
-  [[ "$status" == "succeeded" || "$status" == "failed" || "$status" == "compensated" ]] && break
-  sleep 3
-done
-echo "operation ended: $status"
-
-echo "== the receipt"
-run 'bedrock history "$(bedrock history --json --limit 1 | python3 -c "import json,sys; print(json.load(sys.stdin)[0][\"id\"])")"'
-echo "== what the client saw before the daemon died"
-run 'tail -n 5 /var/lib/bedrock/exercise.log'
-echo "== daemon log"
-run 'journalctl -u bedrock --no-pager -n 12 -o cat'
-echo "== markers"
-run 'ls /var/lib/bedrock/exercise'
-
-interruptions=$(run 'bedrock history --json --limit 1' | python3 -c 'import json,sys; print(json.load(sys.stdin)[0]["interruptions"])')
-if [[ "$status" == "succeeded" && "$interruptions" == "1" ]]; then
-  echo "M1 proven: the killed daemon's operation was resumed and finished (interrupted once)"
-else
-  echo "M1 NOT proven: status=$status interruptions=$interruptions" >&2
-  exit 1
-fi
+echo "== run and interrupt an admitted exercise during its third step"
+proof_dir=$(run 'mktemp -d /var/lib/bedrock/m1-proof.XXXXXX')
+[[ "$proof_dir" =~ ^/var/lib/bedrock/m1-proof\.[a-zA-Z0-9]+$ ]] || { echo "M1 NOT proven: invalid proof directory" >&2; exit 1; }
+echo "phase evidence: $proof_dir"
+python3 "$here/proof_operation.py" --phase exercise --directory "$proof_dir" --timeout 90 -- ssh "${ssh_opts[@]}" "$box"
+echo "M1 proven: the killed daemon's operation was resumed and finished (interrupted once), with six markers"
