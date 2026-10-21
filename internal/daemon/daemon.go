@@ -192,6 +192,14 @@ func Run(ctx context.Context, cfg Config, logw io.Writer) error {
 		return err
 	}
 	defer store.Close()
+	// Reconciliation and edge preparation can legitimately outlast systemd's
+	// startup timeout, even before recovery emits its first event. Use the
+	// runtime watchdog's health criterion without claiming API readiness.
+	stopStartup := notifierFromEnv().startup(ctx, startupNotifyInterval, func(ctx context.Context) bool {
+		_, err := store.List(ctx, 1)
+		return err == nil
+	})
+	defer stopStartup()
 	if err := app.EnforceMigrationFences(ctx, store.Path()); err != nil {
 		return fmt.Errorf("enforce migration fences: %w", err)
 	}
@@ -224,7 +232,7 @@ func Run(ctx context.Context, cfg Config, logw io.Writer) error {
 	sec := secrets.DefaultStore(cfg.StateDir)
 	engine := kernel.New(store, Registry(store, sec, cfg.Socket, cfg.StateDir), cfg.Owner)
 	logf("helios daemon %s, state %s, owner %s", version.Current().Version, store.Path(), cfg.Owner)
-	d := &daemon{cfg: cfg, logf: logf, store: store, sec: sec, api: &api.Server{Engine: engine, Store: store, Lifetime: ctx}, machine: hostname(), cancel: cancel,
+	d := &daemon{cfg: cfg, logf: logf, store: store, sec: sec, api: &api.Server{Engine: engine, Store: store, Lifetime: ctx}, machine: hostname(), cancel: cancel, stopStartup: stopStartup,
 		alerts: &watch.Alerts{Secrets: sec, Store: store}, peers: &peer.Source{Secrets: sec, Store: store, Log: logf}}
 	defer func() {
 		cancel()
@@ -298,6 +306,8 @@ type daemon struct {
 	loops  sync.WaitGroup
 	jobs   *app.Jobs
 	cancel context.CancelFunc
+	// stopStartup cancels and joins startup notifications before READY.
+	stopStartup func()
 }
 
 // recoverOperations finishes what a previous daemon left mid-way with an
@@ -420,6 +430,13 @@ func (d *daemon) serveHooks(ctx context.Context) (*gitdeploy.Receiver, func()) {
 func (d *daemon) serveAPI(ctx context.Context, receiver *gitdeploy.Receiver) error {
 	listener, err := api.Listen(d.cfg.Socket)
 	if err != nil {
+		return err
+	}
+	if d.stopStartup != nil {
+		d.stopStartup()
+	}
+	if err := ctx.Err(); err != nil {
+		_ = listener.Close()
 		return err
 	}
 	server := &http.Server{Handler: d.api.Handler(), ReadHeaderTimeout: 10 * time.Second,
