@@ -59,6 +59,11 @@ func checkMoveTestAdmission(ctx context.Context, store *state.Store, app string)
 }
 
 func cleanupMoveTest(ctx context.Context, r *rollout, names drillNames, workspace, reservation string) error {
+	_, err := os.Stat(reservation)
+	reserved := err == nil
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
 	e, err := docker.Connect(ctx)
 	if err != nil {
 		return err
@@ -79,6 +84,9 @@ func cleanupMoveTest(ctx context.Context, r *rollout, names drillNames, workspac
 		if err != nil {
 			return err
 		}
+		if !reserved {
+			return fmt.Errorf("move test scratch container %s has no ownership reservation; refusing cleanup", name)
+		}
 		if info.Labels[docker.LabelOwner] != docker.OwnerValue || info.Labels[docker.LabelApp] != r.m.App || info.Labels[docker.LabelWorkload] != roles[name] {
 			return fmt.Errorf("move test scratch name %s belongs to another container; refusing cleanup", name)
 		}
@@ -86,12 +94,36 @@ func cleanupMoveTest(ctx context.Context, r *rollout, names drillNames, workspac
 	if found, err := e.NetworkExists(ctx, names.network); err != nil {
 		return err
 	} else if found {
+		if !reserved {
+			return fmt.Errorf("move test scratch network %s has no ownership reservation; refusing cleanup", names.network)
+		}
 		owned, err := e.Networks(ctx, names.network)
 		if err != nil {
 			return err
 		}
 		if !slices.Contains(owned, names.network) {
 			return fmt.Errorf("move test scratch network %s is not owned by helios", names.network)
+		}
+	}
+	volumes := []string{names.postgresVolume}
+	for _, name := range sortedKeys(names.volumes) {
+		volumes = append(volumes, names.volumes[name])
+	}
+	existingVolumes, err := e.Volumes(ctx, names.network+".")
+	if err != nil {
+		return err
+	}
+	for _, name := range volumes {
+		if !slices.Contains(existingVolumes, name) {
+			continue
+		}
+		if !reserved {
+			return fmt.Errorf("move test scratch volume %s has no ownership reservation; refusing cleanup", name)
+		}
+		// Creation of an existing volume leaves its labels unchanged and
+		// checks the owner, so a replaced foreign volume is never deleted.
+		if err := e.EnsureVolume(ctx, name); err != nil {
+			return err
 		}
 	}
 	var failures []error
@@ -102,10 +134,8 @@ func cleanupMoveTest(ctx context.Context, r *rollout, names drillNames, workspac
 		return err // Retain volumes if any scratch writer could still run.
 	}
 	failures = append(failures, e.RemoveNetwork(ctx, names.network))
-	_, err = e.RemoveVolume(ctx, names.postgresVolume)
-	failures = append(failures, err)
-	for _, name := range sortedKeys(names.volumes) {
-		_, err := e.RemoveVolume(ctx, names.volumes[name])
+	for _, name := range volumes {
+		_, err := e.RemoveVolume(ctx, name)
 		failures = append(failures, err)
 	}
 	if err := errors.Join(failures...); err != nil {

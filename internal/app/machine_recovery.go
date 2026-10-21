@@ -210,6 +210,25 @@ func (x *machineRecovering) step(name, change string, apply func(context.Context
 			if !rec.FinishedAt.IsZero() || x.in.Rehearsal && rec.RehearsalCleanupStarted && name != "finish" {
 				return nil
 			}
+			if rec.Fetched && !x.in.Rehearsal {
+				// An earlier preclaim failure may have released the gate.
+				// Completed fetch steps are skipped on kernel recovery, so
+				// every resumed step must restore that reservation itself.
+				if !rec.ResourcesClaimed && !rec.StateInstalled {
+					gate, err := readMachineRecoveryReservation(x.r.Store.Path())
+					if err != nil {
+						return err
+					}
+					if gate == nil {
+						if err := x.r.cleanTarget(ctx); err != nil {
+							return err
+						}
+					}
+				}
+				if err := x.reserve(rec); err != nil {
+					return err
+				}
+			}
 		}
 		err := apply(ctx, out)
 		if err != nil && !x.in.Rehearsal {

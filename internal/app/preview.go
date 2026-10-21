@@ -101,8 +101,13 @@ func PreviewOfWithReport(parent *manifest.Manifest, branch, domain string) (*man
 		preview.Secrets = &secrets
 	}
 	preview.Workloads = make(map[string]manifest.Workload, len(parent.Workloads))
-	claimed := map[string]bool{}
-	for name, w := range parent.Workloads {
+	type previewRoute struct {
+		workload string
+		route    manifest.Route
+	}
+	claimed := map[string]previewRoute{}
+	for _, name := range parent.WorkloadNames() {
+		w := parent.Workloads[name]
 		copied := w
 		copied.Routes = nil
 		copied.Ports = nil
@@ -111,20 +116,23 @@ func PreviewOfWithReport(parent *manifest.Manifest, branch, domain string) (*man
 			if !manifest.ValidHost(host) {
 				return nil, nil, fmt.Errorf("%s would become %q, which isn't a hostname; use a shorter branch name", r.Host, host)
 			}
-			key := host + " " + r.NormalizedPath()
-			if claimed[key] {
-				// Two of the parent's hostnames collapsed onto one, which
-				// is what happens to an app and its www alias. One route is
-				// all a preview needs.
-				continue
-			}
-			claimed[key] = true
 			route := r
 			route.Host = host
 			route.Auth = manifest.AuthLoom
 			// Cloudflare holds no client certificate for a preview's
 			// hostname, so the edge would refuse every connection to it.
 			route.OriginPull = manifest.OriginPullOff
+			key := host + " " + r.NormalizedPath()
+			identity := route
+			identity.Path, identity.Port = route.NormalizedPath(), w.RoutePort(route)
+			if owner, ok := claimed[key]; ok {
+				if owner.workload != name || owner.route != identity {
+					return nil, nil, fmt.Errorf("preview routes for workloads %s and %s collide at %s%s; give their original hosts different first labels", owner.workload, name, host, r.NormalizedPath())
+				}
+				// Equivalent aliases of one workload may share a preview route.
+				continue
+			}
+			claimed[key] = previewRoute{workload: name, route: identity}
 			copied.Routes = append(copied.Routes, route)
 		}
 		preview.Workloads[name] = copied

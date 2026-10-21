@@ -248,3 +248,23 @@ func TestGCProtectsTheRevisionOfAnOpenJob(t *testing.T) {
 		t.Fatal("GC discarded the image and manifest needed by an unfinished job")
 	}
 }
+
+func TestGCTrimsFailedDeploymentsBeforeAnAppEverBecomesActive(t *testing.T) {
+	ctx := context.Background()
+	store := releaseTestStore(t)
+	m := releaseTestManifest()
+	at := time.Now().UTC()
+	for i := range retiredKept + 2 {
+		releaseTestRevision(t, store, m, fmt.Sprintf("failed-revision-%d", i), state.RevisionFailed, at.Add(time.Duration(i)*time.Minute))
+	}
+	if err := (GC{Store: store}).forgetStep().Apply(ctx, io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	revisions, err := store.Revisions(ctx, m.App)
+	if err != nil || len(revisions) != retiredKept {
+		t.Fatalf("failed first deployments escaped history retention: %d revisions, %v", len(revisions), err)
+	}
+	if _, err := store.GetRevision(ctx, m.App, "failed-revision-0"); err == nil {
+		t.Fatal("GC kept the oldest failed deployment")
+	}
+}

@@ -202,7 +202,7 @@ func (x *removal) dnsStep() kernel.Step {
 				fmt.Fprintf(out, "records for %v stay: %v\n", sortedKeys(managed), err)
 				return nil
 			}
-			removed, err := mgr.Remove(ctx, x.in.App, sortedKeys(managed))
+			removed, err := removeUnroutedRecords(ctx, x.r.Store, mgr, x.in.App, sortedKeys(managed), out)
 			if err != nil {
 				return err
 			}
@@ -286,6 +286,9 @@ func (x *removal) dataStep() kernel.Step {
 				return err
 			}
 			defer e.Close()
+			if err := checkVolumeRemoval(ctx, e, x.volumes); err != nil {
+				return err
+			}
 			for _, v := range x.volumes {
 				removed, err := e.RemoveVolume(ctx, v)
 				if err != nil {

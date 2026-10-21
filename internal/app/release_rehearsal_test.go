@@ -179,12 +179,8 @@ func TestRehearsalRunsReleasesInOrderRecordsExactEvidenceAndCleansFailure(t *tes
 			// Internal network inspection is part of the scratch safety contract.
 			proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				path := strings.TrimPrefix(r.URL.Path, "/v"+dockertest.APIVersion)
-				if strings.HasPrefix(path, "/images/") && strings.HasSuffix(path, "/json") {
+				if path != "/images/json" && strings.HasPrefix(path, "/images/") && strings.HasSuffix(path, "/json") {
 					json.NewEncoder(w).Encode(map[string]any{"Id": "sha256:" + strings.Repeat("b", 64), "RepoDigests": []string{"alpine@sha256:" + strings.Repeat("b", 64)}, "Config": map[string]any{"User": "0"}})
-					return
-				}
-				if strings.HasPrefix(path, "/networks/") && r.Method == http.MethodGet {
-					json.NewEncoder(w).Encode(map[string]any{"Name": strings.TrimPrefix(path, "/networks/"), "Internal": true, "Labels": map[string]string{docker.LabelOwner: docker.OwnerValue}})
 					return
 				}
 				fake.ServeHTTP(w, r)
@@ -337,7 +333,7 @@ func TestInterruptedRehearsalCanCompensateAfterRemoteSourceDisappears(t *testing
 		t.Fatal("cleanup plan changed when source or live authority disappeared")
 	}
 	name := "bedrock.site.rehearse.candidate-rev.workload.first"
-	fake.Add(dockertest.Container{Name: name, Running: true})
+	fake.Add(dockertest.Container{Name: name, Running: true, Labels: imageLabels(m.App, "first", in.Revision)})
 	if err := rebuilt.Steps[0].Undo(context.Background(), io.Discard); err != nil {
 		t.Fatal(err)
 	}

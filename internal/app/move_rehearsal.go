@@ -208,8 +208,7 @@ func (t MoveTest) Plan(ctx context.Context, raw json.RawMessage) (*kernel.Plan, 
 		defer e.Close()
 		for _, check := range verificationChecks(m).application {
 			if err := runCheckDirect(ctx, e, m, d.names.containers, check); err != nil {
-				d.names.cleanup(e)
-				return err
+				return errors.Join(err, d.names.cleanup(e))
 			}
 		}
 		return nil

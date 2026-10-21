@@ -188,12 +188,13 @@ func (g GC) forgetStep() kernel.Step {
 			if err != nil {
 				return err
 			}
-			apps, err := g.Store.Apps(ctx)
+			// Failed first deployments have revision history without an app row.
+			apps, err := g.Store.AppNames(ctx)
 			if err != nil {
 				return err
 			}
-			for _, a := range apps {
-				revs, err := g.Store.Revisions(ctx, a.Name)
+			for _, app := range apps {
+				revs, err := g.Store.Revisions(ctx, app)
 				if err != nil {
 					return err
 				}

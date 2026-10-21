@@ -139,10 +139,10 @@ func (c RecoverCutover) Plan(ctx context.Context, raw json.RawMessage) (*kernel.
 				if err := e.EnsureNetwork(ctx, docker.EdgeNetwork); err != nil {
 					return err
 				}
+				if err := x.checkRecoveryContainers(ctx, e, &m, n, true); err != nil {
+					return err
+				}
 				if !rec.CutoverReady[rev.App] {
-					if err := x.checkRecoveryContainers(ctx, e, &m, n, true); err != nil {
-						return err
-					}
 					// These are recovery-owned containers on restored volumes,
 					// never original-source or unrelated target workloads.
 					for _, name := range n.containers {

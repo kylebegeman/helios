@@ -20,7 +20,7 @@ import (
 
 func (x *machineRecovering) names(m *manifest.Manifest) drillNames {
 	prefix := "bedrock.recovery." + x.in.ID + "." + m.App
-	n := drillNames{dir: filepath.Join(x.stage(), machineAppDataDir, m.App), network: prefix, postgres: prefix + ".postgres", postgresVolume: prefix + ".postgres", objects: prefix + ".objects", volumes: map[string]string{}, containers: map[string]string{}}
+	n := drillNames{app: m.App, dir: filepath.Join(x.stage(), machineAppDataDir, m.App), network: prefix, postgres: prefix + ".postgres", postgresVolume: prefix + ".postgres", objects: prefix + ".objects", volumes: map[string]string{}, containers: map[string]string{}}
 	if !x.in.Rehearsal {
 		n.postgres = PostgresContainer(m.App)
 		n.postgresVolume = docker.VolumeName(m.App, postgresWorkload)
@@ -325,6 +325,16 @@ func (x *machineRecovering) startPrivate(ctx context.Context, rec *machineRecove
 		u, err := isolate(ctx, e, &spec, m.Workloads[name], rev.Images[name])
 		if err != nil {
 			return err
+		}
+		// Volumes excluded from backups are fresh, just as in a drill.
+		// Give only those empty volumes to the workload; restored file
+		// ownership must remain the ownership captured in the snapshot.
+		for _, mt := range m.Workloads[name].Mounts {
+			if slices.Contains(m.VolumesOutOfBackups(), mt.Volume) {
+				if _, err := e.EnsureVolumeOwner(ctx, n.volumes[mt.Volume], u); err != nil {
+					return err
+				}
+			}
 		}
 		if err := restoredWritable(name, m.Workloads[name], u, n.volumes, func(v string) (string, error) { return e.VolumeMountpoint(ctx, v) }); err != nil {
 			return err

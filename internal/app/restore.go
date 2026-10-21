@@ -64,6 +64,9 @@ func (r RestoreDef) Plan(ctx context.Context, raw json.RawMessage) (*kernel.Plan
 	if in.App == manifest.ReservedApp {
 		return nil, errors.New("recover the machine with helios recover <source-machine> --snapshot <machine-snapshot> --identity-file <protected-file>; use --rehearsal to test privately")
 	}
+	if !manifest.ValidApp(in.App) {
+		return nil, fmt.Errorf("%q is not a valid app name", in.App)
+	}
 	if err := checkReleaseStoreAccess(ctx, r.Store, in.App); err != nil {
 		return nil, err
 	}
@@ -141,7 +144,10 @@ func (x *restoring) pinned(step kernel.Step) kernel.Step {
 		if err != nil {
 			return x.run.fail(err)
 		}
-		return apply(ctx, out)
+		if err := apply(ctx, out); err != nil {
+			return x.run.fail(err)
+		}
+		return nil
 	}
 	return step
 }

@@ -141,12 +141,97 @@ func pruneRecords(ctx context.Context, store *state.Store, sec *secrets.Store, a
 		fmt.Fprintf(out, "records for %v stay: %v\n", sortedKeys(dropped), err)
 		return nil
 	}
-	removed, err := mgr.Remove(ctx, app, sortedKeys(dropped))
+	removed, err := removeUnroutedRecords(ctx, store, mgr, app, sortedKeys(dropped), out)
 	if err != nil {
 		return err
 	}
 	for _, host := range removed {
 		fmt.Fprintf(out, "%s's record removed; %s no longer routes it\n", host, app)
+	}
+	return nil
+}
+
+// A hostname can serve several apps at different paths. Transfer a shared
+// managed record to a remaining app instead of deleting its route out from
+// under it; the final app can then remove the record by its ownership marker.
+func removeUnroutedRecords(ctx context.Context, store *state.Store, mgr *dns.Manager, app string, hosts []string, out io.Writer) ([]string, error) {
+	active, err := store.ActiveRevisions(ctx)
+	if err != nil {
+		return nil, err
+	}
+	type owner struct {
+		app  string
+		mode manifest.DNSMode
+	}
+	shared := map[string]owner{}
+	for _, rev := range active {
+		if rev.App == app {
+			continue
+		}
+		var m manifest.Manifest
+		if err := json.Unmarshal(rev.Manifest, &m); err != nil {
+			return nil, fmt.Errorf("revision %s/%s manifest: %w", rev.App, rev.ID, err)
+		}
+		managed := m.ManagedHosts()
+		for _, host := range m.Hosts() {
+			if previous, ok := shared[host]; !ok || managed[host].Managed() && !previous.mode.Managed() || managed[host].Managed() == previous.mode.Managed() && rev.App < previous.app {
+				shared[host] = owner{app: rev.App, mode: managed[host]}
+			}
+		}
+	}
+	var dropped []string
+	for _, host := range hosts {
+		remaining, ok := shared[host]
+		if !ok {
+			dropped = append(dropped, host)
+			continue
+		}
+		if remaining.mode.Managed() {
+			if err := transferSharedRecordOwnership(ctx, mgr, host, app, remaining.app); err != nil {
+				return nil, err
+			}
+		}
+		fmt.Fprintf(out, "%s's record stays: %s still routes it\n", host, remaining.app)
+	}
+	return mgr.Remove(ctx, app, dropped)
+}
+
+// Cleanup only changes the ownership marker of existing records it could
+// otherwise delete. It never creates DNS, changes routing/proxy policy, or
+// adopts a record maintained by another owner.
+func transferSharedRecordOwnership(ctx context.Context, mgr *dns.Manager, host, from, to string) error {
+	zones, err := mgr.CF.Zones(ctx)
+	if err != nil {
+		return err
+	}
+	var zone cloudflare.Zone
+	for _, candidate := range zones {
+		if (host == candidate.Name || strings.HasSuffix(host, "."+candidate.Name)) && len(candidate.Name) > len(zone.Name) {
+			zone = candidate
+		}
+	}
+	if zone.ID == "" {
+		return nil
+	}
+	records, err := mgr.CF.Records(ctx, zone.ID, host)
+	if err != nil {
+		return err
+	}
+	for _, record := range records {
+		if record.Name != host || record.Comment != dns.Comment(from, mgr.Hostname) {
+			continue
+		}
+		local := false
+		for _, address := range mgr.Addresses {
+			local = local || record.Content == address
+		}
+		if !local {
+			continue
+		}
+		record.Comment = dns.Comment(to, mgr.Hostname)
+		if err := mgr.CF.Update(ctx, zone.ID, record); err != nil {
+			return err
+		}
 	}
 	return nil
 }
