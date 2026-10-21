@@ -140,8 +140,8 @@ func (j Journal) Stream(ctx context.Context, q JournalQuery, each func(JournalLi
 // Read takes in at most JournalReadLimit of the query's lines and groups
 // them by container, in the order their first lines come. Past the limit
 // it returns what it read with ErrJournalLimit. It leaves out a line
-// whose first chunks it didn't read, which could start partway through a
-// secret.
+// whose first or final chunks it did not read. A fragment can start or end
+// partway through a secret and cannot be safely redacted.
 func (j Journal) Read(ctx context.Context, q JournalQuery) ([]JournalContainer, error) {
 	q.Follow = false
 	var out []JournalContainer
@@ -192,10 +192,10 @@ func (j Journal) Suppressed(ctx context.Context, since, until time.Time) ([]Jour
 // the chunks join with nothing between them. Older Docker numbers none,
 // so its chunks join in the order they come. A line still waiting for
 // its last chunk when the output ends, when another line starts or when
-// it grows past JournalReadLimit is handed over as it is. A line whose
-// first chunks didn't come, because the window or --lines cut them off
-// or journald dropped them, is handed over only when headless is set.
-func (j Journal) read(ctx context.Context, q JournalQuery, limit int64, headless bool, each func(JournalLine) error) (bool, error) {
+// it grows past JournalReadLimit is handed over only when fragments is set.
+// That also permits lines whose first chunks were cut off by the query or
+// dropped by journald. Evidence reads require both ends of a complete line.
+func (j Journal) read(ctx context.Context, q JournalQuery, limit int64, fragments bool, each func(JournalLine) error) (bool, error) {
 	if len(q.Names) == 0 && q.App == "" && q.Revision == "" {
 		return false, errors.New("a journal query needs a container name, an app or a revision")
 	}
@@ -208,11 +208,12 @@ func (j Journal) read(ctx context.Context, q JournalQuery, limit int64, headless
 		id       string
 		next     int
 		headless bool
+		complete bool
 	}
 	pending := map[key]*chunked{}
 	var waiting []key
 	hand := func(c *chunked) error {
-		if c.headless && !headless {
+		if !fragments && (c.headless || !c.complete) {
 			return nil
 		}
 		return each(c.line)
@@ -241,7 +242,7 @@ func (j Journal) read(ctx context.Context, q JournalQuery, limit int64, headless
 			p = nil
 		}
 		if p == nil {
-			c := &chunked{line: l, id: id, next: next, headless: ordinal > 1}
+			c := &chunked{line: l, id: id, next: next, headless: ordinal > 1, complete: !partial}
 			if !partial {
 				return hand(c)
 			}
@@ -251,6 +252,7 @@ func (j Journal) read(ctx context.Context, q JournalQuery, limit int64, headless
 		}
 		p.line.Text += l.Text
 		p.next = next
+		p.complete = !partial
 		if partial && len(p.line.Text) < JournalReadLimit {
 			return nil
 		}
