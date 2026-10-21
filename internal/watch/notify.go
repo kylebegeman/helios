@@ -19,7 +19,14 @@ const (
 	// The phone legs carry warnings and worse; email carries everything.
 	PushoverLeg = integration.PushoverName
 	NtfyLeg     = integration.NtfyName
+	// The Loom leg opens a thread for a critical incident. It tells an
+	// agent, not a person, so it never goes alone.
+	LoomWebhookLeg = integration.LoomWebhookName
 )
+
+// NoPersonLeg is the notify error of a fan-out that would tell Loom and
+// no one else.
+const NoPersonLeg = "loom_webhook needs a person leg too; set email, pushover or ntfy"
 
 // RelayTimeout bounds one mail server's attempt, so a hung server leaves
 // time to fail over to the next.
@@ -84,6 +91,10 @@ type legSpec struct {
 	to       string
 	least    string
 	notifier Notifier
+	// timeout bounds one delivery; zero means LegTimeout.
+	timeout time.Duration
+	// once is set for a leg that hears of an incident once.
+	once bool
 }
 
 // loadLegs reads the integrations set up now, mail servers first in the
@@ -109,6 +120,12 @@ func loadLegs(sec *secrets.Store, store *state.Store) []legSpec {
 	} else if !errors.Is(err, integration.ErrNotSet) {
 		legs = append(legs, legSpec{name: NtfyLeg, least: state.SeverityWarning, notifier: broken{err}})
 	}
+	if w, err := integration.LoadLoomWebhook(sec); err == nil {
+		legs = append(legs, legSpec{name: LoomWebhookLeg, to: "the Loom task", least: state.SeverityCritical, timeout: LoomTimeout, once: true,
+			notifier: &LoomNotifier{LoomWebhook: *w, Store: store, Secrets: sec}})
+	} else if !errors.Is(err, integration.ErrNotSet) {
+		legs = append(legs, legSpec{name: LoomWebhookLeg, least: state.SeverityCritical, timeout: LoomTimeout, once: true, notifier: broken{err}})
+	}
 	return legs
 }
 
@@ -124,25 +141,39 @@ func LegNames(sec *secrets.Store) []string {
 }
 
 // LoadFanout builds the fan-out from the integrations set up now: one
-// email leg that fails over through the mail servers in order, and a
-// phone leg for each of Pushover and ntfy.
+// email leg that fails over through the mail servers in order, a phone
+// leg for each of Pushover and ntfy, and the Loom leg.
 func LoadFanout(sec *secrets.Store, store *state.Store) (*Fanout, error) {
+	return fanoutOf(loadLegs(sec, store), store)
+}
+
+// fanoutOf folds the mail servers among legs into the one email leg and
+// keeps the rest as they are. A fan-out whose only leg is Loom is refused:
+// a warning would count as told with no leg to carry it, and an outage
+// would reach an agent and no person.
+func fanoutOf(legs []legSpec, store *state.Store) (*Fanout, error) {
 	f := &Fanout{}
 	var relays []integration.Email
-	for _, l := range loadLegs(sec, store) {
+	person := false
+	for _, l := range legs {
 		if e, ok := l.notifier.(EmailNotifier); ok {
 			relays = append(relays, e.Relays...)
 			continue
 		}
-		f.Legs = append(f.Legs, Leg{Name: l.name, Notifier: l.notifier, MinSeverity: l.least})
+		person = person || l.name != LoomWebhookLeg
+		f.Legs = append(f.Legs, Leg{Name: l.name, Notifier: l.notifier, MinSeverity: l.least, Timeout: l.timeout, Once: l.once})
 	}
 	if len(relays) > 0 {
 		email := Leg{Name: EmailLeg, Notifier: EmailNotifier{Relays: relays, Store: store}, MinSeverity: state.SeverityNotice,
 			Timeout: time.Duration(len(relays)) * RelayTimeout}
 		f.Legs = append([]Leg{email}, f.Legs...)
+		person = true
 	}
 	if len(f.Legs) == 0 {
 		return nil, errors.New(NoAlertsSetUp)
+	}
+	if !person {
+		return nil, errors.New(NoPersonLeg)
 	}
 	return f, nil
 }
@@ -158,7 +189,9 @@ func (b broken) Notify(context.Context, Notice) error { return b.err }
 type Alerts struct {
 	Secrets *secrets.Store
 	Store   *state.Store
-	ledger  Ledger
+	// Now is the ledger's clock; nil is the system's.
+	Now    func() time.Time
+	ledger Ledger
 }
 
 // Notify implements Notifier.
@@ -167,6 +200,6 @@ func (a *Alerts) Notify(ctx context.Context, n Notice) error {
 	if err != nil {
 		return err
 	}
-	f.Ledger = &a.ledger
+	f.Ledger, f.Now = &a.ledger, a.Now
 	return f.Notify(ctx, n)
 }

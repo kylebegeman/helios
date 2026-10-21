@@ -79,6 +79,8 @@ Usage:
   helios alerts [command]
 
 Available Commands:
+  review      Print a blameless review of an incident, its timeline filled in, for you to finish.
+  show        Show one incident and how its alerts went out, and with --evidence what was known about it.
   test        Send a test alert through each way alerts go out, and say how each did.
 
 Flags:
@@ -92,6 +94,33 @@ Global Flags:
       --targets-file string   the local named-target configuration (default "~/.bedrock/targets.json")
 
 Use "helios alerts [command] --help" for more information about a command.
+== helios alerts review (hidden false)
+Print a blameless review of an incident, its timeline filled in, for you to finish.
+
+Usage:
+  helios alerts review <id> [flags]
+
+Global Flags:
+      --json                  print JSON, one object per line
+      --socket string         the daemon's socket; the local kernel is used when nothing answers (default "/run/bedrock/bedrock.sock")
+      --state-dir string      where helios keeps its state (default "~/.bedrock")
+      --target string         operate on this explicitly named SSH target
+      --targets-file string   the local named-target configuration (default "~/.bedrock/targets.json")
+== helios alerts show (hidden false)
+Show one incident and how its alerts went out, and with --evidence what was known about it.
+
+Usage:
+  helios alerts show <id> [flags]
+
+Flags:
+      --evidence   also show the change before it, its logs, history and upstream status, collected now if they weren't then
+
+Global Flags:
+      --json                  print JSON, one object per line
+      --socket string         the daemon's socket; the local kernel is used when nothing answers (default "/run/bedrock/bedrock.sock")
+      --state-dir string      where helios keeps its state (default "~/.bedrock")
+      --target string         operate on this explicitly named SSH target
+      --targets-file string   the local named-target configuration (default "~/.bedrock/targets.json")
 == helios alerts test (hidden false)
 Send a test alert through each way alerts go out, and say how each did.
 
@@ -99,7 +128,7 @@ Usage:
   helios alerts test [flags]
 
 Flags:
-      --leg string   test only this one: email, email2, pushover or ntfy
+      --leg string   test only this one: email, email2, pushover, ntfy or loom_webhook, which opens a Loom thread
 
 Global Flags:
       --json                  print JSON, one object per line
@@ -1122,7 +1151,7 @@ Global Flags:
       --targets-file string   the local named-target configuration (default "~/.bedrock/targets.json")
 == helios integration set (hidden false)
 Type an integration's values in, or pipe field=value lines. Values are sealed and never shown.
-Integrations: storage, email, email2, pushover, ntfy, cloudflare, loom. In a terminal each field is asked for; otherwise stdin holds one field=value per line.
+Integrations: storage, email, email2, pushover, ntfy, cloudflare, loom, loom_webhook. In a terminal each field is asked for; otherwise stdin holds one field=value per line.
 Usage:
   helios integration set <name> [flags]
 
@@ -1234,8 +1263,10 @@ Usage:
   helios logs <app> [workload] [flags]
 
 Flags:
-  -f, --follow        keep streaming
-      --tail string   how many lines to start with, or all (default "100")
+  -f, --follow            keep streaming
+      --job string        a job run's output, by the ID helios jobs shows
+      --revision string   a revision's output, from the journal once its containers are gone
+      --tail string       how many lines to start with, or all (default "100")
 
 Global Flags:
       --json                  print JSON, one object per line

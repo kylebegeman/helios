@@ -38,6 +38,11 @@ type Leg struct {
 	MinSeverity string
 	// Timeout bounds one delivery; zero means LegTimeout.
 	Timeout time.Duration
+	// Once is set for a leg that hears of an incident once. A later
+	// notice doesn't take the place of one it missed: it is still sent
+	// the one it missed, though the incident has eased below what it
+	// carries or resolved since.
+	Once bool
 }
 
 // Fanout sends each notice to every leg that carries its severity, all
@@ -81,15 +86,6 @@ func (e *DeliveryError) Partial() bool { return len(e.Delivered) > 0 }
 // Notify implements Notifier. It returns nil once every leg that carries
 // the notice has it, and a *DeliveryError otherwise.
 func (f *Fanout) Notify(ctx context.Context, n Notice) error {
-	var legs []Leg
-	for _, l := range f.Legs {
-		if carries(l.MinSeverity, n.Severity) {
-			legs = append(legs, l)
-		}
-	}
-	if len(legs) == 0 {
-		return nil
-	}
 	now := time.Now().UTC()
 	if f.Now != nil {
 		now = f.Now()
@@ -98,19 +94,19 @@ func (f *Fanout) Notify(ctx context.Context, n Notice) error {
 	if ledger == nil || n.IncidentID == 0 {
 		ledger = &Ledger{}
 	}
-	entry, due := ledger.start(n, legs, now)
+	entry, legs, sends := ledger.start(n, f.Legs, now)
 
-	results := make([]error, len(due))
+	results := make([]error, len(sends))
 	var wg sync.WaitGroup
-	for i, l := range due {
+	for i, d := range sends {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			results[i] = deliver(ctx, l, n)
+			results[i] = deliver(ctx, d.leg, d.notice)
 		}()
 	}
 	wg.Wait()
-	return ledger.finish(n.IncidentID, entry, legs, due, results, now)
+	return ledger.finish(n.IncidentID, entry, legs, sends, results, now)
 }
 
 // deliver sends through one leg within its timeout. A leg that panics
@@ -148,8 +144,11 @@ func severityRank(severity string) int {
 }
 
 // Ledger remembers, for each incident, which legs have its latest
-// notice. It lives in memory: after a restart a retry goes to every leg,
-// which can repeat a notice but never loses one.
+// notice, and the notice a leg that hears of an incident once still has
+// to be sent. It lives in memory: after a restart a retry goes to every
+// leg that carries it, which can repeat a notice. A leg that hears of an
+// incident once is then sent it only if the incident is still one it
+// carries and hasn't resolved.
 type Ledger struct {
 	mu      sync.Mutex
 	sending map[int64]*sending
@@ -166,12 +165,23 @@ type legState struct {
 	misses    int
 	next      time.Time
 	err       error
+	// owed is the notice a leg that hears of an incident once missed,
+	// which it is sent in place of any later one.
+	owed *Notice
 }
 
-// start returns the notice's entry and the legs to send it through now:
-// every leg for a new notice; for a retry, the legs that missed it and
-// have waited out their backoff.
-func (l *Ledger) start(n Notice, legs []Leg, now time.Time) (*sending, []Leg) {
+// send is a leg to send through now and what it is sent.
+type send struct {
+	leg    Leg
+	notice Notice
+}
+
+// start returns the notice's entry, the legs it goes to and the ones to
+// send through now: every leg that carries it for a new notice; for a
+// retry, the legs that missed it and have waited out their backoff. A leg
+// that hears of an incident once and missed an earlier notice goes on
+// waiting for that one, whatever the notice now.
+func (l *Ledger) start(n Notice, all []Leg, now time.Time) (*sending, []Leg, []send) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	if l.sending == nil {
@@ -179,36 +189,60 @@ func (l *Ledger) start(n Notice, legs []Leg, now time.Time) (*sending, []Leg) {
 	}
 	entry := l.sending[n.IncidentID]
 	if !n.Retry || entry == nil || entry.transition != n.Transition {
-		entry = &sending{transition: n.Transition, legs: map[string]*legState{}}
+		next := &sending{transition: n.Transition, legs: map[string]*legState{}}
+		if entry != nil {
+			for name, s := range entry.legs {
+				if s.owed != nil {
+					next.legs[name] = s
+				}
+			}
+		}
+		entry = next
 		l.sending[n.IncidentID] = entry
 	}
-	var due []Leg
-	for _, leg := range legs {
+	var legs []Leg
+	var sends []send
+	for _, leg := range all {
 		s := entry.legs[leg.Name]
+		owed := leg.Once && s != nil && s.owed != nil
+		if !owed && !carries(leg.MinSeverity, n.Severity) {
+			continue
+		}
 		if s == nil {
 			s = &legState{}
 			entry.legs[leg.Name] = s
 		}
-		if !s.delivered && !now.Before(s.next) {
-			due = append(due, leg)
+		legs = append(legs, leg)
+		if s.delivered || now.Before(s.next) {
+			continue
+		}
+		if owed {
+			sends = append(sends, send{leg, *s.owed})
+		} else {
+			sends = append(sends, send{leg, n})
 		}
 	}
-	return entry, due
+	return entry, legs, sends
 }
 
 // finish records what the legs did and says where the notice stands.
-func (l *Ledger) finish(id int64, entry *sending, legs, due []Leg, results []error, now time.Time) error {
+func (l *Ledger) finish(id int64, entry *sending, legs []Leg, sent []send, results []error, now time.Time) error {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	for i, leg := range due {
-		s := entry.legs[leg.Name]
+	for i, d := range sent {
+		s := entry.legs[d.leg.Name]
 		if results[i] == nil {
-			s.delivered, s.err = true, nil
+			s.delivered, s.err, s.owed = true, nil, nil
 			continue
 		}
 		s.misses++
 		s.err = results[i]
 		s.next = now.Add(retryAfter(s.misses))
+		if d.leg.Once && s.owed == nil {
+			owed := d.notice
+			owed.Retry = true
+			s.owed = &owed
+		}
 	}
 	failed := &DeliveryError{}
 	for _, leg := range legs {

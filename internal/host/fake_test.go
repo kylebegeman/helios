@@ -137,6 +137,6 @@ func setUpBox(t *testing.T) *fakeMachine {
 	m.answers["apt-get -s -o Debug::NoLocking=true upgrade"] = "Reading package lists...\n"
 	m.answers["systemctl is-active fail2ban"] = "active"
 	m.write("/etc/apt/apt.conf.d/20auto-upgrades", "APT::Periodic::Update-Package-Lists \"1\";\nAPT::Periodic::Unattended-Upgrade \"1\";\n")
-	m.write("/etc/systemd/journald.conf.d/bedrock.conf", "[Journal]\nSystemMaxUse=500M\n")
+	m.write("/etc/systemd/journald.conf.d/bedrock.conf", journaldHelios)
 	return m
 }

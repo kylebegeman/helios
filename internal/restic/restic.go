@@ -319,7 +319,7 @@ func finish(e *docker.Engine, spec docker.Spec, grace time.Duration) ([]string, 
 		return nil, fmt.Errorf("restic helper %s has another owner; refusing cleanup", spec.Name)
 	}
 	var buf bytes.Buffer
-	logErr := e.Logs(ctx, spec.Name, false, "all", &buf)
+	logErr := e.Logs(ctx, spec.Name, docker.LogOptions{Tail: "all"}, &buf)
 	cancel()
 	cleanup, stop := context.WithTimeout(context.Background(), grace+25*time.Second)
 	removeErr := e.Remove(cleanup, info.ID, grace)

@@ -2,11 +2,14 @@ package watch
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"path/filepath"
+	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -15,12 +18,17 @@ import (
 	"github.com/kylebegeman/helios/internal/state"
 )
 
+// fakeNotifier keeps what it is told. A round tells its incidents at
+// once, so it is read only between rounds.
 type fakeNotifier struct {
+	mu   sync.Mutex
 	sent []Notice
 	fail bool
 }
 
 func (f *fakeNotifier) Notify(_ context.Context, n Notice) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	if f.fail {
 		return errors.New("mail server down")
 	}
@@ -153,6 +161,77 @@ func TestAFailedNoticeIsTriedAgainNextRound(t *testing.T) {
 	}
 }
 
+// A notice is told away from the round, where nothing else would catch a
+// notifier that panics, so the round catches it: the notice has failed and
+// is tried again next round, and the daemon carries on.
+func TestANotifierThatPanicsFailsItsNotice(t *testing.T) {
+	var told []Notice
+	panics := true
+	w, now := newWatcher(t, notifierFunc(func(_ context.Context, n Notice) error {
+		if panics {
+			panic("index out of range")
+		}
+		told = append(told, n)
+		return nil
+	}))
+	rounds(t, w, now, 3, down("hello"))
+	if inc := openIncident(t, w); inc.NotifyError != "failed unexpectedly: index out of range" || !inc.NotifiedAt.IsZero() {
+		t.Fatalf("the notice should have failed: %+v", inc)
+	}
+	panics = false
+	rounds(t, w, now, 1, down("hello"))
+	if inc := openIncident(t, w); len(told) != 1 || inc.NotifyError != "" || inc.NotifiedAt.IsZero() {
+		t.Fatalf("the notice should be told next round: %d told, %+v", len(told), inc)
+	}
+}
+
+// A round tells every notice before it saves any incident, so one that
+// can't be saved fails the round but leaves the others saved: a recovery
+// told in the same round is told once.
+func TestAnIncidentThatCantBeSavedLeavesTheOthersSaved(t *testing.T) {
+	ctx := context.Background()
+	n := &fakeNotifier{}
+	w, now := newWatcher(t, n)
+	rounds(t, w, now, 3, down("shop"))
+	db, err := sql.Open("sqlite", w.Store.Path())
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = db.Exec(`CREATE TRIGGER hello_unsaved BEFORE UPDATE ON incidents WHEN OLD.key = 'app:hello' BEGIN SELECT RAISE(ABORT, 'disk full'); END`)
+	db.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A round lists the incidents still down before the ones that
+	// recover, so hello's failed save comes before shop's.
+	round := func(conditions ...Condition) {
+		t.Helper()
+		*now = now.Add(time.Minute)
+		if err := w.Round(ctx, conditions); err == nil || !strings.Contains(err.Error(), "disk full") {
+			t.Fatalf("a round that can't save hello: %v", err)
+		}
+	}
+	rounds(t, w, now, 2, down("hello"), down("shop"))
+	for range 6 {
+		round(down("hello"))
+	}
+	told := map[string]int{}
+	for _, sent := range n.sent {
+		told[sent.Key+" "+sent.Transition]++
+	}
+	if told["app:shop open"] != 1 || told["app:shop resolved"] != 1 || told["app:hello open"] != 6 {
+		t.Fatalf("shop should be told once each, and hello every round it isn't saved: %v", told)
+	}
+	all, err := w.Store.Incidents(ctx, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	i := slices.IndexFunc(all, func(inc state.Incident) bool { return inc.Key == "app:shop" })
+	if i < 0 || all[i].Open() || !all[i].NotifiedAt.Equal(all[i].ResolvedAt) || all[i].NotifyError != "" {
+		t.Fatalf("shop's recovery should be saved: %+v", all)
+	}
+}
+
 func TestAnOpenIncidentIsRepeatedAfterADay(t *testing.T) {
 	ctx := context.Background()
 	n := &fakeNotifier{}
@@ -272,6 +351,39 @@ func TestAnOutageThatEasesForAsLongAsARecoveryIsAWarningAgain(t *testing.T) {
 	round(down("shop"))
 	if len(n.sent) != 3 || n.sent[2].Subject != "box: shop is down" {
 		t.Fatalf("the new outage is told once it holds: %+v", n.sent)
+	}
+}
+
+// A notice carries its incident's message and opening time, so a leg never
+// has to read them from the store, where an escalation is saved only after
+// it is told. The outage's notice carries the outage's message, and every
+// notice the time the warning opened.
+func TestANoticeCarriesItsIncidentsMessageAndOpeningTime(t *testing.T) {
+	n := &fakeNotifier{}
+	w, now := newWatcher(t, n)
+	round := shopRound(t, w, now)
+	for range DefaultOpenAfter {
+		round(stale("shop"))
+	}
+	opened := *now
+	for range DefaultOpenAfter {
+		round(down("shop"))
+	}
+	for range DefaultResolveAfter {
+		round()
+	}
+	want := []struct{ transition, message string }{
+		{TransitionOpen, stale("shop").Message},
+		{TransitionRepeat, down("shop").Message},
+		{TransitionResolved, down("shop").Message},
+	}
+	if len(n.sent) != len(want) {
+		t.Fatalf("sent %+v", n.sent)
+	}
+	for i, sent := range n.sent {
+		if sent.Transition != want[i].transition || sent.Message != want[i].message || !sent.OpenedAt.Equal(opened) || sent.Test != "" {
+			t.Errorf("notice %d: %+v, want %s %q opened at %s", i, sent, want[i].transition, want[i].message, opened)
+		}
 	}
 }
 

@@ -86,6 +86,87 @@ func TestIncidentsOpenUpdateAndResolve(t *testing.T) {
 	}
 }
 
+// An incident is read by its id, resolved or not, and a key's history is
+// its incidents opened before a time, newest first, so the incident being
+// looked at is never its own history.
+func TestAnIncidentIsReadByIDAndAKeysHistoryStopsBeforeIt(t *testing.T) {
+	ctx := context.Background()
+	s := open(t)
+	t0 := time.Date(2026, 10, 20, 9, 0, 0, 0, time.UTC)
+	var ids []int64
+	for _, inc := range []Incident{
+		{Key: "app:hello", Subject: "hello", Severity: SeverityWarning, Message: "web is slow", OpenedAt: t0},
+		{Key: "app:other", Subject: "other", Severity: SeverityCritical, Message: "web isn't running", OpenedAt: t0.Add(time.Hour)},
+		{Key: "app:hello", Subject: "hello", Severity: SeverityCritical, Message: "web isn't running", OpenedAt: t0.Add(2 * time.Hour)},
+		{Key: "app:hello", Subject: "hello", Severity: SeverityCritical, Message: "web isn't running again", OpenedAt: t0.Add(3 * time.Hour)},
+	} {
+		id, err := s.OpenIncident(ctx, inc)
+		if err != nil {
+			t.Fatal(err)
+		}
+		ids = append(ids, id)
+	}
+	if err := s.UpdateIncident(ctx, Incident{ID: ids[0], Severity: SeverityWarning, Message: "web is slow", ResolvedAt: t0.Add(30 * time.Minute)}); err != nil {
+		t.Fatal(err)
+	}
+
+	resolved, err := s.Incident(ctx, ids[0])
+	if err != nil || resolved.ID != ids[0] || resolved.Key != "app:hello" || resolved.Open() || !resolved.ResolvedAt.Equal(t0.Add(30*time.Minute)) {
+		t.Fatalf("incident %d: %+v %v", ids[0], resolved, err)
+	}
+	if open, err := s.Incident(ctx, ids[3]); err != nil || !open.Open() || open.Message != "web isn't running again" {
+		t.Fatalf("incident %d: %+v %v", ids[3], open, err)
+	}
+	if _, err := s.Incident(ctx, ids[3]+1); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("unknown incident: %v", err)
+	}
+
+	history, err := s.IncidentsByKey(ctx, "app:hello", t0.Add(3*time.Hour), 10)
+	if err != nil || len(history) != 2 || history[0].ID != ids[2] || history[1].ID != ids[0] {
+		t.Fatalf("app:hello before incident %d: %+v %v; want %d then %d", ids[3], history, err, ids[2], ids[0])
+	}
+	if newest, _ := s.IncidentsByKey(ctx, "app:hello", t0.Add(3*time.Hour), 1); len(newest) != 1 || newest[0].ID != ids[2] {
+		t.Fatalf("limit 1: %+v", newest)
+	}
+	if first, err := s.IncidentsByKey(ctx, "app:hello", t0, 10); err != nil || len(first) != 0 {
+		t.Fatalf("a first incident has no history: %+v %v", first, err)
+	}
+}
+
+// A run or a hold is read back by its id with what it recorded, so a log
+// reader can find the run's container; an unknown id is ErrNotFound.
+func TestAJobRunIsReadByID(t *testing.T) {
+	ctx := context.Background()
+	s := open(t)
+	t0 := time.Date(2026, 10, 20, 9, 0, 0, 0, time.UTC)
+	id, err := s.StartJobRun(ctx, JobRun{App: "hello", Workload: "tick", Revision: "r1", Kind: "cron", StartedAt: t0, Container: "bedrock-hello-tick-job-a1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.FinishJobRun(ctx, id, 2, "exited 2", "tick failed\n", t0.Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.StartJobRun(ctx, JobRun{App: "hello", Workload: "tick", Revision: "r1", Kind: "cron", StartedAt: t0.Add(time.Minute), Container: "bedrock-hello-tick-job-b2"}); err != nil {
+		t.Fatal(err)
+	}
+	hold, err := s.HoldJob(ctx, "hello", "tick", "r1", t0.Add(time.Hour), t0.Add(48*time.Hour), "the volume is being moved")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	run, err := s.JobRun(ctx, id)
+	if err != nil || run.ID != id || run.App != "hello" || run.Workload != "tick" || run.Container != "bedrock-hello-tick-job-a1" ||
+		run.ExitCode != 2 || run.Error != "exited 2" || run.Output != "tick failed\n" || !run.FinishedAt.Equal(t0.Add(time.Second)) {
+		t.Fatalf("run %d: %+v %v", id, run, err)
+	}
+	if held, err := s.JobRun(ctx, hold); err != nil || held.Kind != JobHold || held.Output != "the volume is being moved" {
+		t.Fatalf("hold %d: %+v %v", hold, held, err)
+	}
+	if _, err := s.JobRun(ctx, hold+1); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("unknown run: %v", err)
+	}
+}
+
 func TestWatchesAndIntegrationUses(t *testing.T) {
 	ctx := context.Background()
 	s := open(t)

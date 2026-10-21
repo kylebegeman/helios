@@ -98,12 +98,35 @@ func (s *Store) OpenIncidentByKey(ctx context.Context, key string) (*Incident, e
 	return &rows[0], nil
 }
 
+// Incident returns one incident, open or resolved. ErrNotFound when the
+// store has no incident with that id.
+func (s *Store) Incident(ctx context.Context, id int64) (*Incident, error) {
+	rows, err := s.queryIncidents(ctx, `SELECT `+incidentColumns+` FROM incidents WHERE id = ?`, id)
+	if err != nil {
+		return nil, err
+	}
+	if len(rows) == 0 {
+		return nil, ErrNotFound
+	}
+	return &rows[0], nil
+}
+
 // Incidents lists incidents newest first, open ones included.
 func (s *Store) Incidents(ctx context.Context, limit int) ([]Incident, error) {
 	if limit <= 0 {
 		limit = 20
 	}
 	return s.queryIncidents(ctx, `SELECT `+incidentColumns+` FROM incidents ORDER BY opened_at DESC, id DESC LIMIT ?`, limit)
+}
+
+// IncidentsByKey lists a key's incidents that opened earlier than before,
+// newest first: what the same condition did the times before. A key with
+// none is an empty list.
+func (s *Store) IncidentsByKey(ctx context.Context, key string, before time.Time, limit int) ([]Incident, error) {
+	if limit <= 0 {
+		limit = 20
+	}
+	return s.queryIncidents(ctx, `SELECT `+incidentColumns+` FROM incidents WHERE key = ? AND opened_at < ? ORDER BY opened_at DESC, id DESC LIMIT ?`, key, unix(before), limit)
 }
 
 // IncidentHistory includes every open incident plus the newest resolved

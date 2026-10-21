@@ -113,8 +113,11 @@ func (s *Scheduler) testAlerts(ctx context.Context, now time.Time) {
 		s.Log("schedule: alert test: %v", err)
 	}
 	for _, r := range results {
-		if r.Error != "" {
+		switch {
+		case r.Error != "":
 			s.Log("schedule: alert test: %s failed: %s", r.Leg, r.Error)
+		case r.Held:
+			s.Log("schedule: alert test: the relay held %s's test for Loom, which is offline, so it shows nothing", r.Leg)
 		}
 	}
 }

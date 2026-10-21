@@ -73,6 +73,11 @@ type HostConfig struct {
 	PidsLimit      *int64
 	RestartPolicy  struct{ Name string }
 	NetworkMode    string
+	// LogConfig is where the container's output goes.
+	LogConfig struct {
+		Type   string
+		Config map[string]string
+	}
 }
 
 // Server is the stand-in.

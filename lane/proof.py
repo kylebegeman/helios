@@ -30,6 +30,7 @@ PROOFS = {
     "signed": {"title": "Signed-commit deploys over push, and the box's own git verifying them", "needs": "m2; no public DNS", "timeout": 1500},
     "originpull": {"title": "Authenticated origin pulls at the edge, against a stand-in for Cloudflare", "needs": "m2; no public DNS", "timeout": 1800},
     "peer": {"title": "Peer summary listener, keys and the Mac observer", "needs": "m2; no public DNS", "timeout": 900},
+    "journald": {"title": "Journald logs outlive retired containers and jobs", "needs": "m2; no public DNS", "timeout": 900},
     "m7": {"title": "Multi-workload releases and data recovery", "needs": "m2; --setup storage (or existing storage); public wildcard DNS", "dns": True, "timeout": 1800},
     "cloudflare": {"title": "Real Cloudflare record lifecycle", "needs": "m6; explicit --real-cloudflare; token already installed on disposable target", "dns": True, "timeout": 1800},
 }
@@ -257,7 +258,7 @@ def main() -> int:
         # Fail early on implicit historical fixture dependencies.
         preceding = set()
         for proof in args.proofs:
-            if proof in ("m3", "m7", "signed", "originpull", "peer") and "m2" not in preceding:
+            if proof in ("m3", "m7", "signed", "originpull", "peer", "journald") and "m2" not in preceding:
                 ready = remote(args.config, "command -v docker >/dev/null && systemctl is-active bedrock >/dev/null && docker info >/dev/null")
                 if ready.returncode:
                     report["problems"].append(f"{proof}: host is not prepared; select m2 first")

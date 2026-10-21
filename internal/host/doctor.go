@@ -289,7 +289,7 @@ func diagnoseUpkeep(f Facts) []Result {
 	if f.JournalMaxUse == "" {
 		r.add("logs", Warn, "journal unbounded", runSetup+" caps it")
 	} else {
-		r.add("logs", Pass, "journal capped at "+f.JournalMaxUse, "")
+		r.add("logs", Pass, "journal capped at "+f.journalCap(), "")
 	}
 	if f.Systemd {
 		if !f.DaemonAnswers {

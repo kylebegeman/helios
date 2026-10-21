@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/kylebegeman/helios/internal/state"
@@ -44,9 +45,27 @@ type Notice struct {
 	// NotifiedAt is when the incident was last told, zero while it never
 	// has been.
 	NotifiedAt time.Time
+	// Message and OpenedAt are the incident's as of this notice. The
+	// incident is saved only after its notice goes, so a leg that needs
+	// them reads them here: a warning that became an outage is still the
+	// warning in the store while the outage is told.
+	Message  string
+	OpenedAt time.Time
+	// Test is empty for a real notice, and TestProbe or TestSend for a
+	// test of the alerts.
+	Test string
 	// Retry asks for the notice again only where it hasn't arrived.
 	Retry bool
 }
+
+// What kind of test a notice is.
+const (
+	// TestProbe checks the way to a leg without having it arrive: the Loom
+	// leg signs it with a key Loom must refuse.
+	TestProbe = "probe"
+	// TestSend is a test meant to arrive, as a real notice would.
+	TestSend = "send"
+)
 
 // Notifier delivers notices.
 type Notifier interface {
@@ -137,17 +156,52 @@ func (w *Watcher) init() {
 func (w *Watcher) Round(ctx context.Context, conditions []Condition) error {
 	w.init()
 	now := w.Now()
+	round, err := w.weigh(ctx, conditions, now)
+	w.tell(ctx, round)
+	// Every notice has gone out by now, so each incident is saved even
+	// when another can't be, and the first failure is returned.
+	for _, t := range round {
+		if t.notice != nil {
+			w.record(&t.inc, *t.notice, t.err, now)
+		}
+		if saveErr := w.Store.UpdateIncident(ctx, t.inc); saveErr != nil {
+			if err == nil {
+				err = saveErr
+			}
+			continue
+		}
+		if t.saved != nil {
+			t.saved()
+		}
+	}
+	return err
+}
+
+// telling is an incident the round saves, with the notice it is told, if
+// any, and what came of it.
+type telling struct {
+	inc state.Incident
+	// notice is nil for an incident saved without being told.
+	notice *Notice
+	err    error
+	// saved runs once the incident is saved.
+	saved func()
+}
+
+// weigh works out what a round changes: the incidents that open, change,
+// repeat or resolve, and what each is told. A new incident is opened in
+// the store to give it an id; nothing is told or saved yet. On a failure
+// it returns what it worked out before it, which is still told and saved.
+func (w *Watcher) weigh(ctx context.Context, conditions []Condition, now time.Time) ([]telling, error) {
+	var round []telling
 	pending, err := w.Store.PendingResolvedIncidentNotices(ctx)
 	if err != nil {
-		return err
+		return round, err
 	}
 	for _, incident := range pending {
 		n := w.resolvedNotice(incident)
 		n.Retry = true
-		w.notify(ctx, &incident, n, now)
-		if err := w.Store.UpdateIncident(ctx, incident); err != nil {
-			return err
-		}
+		round = append(round, telling{inc: incident, notice: &n})
 	}
 	current := map[string]Condition{}
 	for _, c := range conditions {
@@ -155,7 +209,7 @@ func (w *Watcher) Round(ctx context.Context, conditions []Condition) error {
 	}
 	open, err := w.Store.OpenIncidents(ctx)
 	if err != nil {
-		return err
+		return round, err
 	}
 	openByKey := map[string]state.Incident{}
 	for _, inc := range open {
@@ -180,14 +234,12 @@ func (w *Watcher) Round(ctx context.Context, conditions []Condition) error {
 			inc = state.Incident{Key: key, Subject: c.Subject, Severity: c.Severity, Message: c.Message, OpenedAt: now, Observations: w.failing[key]}
 			id, err := w.Store.OpenIncident(ctx, inc)
 			if err != nil {
-				return err
+				return round, err
 			}
 			inc.ID = id
 			w.Log("alert: %s: %s", c.Subject, c.Message)
-			w.notify(ctx, &inc, w.openNotice(inc), now)
-			if err := w.Store.UpdateIncident(ctx, inc); err != nil {
-				return err
-			}
+			n := w.openNotice(inc)
+			round = append(round, telling{inc: inc, notice: &n})
 			continue
 		}
 		inc.Observations++
@@ -218,19 +270,19 @@ func (w *Watcher) Round(ctx context.Context, conditions []Condition) error {
 		}
 		inc.Message, inc.Severity = c.Message, c.Severity
 		repeat := escalated || inc.Severity != state.SeverityNotice && !inc.NotifiedAt.IsZero() && now.Sub(inc.NotifiedAt) >= w.Renotify
+		t := telling{inc: inc}
 		owed, isOwed := w.owed[inc.ID]
 		switch {
 		case isOwed && !repeat:
 			// Only the legs that missed it hear it again.
 			n := w.openNotice(inc)
 			n.Transition, n.Retry = owed.transition, true
-			w.notify(ctx, &inc, n, now)
+			t.notice = &n
 		case repeat || inc.NotifiedAt.IsZero() || inc.NotifyError != "":
-			w.notify(ctx, &inc, w.openNotice(inc), now)
+			n := w.openNotice(inc)
+			t.notice = &n
 		}
-		if err := w.Store.UpdateIncident(ctx, inc); err != nil {
-			return err
-		}
+		round = append(round, t)
 	}
 
 	for key, inc := range openByKey {
@@ -246,11 +298,8 @@ func (w *Watcher) Round(ctx context.Context, conditions []Condition) error {
 		}
 		inc.ResolvedAt = now
 		w.Log("recovered: %s", inc.Subject)
-		w.notify(ctx, &inc, w.resolvedNotice(inc), now)
-		if err := w.Store.UpdateIncident(ctx, inc); err != nil {
-			return err
-		}
-		delete(w.passing, key)
+		n := w.resolvedNotice(inc)
+		round = append(round, telling{inc: inc, notice: &n, saved: func() { delete(w.passing, key) }})
 	}
 
 	for key := range w.failing {
@@ -263,18 +312,47 @@ func (w *Watcher) Round(ctx context.Context, conditions []Condition) error {
 			}
 		}
 	}
-	return nil
+	return round, nil
 }
 
-// notify sends a notice and records the outcome on the incident. A
-// notice any leg delivered has told the person; a leg that missed it is
-// kept as the incident's notify error and tried again next round.
-func (w *Watcher) notify(ctx context.Context, inc *state.Incident, n Notice, now time.Time) {
+// tell sends every notice of a round at once and waits for them all. An
+// incident comes up at most once a round, so no incident's notice waits
+// on another's: a page never waits on an earlier incident's Loom leg and
+// the evidence it collects.
+func (w *Watcher) tell(ctx context.Context, round []telling) {
+	if w.Notifier == nil {
+		return
+	}
+	var wg sync.WaitGroup
+	for i := range round {
+		t := &round[i]
+		if t.notice == nil {
+			continue
+		}
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			// A notifier that panics has failed this notice; it never
+			// takes the daemon down.
+			defer func() {
+				if r := recover(); r != nil {
+					t.err = fmt.Errorf("failed unexpectedly: %v", r)
+				}
+			}()
+			t.err = w.Notifier.Notify(ctx, *t.notice)
+		}()
+	}
+	wg.Wait()
+}
+
+// record keeps what came of a notice on its incident. A notice any leg
+// delivered has told the person; a leg that missed it is kept as the
+// incident's notify error and tried again next round.
+func (w *Watcher) record(inc *state.Incident, n Notice, err error, now time.Time) {
 	if w.Notifier == nil {
 		inc.NotifyError = NoAlertsSetUp
 		return
 	}
-	err := w.Notifier.Notify(ctx, n)
 	var missed *DeliveryError
 	told := err == nil || errors.As(err, &missed) && missed.Partial()
 	before, retried := w.owed[inc.ID]
@@ -319,7 +397,8 @@ func (w *Watcher) openNotice(inc state.Incident) Notice {
 	fmt.Fprintf(&b, "%s\n\n", inc.Message)
 	fmt.Fprintf(&b, "Since %s (%s), seen in %d rounds.\n", inc.OpenedAt.Format("2006-01-02 15:04 UTC"), ago(inc.OpenedAt, w.Now()), inc.Observations)
 	fmt.Fprintf(&b, "Machine: %s\n\nhelios status and helios alerts on the machine show more. %s\n", w.Hostname, again)
-	return Notice{Subject: subject, Body: b.String(), IncidentID: inc.ID, Key: inc.Key, Transition: transition, Severity: inc.Severity, Host: w.Hostname, NotifiedAt: inc.NotifiedAt}
+	return Notice{Subject: subject, Body: b.String(), IncidentID: inc.ID, Key: inc.Key, Transition: transition, Severity: inc.Severity, Host: w.Hostname, NotifiedAt: inc.NotifiedAt,
+		Message: inc.Message, OpenedAt: inc.OpenedAt}
 }
 
 func (w *Watcher) resolvedNotice(inc state.Incident) Notice {
@@ -329,7 +408,8 @@ func (w *Watcher) resolvedNotice(inc state.Incident) Notice {
 	}
 	subject := fmt.Sprintf("%s: %s %s", w.Hostname, inc.Subject, word)
 	body := fmt.Sprintf("%s after %s.\n\nIt was: %s\n\nMachine: %s\n", verb, ago(inc.OpenedAt, inc.ResolvedAt), inc.Message, w.Hostname)
-	return Notice{Subject: subject, Body: body, IncidentID: inc.ID, Key: inc.Key, Transition: TransitionResolved, Severity: inc.Severity, Host: w.Hostname, NotifiedAt: inc.NotifiedAt}
+	return Notice{Subject: subject, Body: body, IncidentID: inc.ID, Key: inc.Key, Transition: TransitionResolved, Severity: inc.Severity, Host: w.Hostname, NotifiedAt: inc.NotifiedAt,
+		Message: inc.Message, OpenedAt: inc.OpenedAt}
 }
 
 // ago says how long before now a time was, roughly.

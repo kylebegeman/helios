@@ -252,6 +252,33 @@ func TestAFailedLegIsRetriedAlone(t *testing.T) {
 	}
 }
 
+// A leg that hears every notice is owed only the latest, so the recovery
+// of an outage it missed reaches it in the round the outage recovers,
+// without waiting out the backoff of the outage's notice.
+func TestARecoveryReachesALegThatMissedTheOutageAtOnce(t *testing.T) {
+	ctx := context.Background()
+	mails, api := &mailbox{}, newPushoverAPI(t)
+	api.setFail(true)
+	f := emailAndPushover(mails, api)
+	w, now := newWatcher(t, f)
+	f.Now = func() time.Time { return *now }
+	// Pushover misses the outage as it opens, a minute on and two minutes
+	// after that, and then waits four.
+	rounds(t, w, now, 7, down("hello"))
+	if attempts := len(api.paths()); attempts != 3 {
+		t.Fatalf("Pushover should miss the outage three times: %v", api.paths())
+	}
+	api.setFail(false)
+	rounds(t, w, now, 2)
+	all, err := w.Store.Incidents(ctx, 10)
+	if err != nil || len(all) != 1 || all[0].Open() {
+		t.Fatalf("hello should have recovered: %+v, %v", all, err)
+	}
+	if got := api.messages(); len(got) != 1 || !strings.Contains(got[0].Get("title"), "hello recovered") || all[0].NotifyError != "" {
+		t.Fatalf("Pushover should have the recovery at once: %v, %q", api.paths(), all[0].NotifyError)
+	}
+}
+
 // The recovery of a critical incident stops its Pushover emergency, then
 // says so quietly.
 func TestAResolvedIncidentCancelsItsPushoverTag(t *testing.T) {
@@ -310,6 +337,32 @@ func TestTheFanoutRoutesBySeverityAndCutsOffAHungLeg(t *testing.T) {
 type notifierFunc func(context.Context, Notice) error
 
 func (f notifierFunc) Notify(ctx context.Context, n Notice) error { return f(ctx, n) }
+
+// Loom tells an agent, not a person, so a fan-out whose only leg is Loom
+// is refused rather than counting an incident as told. Beside email or a
+// phone, the Loom leg keeps its own severity and timeout.
+func TestTheLoomLegNeverGoesAlone(t *testing.T) {
+	quiet := notifierFunc(func(context.Context, Notice) error { return nil })
+	loom := legSpec{name: LoomWebhookLeg, least: state.SeverityCritical, timeout: 45 * time.Second, notifier: quiet}
+	if f, err := fanoutOf([]legSpec{loom}, nil); err == nil || err.Error() != NoPersonLeg {
+		t.Fatalf("Loom alone: %+v, %v", f, err)
+	}
+	if _, err := fanoutOf(nil, nil); err == nil || err.Error() != NoAlertsSetUp {
+		t.Fatalf("nothing set up: %v", err)
+	}
+	for _, person := range []legSpec{
+		{name: "email", least: state.SeverityNotice, notifier: EmailNotifier{Relays: relays("email")}},
+		{name: PushoverLeg, least: state.SeverityWarning, notifier: quiet},
+	} {
+		f, err := fanoutOf([]legSpec{person, loom}, nil)
+		if err != nil || len(f.Legs) != 2 {
+			t.Fatalf("Loom beside %s: %+v, %v", person.name, f, err)
+		}
+		if l := f.Legs[1]; l.Name != LoomWebhookLeg || l.MinSeverity != state.SeverityCritical || l.Timeout != 45*time.Second {
+			t.Fatalf("the Loom leg lost its own severity or timeout: %+v", f.Legs)
+		}
+	}
+}
 
 // A notice no leg delivered is tried again by every leg, even when it
 // was a repeat, and the person counts as told only once one delivers.

@@ -251,6 +251,19 @@ func remoteArguments(cmd *cobra.Command, args []string, omit map[string]bool) []
 	}
 	return path
 }
+
+// readsIncidentEvidence reports whether command reads what only a target
+// that keeps incident evidence and the journal's logs can give.
+func readsIncidentEvidence(cmd *cobra.Command, command string) bool {
+	switch command {
+	case "alerts show", "alerts review":
+		return true
+	case "logs":
+		return cmd.Flags().Changed("revision") || cmd.Flags().Changed("job")
+	}
+	return false
+}
+
 func (a *app) dispatchTarget(cmd *cobra.Command, args []string) error {
 	t, err := a.loadTarget(a.targetName)
 	if err != nil {
@@ -345,6 +358,9 @@ func (a *app) dispatchTarget(cmd *cobra.Command, args []string) error {
 		}
 		input = strings.NewReader(caPEM)
 		args = args[:1]
+	}
+	if readsIncidentEvidence(cmd, command) && !caps.has("incidents.evidence.v1") {
+		return errors.New("target does not keep incident evidence or retired logs; upgrade it first")
 	}
 	if command == "deploy" || command == "check" || command == "move stage" || command == "move test" || command == "rehearse" {
 		if !caps.has("remote.source.v1") {

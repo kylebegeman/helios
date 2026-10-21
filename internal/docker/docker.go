@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"io"
 	"net/netip"
+	"os"
 	"strings"
 	"time"
 
@@ -259,8 +260,19 @@ func (e *Engine) Run(ctx context.Context, spec Spec) error {
 	return nil
 }
 
+// journalSocket is where journald takes logs on a machine that runs it.
+const journalSocket = "/run/systemd/journal/socket"
+
+// journaldListening reports whether the machine's journald takes logs.
+// Tests replace it.
+var journaldListening = func() bool {
+	_, err := os.Stat(journalSocket)
+	return err == nil
+}
+
 // hostConfigFor is how Docker is to run a spec: its mounts, limits and
-// privileges, and the ports it publishes, which the container also exposes.
+// privileges, where it logs, and the ports it publishes, which the
+// container also exposes.
 func hostConfigFor(spec Spec) (*container.HostConfig, network.PortSet, error) {
 	hostConfig := &container.HostConfig{
 		Binds:          spec.Mounts,
@@ -268,6 +280,15 @@ func hostConfigFor(spec Spec) (*container.HostConfig, network.PortSet, error) {
 		Resources:      container.Resources{Memory: spec.MemoryBytes, NanoCPUs: spec.NanoCPUs},
 		ReadonlyRootfs: spec.ReadOnly,
 		Privileged:     spec.Privileged,
+	}
+	// An app's workloads and jobs, the containers labeled with a
+	// revision, log to the journal, so what they wrote outlives them.
+	// Each line carries the container's name and whose it is.
+	if spec.Labels[LabelRevision] != "" && journaldListening() {
+		hostConfig.LogConfig = container.LogConfig{Type: "journald", Config: map[string]string{
+			"tag":    "{{.Name}}",
+			"labels": strings.Join([]string{LabelApp, LabelWorkload, LabelRevision}, ","),
+		}}
 	}
 	if !spec.Privileged {
 		hostConfig.SecurityOpt = []string{"no-new-privileges"}
@@ -542,14 +563,36 @@ func (e *Engine) Unowned(ctx context.Context) ([]string, error) {
 	return names, nil
 }
 
+// LogOptions picks which of a container's output Logs shows.
+type LogOptions struct {
+	Follow bool
+	// Tail is how many of the newest lines to start with, or "all".
+	Tail string
+	// Since and Until bound the output in time; zero leaves that end open.
+	Since, Until time.Time
+}
+
 // Logs streams a container's output, stdout and stderr together.
-func (e *Engine) Logs(ctx context.Context, name string, follow bool, tail string, w io.Writer) error {
-	r, err := e.cli.ContainerLogs(ctx, name, client.ContainerLogsOptions{ShowStdout: true, ShowStderr: true, Follow: follow, Tail: tail, Timestamps: false})
+func (e *Engine) Logs(ctx context.Context, name string, opts LogOptions, w io.Writer) error {
+	return e.LogStreams(ctx, name, opts, w, w)
+}
+
+// LogStreams streams a container's output as Logs does, its stdout to
+// stdout and its stderr to stderr.
+func (e *Engine) LogStreams(ctx context.Context, name string, opts LogOptions, stdout, stderr io.Writer) error {
+	o := client.ContainerLogsOptions{ShowStdout: true, ShowStderr: true, Follow: opts.Follow, Tail: opts.Tail, Timestamps: false}
+	if !opts.Since.IsZero() {
+		o.Since = opts.Since.UTC().Format(time.RFC3339Nano)
+	}
+	if !opts.Until.IsZero() {
+		o.Until = opts.Until.UTC().Format(time.RFC3339Nano)
+	}
+	r, err := e.cli.ContainerLogs(ctx, name, o)
 	if err != nil {
 		return err
 	}
 	defer r.Close()
-	_, err = stdcopy.StdCopy(w, w, r)
+	_, err = stdcopy.StdCopy(stdout, stderr, r)
 	if errors.Is(err, context.Canceled) {
 		return nil
 	}
