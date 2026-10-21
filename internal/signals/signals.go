@@ -10,6 +10,7 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"math"
 	"os/exec"
 	"sort"
@@ -36,6 +37,11 @@ type Series struct {
 
 // ParseMetrics reads Prometheus text format, samples only.
 func ParseMetrics(text string) []Series {
+	out, _ := parseMetrics(text)
+	return out
+}
+
+func parseMetrics(text string) ([]Series, error) {
 	var out []Series
 	sc := bufio.NewScanner(strings.NewReader(text))
 	sc.Buffer(make([]byte, 4<<10), 1<<20)
@@ -49,7 +55,7 @@ func ParseMetrics(text string) []Series {
 			out = append(out, s)
 		}
 	}
-	return out
+	return out, sc.Err()
 }
 
 func parseLine(line string) (Series, bool) {
@@ -184,11 +190,16 @@ type Sampler struct {
 	HostDisk func() (free, total uint64, ok bool)
 
 	mu          sync.Mutex
-	counters    map[string]float64
+	counters    map[string]trafficCounter
 	primed      bool
 	lastDisk    time.Time
 	lastGC      time.Time
 	sharedHosts string
+}
+
+type trafficCounter struct {
+	value float64
+	app   string
 }
 
 // NewSampler returns a sampler for this machine.
@@ -257,7 +268,7 @@ func (s *Sampler) Sample(ctx context.Context) error {
 
 	sharedNames := make([]string, 0, len(shared))
 	for host := range shared {
-		delete(hostApp, host)
+		hostApp[host] = "" // Keep a baseline without attributing shared traffic.
 		sharedNames = append(sharedNames, host)
 	}
 	sort.Strings(sharedNames)
@@ -271,7 +282,11 @@ func (s *Sampler) Sample(ctx context.Context) error {
 
 	if text, err := s.scrape(ctx); err != nil {
 		s.Log("signals: edge metrics: %v", err)
-	} else if err := s.traffic(ctx, now, ParseMetrics(text), hostApp); err != nil {
+	} else if series, err := parseMetrics(text); err != nil {
+		// A partial scrape cannot prove a series disappeared. Keep every
+		// counter baseline until a complete scrape can replace it.
+		s.Log("signals: edge metrics: %v", err)
+	} else if err := s.traffic(ctx, now, series, hostApp); err != nil {
 		s.Log("signals: traffic: %v", err)
 	}
 
@@ -359,8 +374,11 @@ func (s *Sampler) scrape(ctx context.Context) (string, error) {
 // request), and a counter that went backwards (the edge restarted)
 // counts from zero.
 func (s *Sampler) traffic(ctx context.Context, now time.Time, series []Series, hostApp map[string]string) error {
-	if s.counters == nil {
-		s.counters = map[string]float64{}
+	// Baselines, including eviction, advance only with the whole rollup
+	// batch. A failed round can then retry without losing or doubling deltas.
+	counters := maps.Clone(s.counters)
+	if counters == nil {
+		counters = map[string]trafficCounter{}
 	}
 	deltas := map[string]map[string]float64{} // app -> host -> metric -> delta, flattened as host|metric
 	add := func(app, host, metric string, v float64) {
@@ -386,7 +404,7 @@ func (s *Sampler) traffic(ctx context.Context, now time.Time, series []Series, h
 		}
 		host := sr.Labels["host"]
 		app, known := hostApp[host]
-		if !known || sr.Labels["handler"] != "subroute" {
+		if sr.Labels["handler"] != "subroute" {
 			continue
 		}
 		if sr.Name == "caddy_http_request_duration_seconds_bucket" {
@@ -396,15 +414,21 @@ func (s *Sampler) traffic(ctx context.Context, now time.Time, series []Series, h
 			}
 		}
 		k := sr.key()
+		last, had := counters[k]
+		if !known && !had {
+			continue
+		}
 		seen[k] = true
-		last, had := s.counters[k]
-		s.counters[k] = sr.Value
-		if !s.primed {
+		counters[k] = trafficCounter{value: sr.Value, app: app}
+		// A change of owner makes the preceding interval ambiguous. Shared
+		// hosts and previously tracked hosts without an owner still prime
+		// counters so their history cannot be counted later.
+		if !s.primed || app == "" || had && last.app != app {
 			continue
 		}
 		delta := sr.Value
 		if had {
-			delta = sr.Value - last
+			delta = sr.Value - last.value
 			if delta < 0 {
 				delta = sr.Value
 			}
@@ -425,20 +449,22 @@ func (s *Sampler) traffic(ctx context.Context, now time.Time, series []Series, h
 			add(app, host, state.SignalBytes, delta)
 		}
 	}
-	for k := range s.counters {
+	for k := range counters {
 		if !seen[k] {
-			delete(s.counters, k)
+			delete(counters, k)
 		}
 	}
-	s.primed = true
+	var batch []state.Signal
 	for app, m := range deltas {
 		for hm, v := range m {
 			host, metric, _ := strings.Cut(hm, "|")
-			if err := s.Store.AddSignal(ctx, state.Signal{Hour: now, App: app, Key: host, Metric: metric, Value: v, Samples: 1}); err != nil {
-				return err
-			}
+			batch = append(batch, state.Signal{Hour: now, App: app, Key: host, Metric: metric, Value: v, Samples: 1})
 		}
 	}
+	if err := s.Store.AddSignals(ctx, batch); err != nil {
+		return err
+	}
+	s.counters, s.primed = counters, true
 	return nil
 }
 

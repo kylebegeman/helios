@@ -455,3 +455,163 @@ func TestSampleKeepsTheHoursLargestRootDiskUse(t *testing.T) {
 		t.Fatalf("root disk rollups: %+v, %v", rows, err)
 	}
 }
+
+func TestSharedHostTrafficStaysExcludedWhenOneAppLeaves(t *testing.T) {
+	ctx := context.Background()
+	store, err := state.Open(filepath.Join(t.TempDir(), "state.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	for _, name := range []string{"first", "second"} {
+		body := json.RawMessage(`{"app":"` + name + `","workloads":{"web":{"kind":"web","image":"x","routes":[{"host":"shared.example.com","path":"/` + name + `"}]}}}`)
+		if err := store.SaveRevision(ctx, state.Revision{App: name, ID: "r1", Status: state.RevisionActive, Manifest: body}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	now := time.Date(2026, 10, 21, 12, 0, 0, 0, time.UTC)
+	requests := 10
+	sampler := &Sampler{Store: store, Now: func() time.Time { return now }, Log: func(string, ...any) {},
+		Metrics: func(context.Context) ([]byte, error) {
+			return fmt.Appendf(nil, `caddy_http_requests_total{handler="subroute",host="shared.example.com"} %d`, requests), nil
+		}}
+	for _, count := range []int{10, 20} {
+		requests = count
+		if err := sampler.Sample(ctx); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := store.SetRevisionStatus(ctx, "second", "r1", state.RevisionRetired); err != nil {
+		t.Fatal(err)
+	}
+	// Ownership changed between observations. The first exclusive sample
+	// establishes a baseline; none of the preceding shared interval belongs
+	// in the remaining app's totals.
+	requests = 23
+	if err := sampler.Sample(ctx); err != nil {
+		t.Fatal(err)
+	}
+	requests = 25
+	if err := sampler.Sample(ctx); err != nil {
+		t.Fatal(err)
+	}
+	rows, err := store.Signals(ctx, "", now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := Summarize(rows).Requests; got != 2 {
+		t.Fatalf("shared historical requests were reassigned to the remaining app: got %d, want 2", got)
+	}
+}
+
+func TestTrafficStartsANewBaselineWhenAHostChangesApps(t *testing.T) {
+	ctx := context.Background()
+	store, err := state.Open(filepath.Join(t.TempDir(), "state.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	now := time.Date(2026, 10, 21, 12, 0, 0, 0, time.UTC)
+	sampler := &Sampler{Store: store}
+	for _, round := range []struct {
+		app      string
+		requests float64
+	}{{"first", 10}, {"first", 15}, {"second", 19}, {"second", 21}} {
+		series := []Series{{Name: "caddy_http_requests_total", Labels: map[string]string{"handler": "subroute", "host": "app.example.com"}, Value: round.requests}}
+		if err := sampler.traffic(ctx, now, series, map[string]string{"app.example.com": round.app}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for app, want := range map[string]int64{"first": 5, "second": 2} {
+		rows, err := store.Signals(ctx, app, now)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := Summarize(rows).Requests; got != want {
+			t.Errorf("%s received another app's traffic: got %d, want %d", app, got, want)
+		}
+	}
+}
+
+func TestTrafficKeepsTrackedBaselinesWhileAHostHasNoOwner(t *testing.T) {
+	for _, nextOwner := range []string{"second", "first"} {
+		t.Run(nextOwner, func(t *testing.T) {
+			ctx := context.Background()
+			store, err := state.Open(filepath.Join(t.TempDir(), "state.db"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer store.Close()
+			now := time.Date(2026, 10, 21, 12, 0, 0, 0, time.UTC)
+			sampler := &Sampler{Store: store}
+			for _, round := range []struct {
+				app      string
+				requests float64
+			}{{"first", 10}, {"first", 15}, {"", 16}, {nextOwner, 19}, {nextOwner, 21}} {
+				hosts := map[string]string{}
+				if round.app != "" {
+					hosts["app.example.com"] = round.app
+				}
+				series := []Series{
+					{Name: "caddy_http_requests_total", Labels: map[string]string{"handler": "subroute", "host": "app.example.com"}, Value: round.requests},
+					{Name: "caddy_http_requests_total", Labels: map[string]string{"handler": "subroute", "host": "unknown.example.com"}, Value: 100},
+				}
+				if err := sampler.traffic(ctx, now, series, hosts); err != nil {
+					t.Fatal(err)
+				}
+				if len(sampler.counters) != 1 {
+					t.Errorf("tracked %d counters, want the previously owned host alone", len(sampler.counters))
+				}
+			}
+			wantByApp := map[string]int64{"first": 5, "second": 0}
+			wantByApp[nextOwner] += 2
+			for app, want := range wantByApp {
+				rows, err := store.Signals(ctx, app, now)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if got := Summarize(rows).Requests; got != want {
+					t.Errorf("%s received traffic across an ownerless interval: got %d, want %d", app, got, want)
+				}
+			}
+		})
+	}
+}
+
+func TestIncompleteMetricsCannotEvictCountersAndRecountTheirHistory(t *testing.T) {
+	ctx := context.Background()
+	store, err := state.Open(filepath.Join(t.TempDir(), "state.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	body := json.RawMessage(`{"app":"site","workloads":{"web":{"kind":"web","image":"x","routes":[{"host":"first.example.com"},{"host":"second.example.com"}]}}}`)
+	if err := store.SaveRevision(ctx, state.Revision{App: "site", ID: "r1", Status: state.RevisionActive, Manifest: body}); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Date(2026, 10, 21, 12, 0, 0, 0, time.UTC)
+	metric := func(host string, count int) string {
+		return fmt.Sprintf("caddy_http_requests_total{handler=\"subroute\",host=\"%s.example.com\"} %d\n", host, count)
+	}
+	text := metric("first", 10) + metric("second", 20)
+	sampler := &Sampler{Store: store, Now: func() time.Time { return now }, Log: func(string, ...any) {},
+		Metrics: func(context.Context) ([]byte, error) { return []byte(text), nil }}
+	if err := sampler.Sample(ctx); err != nil {
+		t.Fatal(err)
+	}
+	text = metric("first", 12) + "oversized{label=\"" + strings.Repeat("x", 1<<20) + "\"} 1\n" + metric("second", 23)
+	if err := sampler.Sample(ctx); err != nil {
+		t.Fatal(err)
+	}
+	text = metric("first", 15) + metric("second", 25)
+	if err := sampler.Sample(ctx); err != nil {
+		t.Fatal(err)
+	}
+	rows, err := store.Signals(ctx, "site", now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := Summarize(rows).Requests; got != 10 {
+		t.Fatalf("an incomplete scrape recounted historical traffic: got %d, want 10", got)
+	}
+}
