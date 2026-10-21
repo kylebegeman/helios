@@ -349,13 +349,13 @@ func (m *Manager) Look(ctx context.Context, routes []Route) ([]Status, error) {
 		if err != nil {
 			return nil, err
 		}
-		found := firstAddress(records)
+		found := firstAddress(records, mine)
 		if found == nil {
 			wildcard, err := m.CF.Records(ctx, z.ID, wildcardFor(r.Host))
 			if err != nil {
 				return nil, err
 			}
-			if w := firstAddress(wildcard); w != nil {
+			if w := firstAddress(wildcard, mine); w != nil {
 				st.Record, st.Proxied = w.Content, w.Proxied
 				if mine[w.Content] {
 					st.Verdict = "covered by " + w.Name + ", which points here"
@@ -403,15 +403,23 @@ func (m *Manager) mine() map[string]bool {
 	return mine
 }
 
-// firstAddress picks the record a name answers with: an A, AAAA or CNAME.
-func firstAddress(records []cloudflare.Record) *cloudflare.Record {
+// firstAddress picks an A, AAAA or CNAME, preferring any destination that
+// does not point here. One healthy answer must not hide split traffic.
+func firstAddress(records []cloudflare.Record, mine map[string]bool) *cloudflare.Record {
+	var first *cloudflare.Record
 	for i := range records {
-		switch records[i].Type {
+		r := &records[i]
+		switch r.Type {
 		case "A", "AAAA", "CNAME":
-			return &records[i]
+			if r.Type == "CNAME" || !mine[r.Content] {
+				return r
+			}
+			if first == nil {
+				first = r
+			}
 		}
 	}
-	return nil
+	return first
 }
 
 // wildcardFor names the wildcard that would cover a host one level up.

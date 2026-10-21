@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/kylebegeman/helios/internal/cloudflare"
@@ -45,5 +46,35 @@ func TestEnsureRefusesSplitAddressRecordsUntilExplicitTakeover(t *testing.T) {
 	}
 	if records := fake.Records(); len(records) != 1 || records[0].Content != here {
 		t.Fatalf("takeover left split traffic: %+v", records)
+	}
+}
+
+func TestLookReportsEveryDestinationForExactAndWildcardRecords(t *testing.T) {
+	for _, wildcard := range []bool{false, true} {
+		for _, remoteFirst := range []bool{false, true} {
+			m, fake := setup(t)
+			host := "site.example.com"
+			name := host
+			if wildcard {
+				name = "*.example.com"
+			}
+			records := []cloudflaretest.Record{
+				{Type: "A", Name: name, Content: here, Comment: Comment("site", m.Hostname)},
+				{Type: "AAAA", Name: name, Content: "2001:db8::2"},
+			}
+			if remoteFirst {
+				records[0], records[1] = records[1], records[0]
+			}
+			for _, r := range records {
+				fake.Seed(r)
+			}
+			statuses, err := m.Look(context.Background(), []Route{{App: "site", Host: host}})
+			if err != nil || len(statuses) != 1 {
+				t.Fatalf("statuses = %+v, %v", statuses, err)
+			}
+			if !strings.Contains(statuses[0].Verdict, "elsewhere") {
+				t.Fatalf("wildcard=%t remoteFirst=%t: a split destination appeared healthy: %+v", wildcard, remoteFirst, statuses[0])
+			}
+		}
 	}
 }
