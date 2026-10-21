@@ -32,9 +32,15 @@ func AppVolume(app, volume string) string {
 
 // EnsureVolume creates a named volume if it doesn't exist.
 func (e *Engine) EnsureVolume(ctx context.Context, name string) error {
-	_, err := e.cli.VolumeCreate(ctx, client.VolumeCreateOptions{Name: name, Labels: map[string]string{LabelOwner: OwnerValue}})
+	res, err := e.cli.VolumeCreate(ctx, client.VolumeCreateOptions{Name: name, Labels: map[string]string{LabelOwner: OwnerValue}})
 	if err != nil {
 		return fmt.Errorf("volume %s: %w", name, err)
+	}
+	// Docker returns an existing volume without changing its labels. Older
+	// Helios containers implicitly created unlabeled volumes; keep those,
+	// but never mount or change one another system explicitly owns.
+	if owner := res.Volume.Labels[LabelOwner]; owner != "" && owner != OwnerValue {
+		return fmt.Errorf("volume %s belongs to another owner", name)
 	}
 	return nil
 }

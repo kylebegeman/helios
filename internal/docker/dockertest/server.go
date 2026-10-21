@@ -292,8 +292,9 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		if _, ok := s.volumes[body.Name]; !ok {
 			s.volumes[body.Name] = body.Labels
 		}
+		labels := s.volumes[body.Name]
 		s.mu.Unlock()
-		writeJSON(w, http.StatusCreated, map[string]any{"Name": body.Name, "Driver": "local", "Labels": body.Labels, "Mountpoint": s.VolumeDir(body.Name)})
+		writeJSON(w, http.StatusCreated, map[string]any{"Name": body.Name, "Driver": "local", "Labels": labels, "Mountpoint": s.VolumeDir(body.Name)})
 	case path == "/volumes" && r.Method == http.MethodGet:
 		s.mu.Lock()
 		items := []map[string]any{}

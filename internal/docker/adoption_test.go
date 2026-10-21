@@ -159,3 +159,21 @@ func TestRunFinishesNetworkAttachmentAfterAnInterruptedCreate(t *testing.T) {
 		t.Fatalf("started without repairing the network attachment: %+v attempts=%d", c, attempts)
 	}
 }
+
+func TestVolumeAdoptionRefusesAnotherExplicitOwner(t *testing.T) {
+	e, fake := connect(t)
+	fake.AddVolume("bedrock-site-data", map[string]string{LabelOwner: "another-system"})
+	if err := e.EnsureVolume(context.Background(), "bedrock-site-data"); err == nil {
+		t.Fatal("adopted a volume explicitly owned by another system")
+	}
+}
+
+func TestVolumeAdoptionKeepsLegacyUnlabeledVolumes(t *testing.T) {
+	for _, labels := range []map[string]string{nil, {LabelOwner: OwnerValue}} {
+		e, fake := connect(t)
+		fake.AddVolume("bedrock-site-data", labels)
+		if err := e.EnsureVolume(context.Background(), "bedrock-site-data"); err != nil {
+			t.Fatalf("compatible volume was refused: %v", err)
+		}
+	}
+}
