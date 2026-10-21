@@ -1,7 +1,8 @@
 # Open dependency issue: MinIO image availability
 
 Status: open. Owner: Bedrock data-service maintainer (Kyle).
-Observed during the 2026-10-10 implementation session.
+Observed during the 2026-10-10 implementation session; anonymously rechecked
+on 2026-10-21 with the same result.
 
 Fresh pulls of the production object-service image currently fail with HTTP
 401. The pin is defined by `ObjectsImage` in
@@ -17,6 +18,9 @@ proofs use an independent storage fixture and do not verify this image.
 
 ## Evidence
 
+- The 2026-10-21 recheck received HTTP 200 from Quay's anonymous token
+  service and HTTP 401 for the exact pinned digest manifest. No image was
+  pulled and no production configuration changed.
 - Quay's anonymous token request succeeded; the exact digest manifest request
   with that token and OCI/Docker manifest headers returned HTTP 401.
 - Docker Hub authentication for the official `minio/minio` repository returned

@@ -51,6 +51,16 @@ client certificate on that host. The upgrade names those hosts and stops
 before the journal or binary changes; upgrade to a build that has it, or
 deploy those apps without `origin_pull` first.
 
+The secret-store lock now lives beside the store, at `<store>.locks/<app>.lock`,
+so deleting an app cannot unlink a lock a waiting writer already opened. When
+crossing this boundary during an upgrade or rollback, let active secret and
+integration changes, imports, copies, and app removals finish before switching
+binaries. Keep those commands idle until the daemon restart completes, and
+prevent retained binaries using the other lock path from writing afterward.
+Old and new processes cannot coordinate simultaneous writes across that
+boundary. A daemon restart alone does not drain active CLI writers. Encrypted
+secret versions and recovery formats are unchanged.
+
 Automatic binary rollback requires both binaries to read the resulting state.
 A candidate that migrates beyond the running binary's reader is refused with
 instructions for a coordinated migration. A state checkpoint is evidence and
