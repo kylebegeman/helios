@@ -1,6 +1,8 @@
 module github.com/kylebegeman/helios
 
-go 1.26.0
+go 1.26.10
+
+toolchain go1.27.3
 
 require (
 	filippo.io/age v1.3.2

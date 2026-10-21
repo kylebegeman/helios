@@ -31,8 +31,8 @@ another machine's traffic are treated as high priority.
   `helios upgrade --version` and `scripts/install-release.sh` refuse a
   release whose sums that key didn't sign. `--sha256` pins a checksum from
   reviewed source instead, which also installs a release from before 0.7.16.
-- The daemon listens on `/run/helios/helios.sock`, mode 0660, owned by
-  root and the `helios` group that receives pushes. The edge's admin API is
+- The daemon listens on `/run/bedrock/bedrock.sock`, mode 0660, owned by
+  root and the `bedrock` group that receives pushes. The edge's admin API is
   a Unix socket only the machine reaches.
 - A machine's address is not treated as a secret. `helios host setup
   --web-from cloudflare` lets only Cloudflare's proxy reach 80 and 443, so
