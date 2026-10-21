@@ -38,7 +38,7 @@ OnFailure=bedrock-rollback.service
 [Service]
 Type=notify
 NotifyAccess=main
-ExecStart=%s daemon run
+ExecStart=%s
 Restart=always
 RestartSec=2
 WatchdogSec=30
@@ -55,10 +55,16 @@ WantedBy=multi-user.target
 `
 
 func daemonUnit(executable string) string {
-	// systemd unquotes C-style strings and expands percent specifiers. The
-	// ':' prefix also keeps literal dollar signs out of environment expansion.
-	command := strconv.Quote(":" + strings.ReplaceAll(executable, "%", "%%"))
-	return fmt.Sprintf(unitTemplate, command)
+	// systemd rejects quotes and backslashes in its executable name, even
+	// when quoted. Pass the path as an argument to a fixed shell command;
+	// exec preserves the main PID for notifications, watchdog and signals.
+	args := []string{":/bin/sh", "-c", `exec "$@"`, "sh", executable, "daemon", "run"}
+	for i, arg := range args {
+		// systemd unquotes C-style strings and expands percent specifiers in
+		// every argument. ':' disables its dollar/environment expansion.
+		args[i] = strconv.Quote(strings.ReplaceAll(arg, "%", "%%"))
+	}
+	return fmt.Sprintf(unitTemplate, strings.Join(args, " "))
 }
 
 // RollbackUnitPath is the unit systemd runs when the daemon can't start.
