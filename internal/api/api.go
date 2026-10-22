@@ -370,13 +370,25 @@ func Listen(socket string) (net.Listener, error) {
 	if err := os.MkdirAll(filepath.Dir(socket), 0o750); err != nil {
 		return nil, err
 	}
-	if _, err := os.Stat(socket); err == nil {
-		// A live daemon would answer; a stale socket file is just a file.
-		if conn, err := net.DialTimeout("unix", socket, 500*time.Millisecond); err == nil {
+	if info, err := os.Lstat(socket); err == nil {
+		if info.Mode()&os.ModeSocket == 0 {
+			return nil, fmt.Errorf("refusing to replace non-socket path %s", socket)
+		}
+		conn, err := net.DialTimeout("unix", socket, 500*time.Millisecond)
+		if err == nil {
 			conn.Close()
 			return nil, fmt.Errorf("another daemon is listening on %s", socket)
 		}
-		_ = os.Remove(socket)
+		// Only a refused connection establishes that this socket is stale.
+		// Permissions, timeouts and other failures must preserve its owner.
+		if !errors.Is(err, syscall.ECONNREFUSED) {
+			return nil, fmt.Errorf("checking existing socket %s: %w", socket, err)
+		}
+		if err := os.Remove(socket); err != nil {
+			return nil, err
+		}
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return nil, err
 	}
 	l, err := net.Listen("unix", socket)
 	if err != nil {
@@ -390,12 +402,23 @@ func Listen(socket string) (net.Listener, error) {
 	// through the socket: its group may use it.
 	if g, err := user.LookupGroup(SocketGroup); err == nil {
 		if gid, err := strconv.Atoi(g.Gid); err == nil {
-			_ = os.Chown(socket, 0, gid)
-			_ = os.Chown(filepath.Dir(socket), 0, gid)
-			_ = os.Chmod(filepath.Dir(socket), 0o750)
+			setSocketGroup(socket, gid)
 		}
 	}
 	return l, nil
+}
+
+func setSocketGroup(socket string, gid int) {
+	_ = os.Chown(socket, 0, gid)
+	dir := filepath.Dir(socket)
+	info, err := os.Stat(dir)
+	if err != nil || info.Mode().Perm()&0o001 != 0 {
+		// An existing shared directory already permits traversal. In
+		// particular, a socket under /tmp or /run must not restrict it.
+		return
+	}
+	_ = os.Chown(dir, 0, gid)
+	_ = os.Chmod(dir, info.Mode().Perm()|0o050)
 }
 
 // SocketGroup may use the daemon's socket.

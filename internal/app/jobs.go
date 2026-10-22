@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"runtime/debug"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -45,6 +46,10 @@ func NewJobs(store *state.Store, sec *secrets.Store) *Jobs {
 
 // JobOptions are what a one-off command adds to its workload's setup.
 type JobOptions struct {
+	// scheduledAt is the cron occurrence admitted by Tick. A hold placed
+	// while data access is blocked skips that occurrence even if it ends
+	// before the job reaches Docker.
+	scheduledAt time.Time
 	// Secrets are more of the app's secrets for the command, beyond the
 	// workload's own.
 	Secrets []string
@@ -130,7 +135,23 @@ func (j *Jobs) RunWith(ctx context.Context, rev *state.Revision, workload string
 		spec.ReadOnly = false
 	}
 	started := time.Now().UTC()
-	id, err := j.Store.StartJobRun(ctx, state.JobRun{App: rev.App, Workload: workload, Revision: rev.ID, Kind: kind, StartedAt: started, Container: spec.Name})
+	run := state.JobRun{App: rev.App, Workload: workload, Revision: rev.ID, Kind: kind, StartedAt: started, Container: spec.Name}
+	var id int64
+	if kind == JobCron {
+		at := opts.scheduledAt
+		if at.IsZero() {
+			at = started
+		}
+		// A hold can arrive during data/image preflight. Its admission check
+		// and the durable run record must be one atomic store operation.
+		var heldUntil time.Time
+		id, heldUntil, err = j.Store.StartCronRun(ctx, run, at)
+		if err == nil && id == 0 {
+			return -1, fmt.Errorf("cron %s/%s is held until %s; its queued run was skipped", rev.App, workload, OperatorTime(heldUntil))
+		}
+	} else {
+		id, err = j.Store.StartJobRun(ctx, run)
+	}
 	if err != nil {
 		return -1, err
 	}
@@ -222,6 +243,9 @@ var errJobOwnershipUnknown = errors.New("the job container could not be identifi
 
 func (j *Jobs) executeOwned(ctx context.Context, e *docker.Engine, spec docker.Spec, out io.Writer) (int, string, error) {
 	runErr := e.Run(ctx, spec)
+	if runErr != nil && errors.Is(ctx.Err(), context.DeadlineExceeded) {
+		runErr = errors.New("timed out")
+	}
 	// Run can fail after creation, or refuse an existing foreign container.
 	// Inspect with a cleanup context even when the caller was cancelled, and
 	// retain an immutable ID only when every requested ownership label matches.
@@ -368,7 +392,7 @@ func (j *Jobs) Tick(ctx context.Context, now time.Time, log func(string, ...any)
 				}()
 				// Stop tracking on daemon cancellation while Docker finishes the
 				// job. Its open durable run is adopted by the next daemon.
-				code, err := j.Run(ctx, &rev, name, nil, JobCron, io.Discard)
+				code, err := j.RunWith(ctx, &rev, name, nil, JobCron, JobOptions{scheduledAt: now}, io.Discard)
 				if err != nil {
 					log("cron %s: %v (exit %d)", key, err, code)
 					return
@@ -420,13 +444,15 @@ func (r RunDefinition) Plan(ctx context.Context, raw json.RawMessage) (*kernel.P
 	if err != nil {
 		return nil, err
 	}
-	note := "revision " + rev.ID
-	if len(in.Secrets) > 0 {
-		note += ", with " + strings.Join(in.Secrets, ", ")
-	}
+	// JSON preserves argument boundaries. Revision and extra secret names
+	// affect execution, so they belong in the digest-bearing change text.
+	command, _ := json.Marshal(in.Command)
+	names := append([]string{}, in.Secrets...)
+	slices.Sort(names)
+	names = slices.Compact(names)
+	extraSecrets, _ := json.Marshal(names)
 	return &kernel.Plan{Target: in.App + " " + workload, Recovery: kernel.Resume, Steps: []kernel.Step{{
-		Name: "run", Change: fmt.Sprintf("run %s in %s's environment", strings.Join(in.Command, " "), workload),
-		Note: note,
+		Name: "run", Change: fmt.Sprintf("run %s in %s's environment at revision %q, with extra secrets %s", command, workload, rev.ID, extraSecrets),
 		Apply: func(ctx context.Context, out io.Writer) error {
 			// Arbitrary commands can commit effects before an interruption.
 			// Reconciliation adopts the existing job; recovery must not create

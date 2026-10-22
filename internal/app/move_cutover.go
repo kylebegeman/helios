@@ -58,6 +58,9 @@ func (c MoveCutover) Plan(ctx context.Context, raw json.RawMessage) (*kernel.Pla
 	if manifestDigest(&m) != record.Handoff.ManifestDigest {
 		return nil, errors.New("staged manifest changed after final capture")
 	}
+	if err := c.Deploy.CloudflareOnly.checkRoutes(&m); err != nil {
+		return nil, err
+	}
 	if err := CheckRouteConflicts(ctx, c.Deploy.Store, &m); err != nil {
 		return nil, err
 	}

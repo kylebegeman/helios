@@ -30,3 +30,18 @@ func TestIntegrationEndpointsAllowHTTPPathsAndIPv6(t *testing.T) {
 		}
 	}
 }
+
+func TestBaseEndpointsRejectQueriesWithoutDisclosingTheirValues(t *testing.T) {
+	const hidden = "fixture-private-query"
+	for _, endpoint := range []string{"https://api.example.com/base?token=" + hidden, "https://api.example.com/base?"} {
+		for _, name := range []string{StorageName, CloudflareName} {
+			values := map[string]string{"kind": "s3", "bucket_prefix": "test", "endpoint": endpoint, "api": endpoint}
+			err := validate(name, values)
+			if err == nil {
+				t.Errorf("%s accepted a query in a base URL that appends paths", name)
+			} else if strings.Contains(err.Error(), hidden) {
+				t.Errorf("%s disclosed the query value", name)
+			}
+		}
+	}
+}

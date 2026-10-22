@@ -307,3 +307,75 @@ func TestJobInspectionFailureKeepsTheUnknownWriterForReconciliation(t *testing.T
 		t.Fatal("later reconciliation could not settle the preserved unknown writer")
 	}
 }
+
+func TestQueuedCronHonorsAHoldPlacedWhileWaitingForDataAccess(t *testing.T) {
+	ctx := context.Background()
+	store := releaseTestStore(t)
+	m := releaseTestManifest()
+	w := m.Workloads["web"]
+	w.Kind, w.Schedule = "cron", "* * * * *"
+	m.Workloads["web"] = w
+	now := time.Now().UTC()
+	rev := releaseTestRevision(t, store, m, "active-revision", state.RevisionActive, now.Add(-2*time.Hour))
+	fake := dockertest.New(t)
+	fake.OnCreate = func(c dockertest.Container) { fake.Update(c.Name, func(c *dockertest.Container) { c.ExitAfter = 1 }) }
+	unlock, err := lockAppData(ctx, store.Path(), m.App, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	jobs := NewJobs(store, newSecrets(t))
+	jobs.Tick(ctx, now, func(string, ...any) {})
+	jobs.mu.Lock()
+	queued := jobs.running[m.App+"/web"]
+	jobs.mu.Unlock()
+	if !queued {
+		unlock()
+		t.Fatal("fixture did not queue a due cron run")
+	}
+	_, err = store.HoldJob(ctx, m.App, "web", rev.ID, now, now.Add(time.Hour), "maintenance")
+	unlock()
+	jobs.Wait()
+	if err != nil {
+		t.Fatal(err)
+	}
+	runs, err := store.JobRuns(ctx, m.App, "web", 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, run := range runs {
+		if run.Kind == JobCron {
+			t.Fatalf("a queued cron started after its workload was held: %+v", run)
+		}
+	}
+}
+
+func TestJobDeadlineDuringStartupIsRecordedAsTimedOut(t *testing.T) {
+	ctx := context.Background()
+	store := releaseTestStore(t)
+	m := releaseTestManifest()
+	w := m.Workloads["web"]
+	w.Timeout = "40ms"
+	m.Workloads["web"] = w
+	rev := releaseTestRevision(t, store, m, "active-revision", state.RevisionActive, time.Now())
+	fake := dockertest.New(t)
+	proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "/start") {
+			<-r.Context().Done()
+			return
+		}
+		fake.ServeHTTP(w, r)
+	}))
+	defer proxy.Close()
+	t.Setenv("DOCKER_HOST", "tcp"+strings.TrimPrefix(proxy.URL, "http"))
+	_, err := NewJobs(store, newSecrets(t)).Run(ctx, rev, "web", nil, JobRun, io.Discard)
+	if err == nil || !strings.Contains(err.Error(), "timed out") {
+		t.Fatalf("startup deadline was not reported as a job timeout: %v", err)
+	}
+	runs, err := store.JobRuns(ctx, m.App, "web", 1)
+	if err != nil || len(runs) != 1 || runs[0].Error != "timed out" || runs[0].FinishedAt.IsZero() {
+		t.Fatalf("startup deadline lost its timeout receipt: %+v %v", runs, err)
+	}
+	if len(mustOpen(t, store)) != 0 {
+		t.Fatal("timed out startup kept the run open after cleanup")
+	}
+}

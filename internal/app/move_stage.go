@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -141,8 +142,13 @@ func (s MoveStage) Plan(ctx context.Context, raw json.RawMessage) (*kernel.Plan,
 	} else if active != nil {
 		return nil, fmt.Errorf("%s is already active here; safe staging requires a clean target", m.App)
 	}
-	if previous, err := s.Deploy.Store.GetRevision(ctx, m.App, in.Revision); err == nil && (manifestDigestFromRaw(previous.Manifest) != h.ManifestDigest || previous.Source != commit) {
-		return nil, errors.New("target revision already belongs to different source")
+	if previous, err := s.Deploy.Store.GetRevision(ctx, m.App, in.Revision); err == nil {
+		if record == nil || manifestDigestFromRaw(previous.Manifest) != h.ManifestDigest || previous.Source != commit ||
+			(previous.Status != state.RevisionFailed && previous.Status != revisionStaged) {
+			return nil, errors.New("target revision already belongs to other app history or different source")
+		}
+	} else if !errors.Is(err, state.ErrNotFound) {
+		return nil, err
 	}
 	stateDir := s.Deploy.StateDir
 	if stateDir == "" {
@@ -176,6 +182,11 @@ func (s MoveStage) Plan(ctx context.Context, raw json.RawMessage) (*kernel.Plan,
 					return nil
 				}
 				return errors.New("target migration changed")
+			}
+			if _, err := r.store.GetRevision(ctx, m.App, in.Revision); err == nil {
+				return errors.New("target revision already belongs to other app history")
+			} else if !errors.Is(err, state.ErrNotFound) {
+				return err
 			}
 			e, err := r.connect(ctx)
 			if err != nil {
@@ -220,7 +231,7 @@ func (s MoveStage) Plan(ctx context.Context, raw json.RawMessage) (*kernel.Plan,
 			return x.run.done(ctx, state.BackupRun{Snapshot: h.Snapshot, SnapshotAt: h.TakenAt, Detail: detail})
 		}}))
 	}
-	recordStep := r.recordStep()
+	recordStep := moveStageRecord(r, h)
 	recordStep.Change += " staged for " + identity
 	plan.Steps = append(plan.Steps, recordStep)
 	if m.PostgresVersion() != "" || m.HasObjects() || m.Secrets != nil {
@@ -250,6 +261,36 @@ func (s MoveStage) Plan(ctx context.Context, raw json.RawMessage) (*kernel.Plan,
 			return nil
 		}})
 	return guardReleaseRestoreSteps(plan, s.Deploy.Store), nil
+}
+
+// A failed stage is retried with the same target revision. Reuse only the
+// revision reserved by this migration, preserving its images and secret pin.
+func moveStageRecord(r *rollout, h Handoff) kernel.Step {
+	step := r.recordStep()
+	create := step.Apply
+	step.Apply = func(ctx context.Context, out io.Writer) error {
+		record, err := targetMigration(r.store.Path(), h, r.revision)
+		if err != nil {
+			return err
+		}
+		if record.Phase != "restoring" && record.Phase != "staged" {
+			return errors.New("target cutover has already begun; retry move cutover")
+		}
+		revision, err := r.store.GetRevision(ctx, r.m.App, r.revision)
+		if errors.Is(err, state.ErrNotFound) {
+			return create(ctx, out)
+		}
+		if err != nil {
+			return err
+		}
+		if manifestDigestFromRaw(revision.Manifest) != h.ManifestDigest || revision.Source != r.from.commit ||
+			!maps.Equal(revision.Containers, r.containers) || (revision.Status != state.RevisionFailed && revision.Status != revisionStaged) {
+			return errors.New("recorded target revision does not match this migration")
+		}
+		fmt.Fprintf(out, "revision %s already recorded for this migration\n", r.revision)
+		return nil
+	}
+	return step
 }
 
 func manifestDigestFromRaw(raw json.RawMessage) string {

@@ -269,3 +269,44 @@ func TestAPreviewSaysWhatItPreviewsWhateverItIsCalled(t *testing.T) {
 		t.Fatalf("%v %+v", err, plain)
 	}
 }
+
+func TestPreviewRefusesCollidingRoutesOfDifferentWorkloads(t *testing.T) {
+	m, err := manifest.Parse([]byte(`app: site
+workloads:
+  first:
+    kind: web
+    image: image
+    port: 80
+    routes: [{host: api.first.example.com}]
+  second:
+    kind: web
+    image: image
+    port: 80
+    routes: [{host: api.second.example.com}, {host: other.second.example.com}]
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := PreviewOf(m, "feature", "preview.example.com"); err == nil || !strings.Contains(err.Error(), "collide") {
+		t.Fatalf("preview silently dropped a workload's route: %v", err)
+	}
+}
+
+func TestPreviewRefusesCollidingRoutesThatReachDifferentPorts(t *testing.T) {
+	m, err := manifest.Parse([]byte(`app: site
+workloads:
+  api:
+    kind: web
+    image: image
+    port: 80
+    routes:
+      - {host: api.first.example.com}
+      - {host: api.second.example.com, port: 8080}
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := PreviewOf(m, "feature", "preview.example.com"); err == nil || !strings.Contains(err.Error(), "collide") {
+		t.Fatalf("preview silently changed a route's upstream port: %v", err)
+	}
+}

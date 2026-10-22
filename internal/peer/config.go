@@ -281,7 +281,7 @@ func (c Config) Validate() error {
 
 func (c Config) checkPeerName(name string) error {
 	if !ValidName(name) {
-		return fmt.Errorf("%q can't name a peer", name)
+		return errors.New("a peer has an invalid name")
 	}
 	if name == c.Self.Name {
 		return fmt.Errorf("%s is this machine's own name", name)

@@ -457,11 +457,15 @@ func (s *Source) fetchSummary(ctx context.Context, mesh, token string) (Summary,
 	if err := unexpected(resp, http.StatusOK); err != nil {
 		return Summary{}, err
 	}
-	var summary Summary
-	if err := json.NewDecoder(io.LimitReader(resp.Body, MaxSummaryBytes)).Decode(&summary); err != nil {
+	body, err := io.ReadAll(io.LimitReader(resp.Body, MaxSummaryBytes+1))
+	if err != nil || len(body) > MaxSummaryBytes {
 		return Summary{}, errUnreadable
 	}
-	return summary, nil
+	var summary *Summary
+	if err := json.Unmarshal(body, &summary); err != nil || summary == nil {
+		return Summary{}, errUnreadable
+	}
+	return *summary, nil
 }
 
 // ask sends req to a peer's Helios. It reaches only the mesh, never

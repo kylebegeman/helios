@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"regexp"
+	"time"
 )
 
 // Profile is what a machine is set up to be. It is the input of host.setup
@@ -38,6 +39,11 @@ func (p Profile) Validate() error {
 	}
 	if p.SwapGiB < 0 || p.SwapGiB > 64 {
 		return errors.New("swap must be 0 to 64 GiB")
+	}
+	if p.Timezone != "" {
+		if _, err := time.LoadLocation(p.Timezone); err != nil || p.Timezone == "Local" {
+			return fmt.Errorf("timezone %q is not a known IANA timezone", p.Timezone)
+		}
 	}
 	switch p.WebFrom {
 	case "", WebFromAnyone, WebFromCloudflare:

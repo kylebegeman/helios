@@ -135,10 +135,21 @@ func Import(store *secrets.Store, names []string, input io.Reader, replace bool)
 	return applyValues(store, b.Values, replace, false)
 }
 func applyValues(store *secrets.Store, values map[string]map[string]string, replace, preserve bool) ([]string, error) {
-	current, _, err := store.LoadCurrent(App)
+	var changed []string
+	_, err := store.Update(App, func(current map[string]string) (map[string]*string, error) {
+		changes, names, err := integrationChanges(current, values, replace, preserve)
+		changed = names
+		return changes, err
+	})
 	if err != nil {
 		return nil, err
 	}
+	return changed, nil
+}
+
+// integrationChanges decides conflicts from the same locked snapshot that will
+// receive the update. Callers must keep the lock through the resulting write.
+func integrationChanges(current map[string]string, values map[string]map[string]string, replace, preserve bool) (map[string]*string, []string, error) {
 	changes := map[string]*string{}
 	var changed []string
 	names := make([]string, 0, len(values))
@@ -149,17 +160,14 @@ func applyValues(store *secrets.Store, values map[string]map[string]string, repl
 	for _, name := range names {
 		def, ok := Lookup(name)
 		if !ok {
-			return nil, errors.New("unknown integration")
+			return nil, nil, errors.New("unknown integration")
 		}
 		fields := values[name]
 		if err := validateTransferFields(name, fields); err != nil {
-			return nil, err
+			return nil, nil, err
 		}
-		existing, existingErr := Get(store, name)
-		if existingErr != nil && !errors.Is(existingErr, ErrNotSet) {
-			return nil, existingErr
-		}
-		if preserve && existingErr == nil {
+		existing := storedFields(def, current)
+		if preserve && len(existing) > 0 {
 			continue
 		}
 		diff := false
@@ -171,10 +179,9 @@ func applyValues(store *secrets.Store, values map[string]map[string]string, repl
 		if !diff {
 			continue
 		}
-		if existingErr == nil && !replace {
-			return nil, fmt.Errorf("%s already holds different configuration; use --replace after reviewing the target", name)
+		if len(existing) > 0 && !replace {
+			return nil, nil, fmt.Errorf("%s already holds different configuration; use --replace after reviewing the target", name)
 		}
-		_ = existing
 		changed = append(changed, name)
 		for _, f := range def.Fields {
 			v := fields[f.Name]
@@ -186,12 +193,7 @@ func applyValues(store *secrets.Store, values map[string]map[string]string, repl
 			}
 		}
 	}
-	if len(changes) > 0 {
-		if _, err := store.SetAll(App, changes); err != nil {
-			return nil, err
-		}
-	}
-	return changed, nil
+	return changes, changed, nil
 }
 
 // RecoverMissing restores missing non-storage integrations and operational keys,
@@ -227,38 +229,43 @@ func RecoverMissing(target, source *secrets.Store) ([]string, error) {
 			return nil, err
 		}
 	}
-	current, _, err := target.LoadCurrent(App)
-	if err != nil {
-		return nil, err
-	}
-	keys := map[string]*string{}
-	for name, value := range raw {
+	for name := range raw {
 		if !secrets.ValidName(name) {
 			return nil, errors.New("invalid operational secret name in recovery")
 		}
-		if strings.HasPrefix(name, "WEBHOOK_SECRET_") || strings.HasPrefix(name, "DEPLOY_KEY_") {
-			if current[name] == "" {
-				v := value
-				keys[name] = &v
+	}
+	var changed []string
+	_, err = target.Update(App, func(current map[string]string) (map[string]*string, error) {
+		changes, names, err := integrationChanges(current, values, false, true)
+		if err != nil {
+			return nil, err
+		}
+		changed = names
+		operational := false
+		for name, value := range raw {
+			if strings.HasPrefix(name, "WEBHOOK_SECRET_") || strings.HasPrefix(name, "DEPLOY_KEY_") {
+				if current[name] == "" {
+					v := value
+					changes[name] = &v
+					operational = true
+				}
 			}
 		}
-	}
-	trust, err := mergeOriginPull(current[OriginPullName], raw[OriginPullName])
-	if err != nil {
-		return nil, err
-	}
-	if trust != "" {
-		keys[OriginPullName] = &trust
-	}
-	changed, err := applyValues(target, values, false, true)
-	if err != nil {
-		return nil, err
-	}
-	if len(keys) > 0 {
-		if _, err := target.SetAll(App, keys); err != nil {
-			return changed, err
+		trust, err := mergeOriginPull(current[OriginPullName], raw[OriginPullName])
+		if err != nil {
+			return nil, err
 		}
-		changed = append(changed, "operational-keys")
+		if trust != "" {
+			changes[OriginPullName] = &trust
+			operational = true
+		}
+		if operational {
+			changed = append(changed, "operational-keys")
+		}
+		return changes, nil
+	})
+	if err != nil {
+		return nil, err
 	}
 	return changed, nil
 }

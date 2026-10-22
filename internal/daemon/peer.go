@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/netip"
+	"sync"
 	"time"
 
 	"github.com/kylebegeman/helios/internal/peer"
@@ -28,7 +29,13 @@ func (d *daemon) newWatcher() *watch.Watcher {
 // after every round.
 func (d *daemon) watchRound(ctx context.Context, watcher *watch.Watcher, observe, observePeers func(context.Context) []watch.Condition) {
 	looked := make(chan []watch.Condition, 1)
+	// A panic in the local observation still has to join its peer probe:
+	// the daemon waits for this round before it closes the shared store.
+	var probes sync.WaitGroup
+	probes.Add(1)
+	defer probes.Wait()
 	go func() {
+		defer probes.Done()
 		var conditions []watch.Condition
 		ok := false
 		guarded(d.logf, "peer watch", func() { conditions, ok = observePeers(ctx), true })

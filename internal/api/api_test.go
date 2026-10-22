@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"net"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
@@ -107,7 +108,12 @@ func TestErrorsComeBackAsErrors(t *testing.T) {
 
 func TestListenReplacesAStaleSocket(t *testing.T) {
 	socket := filepath.Join(t.TempDir(), "q.sock")
-	if err := os.WriteFile(socket, nil, 0o600); err != nil {
+	stale, err := net.ListenUnix("unix", &net.UnixAddr{Name: socket, Net: "unix"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	stale.SetUnlinkOnClose(false)
+	if err := stale.Close(); err != nil {
 		t.Fatal(err)
 	}
 	l, err := Listen(socket)
@@ -363,5 +369,84 @@ func TestDaemonLifetimeTracksAndCancelsPlanRequests(t *testing.T) {
 	}
 	if err := srv.Drain(context.Background()); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestListenPreservesNonSocketPaths(t *testing.T) {
+	for _, kind := range []string{"file", "symlink", "directory"} {
+		t.Run(kind, func(t *testing.T) {
+			dir := t.TempDir()
+			socket := filepath.Join(dir, "api.sock")
+			const contents = "fixture configuration"
+			switch kind {
+			case "file":
+				if err := os.WriteFile(socket, []byte(contents), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			case "symlink":
+				if err := os.WriteFile(filepath.Join(dir, "config"), []byte(contents), 0o600); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Symlink("config", socket); err != nil {
+					t.Fatal(err)
+				}
+			case "directory":
+				if err := os.Mkdir(socket, 0o700); err != nil {
+					t.Fatal(err)
+				}
+			}
+			listener, err := Listen(socket)
+			if listener != nil {
+				listener.Close()
+			}
+			if err == nil {
+				t.Fatal("listener replaced a non-socket path")
+			}
+			info, err := os.Lstat(socket)
+			if err != nil {
+				t.Fatalf("existing path was removed: %v", err)
+			}
+			switch kind {
+			case "file":
+				body, err := os.ReadFile(socket)
+				if err != nil || string(body) != contents {
+					t.Fatalf("existing contents changed: %q, %v", body, err)
+				}
+			case "symlink":
+				if info.Mode()&os.ModeSymlink == 0 {
+					t.Fatal("existing symlink changed")
+				}
+			case "directory":
+				if !info.IsDir() {
+					t.Fatal("existing directory changed")
+				}
+			}
+		})
+	}
+}
+
+func TestSocketGroupPreservesSharedParentPermissions(t *testing.T) {
+	for _, tc := range []struct{ mode, want os.FileMode }{
+		{0o755, 0o755},
+		{os.ModeSticky | 0o777, os.ModeSticky | 0o777},
+		{0o700, 0o750},
+	} {
+		dir := t.TempDir()
+		mode := tc.mode
+		if err := os.Chmod(dir, mode); err != nil {
+			t.Fatal(err)
+		}
+		socket := filepath.Join(dir, "api.sock")
+		if err := os.WriteFile(socket, nil, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		setSocketGroup(socket, os.Getgid())
+		info, err := os.Stat(dir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := info.Mode() & (os.ModePerm | os.ModeSticky); got != tc.want {
+			t.Errorf("parent mode = %v, want %v", got, tc.want)
+		}
 	}
 }

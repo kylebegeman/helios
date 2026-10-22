@@ -195,6 +195,9 @@ func (s *Store) ImportMachineRecovery(ctx context.Context, sourceDBPath, recover
 				if row[5].(int64) == 0 {
 					row[5] = now
 				}
+				// Source incidents are historical evidence, not the target's
+				// recovery notices to retry. Keep its own delivery queue intact.
+				row[7] = ""
 			case "signals":
 				// Host disk rows describe the source machine's root
 				// filesystem. The target samples its own from the moment it
@@ -272,9 +275,17 @@ func checkRecoveryValue(column string, value any) (any, error) {
 		if !ok {
 			return nil, errors.New("expected text")
 		}
-		if column == "manifest" || column == "images" || column == "containers" {
+		switch column {
+		case "manifest":
 			if !json.Valid([]byte(text)) {
 				return nil, errors.New("expected valid JSON")
+			}
+		case "images", "containers":
+			// Require the same map shape scanRevision reads. Syntactically
+			// valid JSON can otherwise poison all future revision reads.
+			var values map[string]string
+			if err := json.Unmarshal([]byte(text), &values); err != nil {
+				return nil, fmt.Errorf("expected a JSON map of strings: %w", err)
 			}
 		}
 		return text, nil

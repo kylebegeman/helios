@@ -2,6 +2,7 @@ package host
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -121,6 +122,10 @@ func (u Upgrade) Plan(ctx context.Context, raw json.RawMessage) (*kernel.Plan, e
 	if err != nil {
 		return nil, err
 	}
+	checksum, err := upgradeSourceChecksum(env.Path(in.Path))
+	if err != nil {
+		return nil, fmt.Errorf("read upgrade candidate: %w", err)
+	}
 	stateVersion := state.SchemaVersion
 	if u.Store != nil {
 		stateVersion, err = u.Store.Version(ctx)
@@ -144,6 +149,9 @@ func (u Upgrade) Plan(ctx context.Context, raw json.RawMessage) (*kernel.Plan, e
 			Name: "stage", Change: "keep the running binary as the previous one and stage " + described + in.vouched(),
 			Note: doneIf(identity(target) == identity(running), "already the running build", fmt.Sprintf("replacing %s (%s)", running.Version, running.Commit)),
 			Apply: func(ctx context.Context, out io.Writer) error {
+				if err := checkUpgradeSource(env.Path(in.Path), checksum); err != nil {
+					return err
+				}
 				if u.Store == nil {
 					return errors.New("upgrade needs an open state store for its checkpoint")
 				}
@@ -164,16 +172,9 @@ func (u Upgrade) Plan(ctx context.Context, raw json.RawMessage) (*kernel.Plan, e
 			},
 		},
 		kernel.Step{
-			Name: "switch", Change: "put the new binary at " + BinaryPath,
+			Name: "switch", Change: "put the new binary at " + BinaryPath + " (sha256 " + checksum + ")",
 			Apply: func(_ context.Context, out io.Writer) error {
-				tmp := env.Path(BinaryPath) + ".new"
-				if err := copyFile(env.Path(in.Path), tmp); err != nil {
-					return err
-				}
-				if err := os.Chmod(tmp, 0o755); err != nil {
-					return err
-				}
-				if err := os.Rename(tmp, env.Path(BinaryPath)); err != nil {
+				if err := installUpgradeSource(env.Path(in.Path), env.Path(BinaryPath), checksum); err != nil {
 					return err
 				}
 				fmt.Fprintf(out, "%s is now %s (%s)\n", BinaryPath, target.Version, target.Commit)
@@ -220,7 +221,109 @@ func (u Upgrade) Plan(ctx context.Context, raw json.RawMessage) (*kernel.Plan, e
 			},
 		},
 	)
+	if err := u.preserveLegacySwitch(ctx, plan); err != nil {
+		return nil, err
+	}
 	return plan, nil
+}
+
+// preserveLegacySwitch retains the pre-0.7.19 description only when recovery
+// has already completed the binary switch. No executable installation can run
+// under this legacy approval. The kernel still checks every semantic field and
+// the original digest before resuming restart/verify, and retains that digest
+// in the receipt. New plans always bind the executable bytes.
+func (u Upgrade) preserveLegacySwitch(ctx context.Context, plan *kernel.Plan) error {
+	id := kernel.OperationID(ctx)
+	if id == "" || u.Store == nil {
+		return nil
+	}
+	op, steps, err := u.Store.Get(ctx, id)
+	if err != nil {
+		return fmt.Errorf("read recovering upgrade: %w", err)
+	}
+	if op.Kind != UpgradeKind || op.Status != state.Applying || len(steps) != len(plan.Steps) {
+		return nil
+	}
+	for i, st := range steps {
+		if st.Index != i || st.Name != plan.Steps[i].Name {
+			return nil
+		}
+	}
+	if steps[0].Status != state.StepSucceeded || steps[1].Status != state.StepSucceeded {
+		return nil
+	}
+	var saved kernel.PlanView
+	if json.Unmarshal(op.Plan, &saved) != nil || len(saved.Steps) != len(plan.Steps) {
+		return nil
+	}
+	legacy := "put the new binary at " + BinaryPath
+	if saved.Steps[1].Change == legacy {
+		plan.Steps[1].Change = legacy
+	}
+	return nil
+}
+
+// upgradeSourceChecksum binds a plan to the executable's bytes, even when
+// another executable reports the same version and capabilities.
+func upgradeSourceChecksum(path string) (string, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return "", err
+	}
+	defer f.Close()
+	info, err := f.Stat()
+	if err != nil {
+		return "", err
+	}
+	if !info.Mode().IsRegular() {
+		return "", errors.New("upgrade candidate must be a regular file")
+	}
+	sum := sha256.New()
+	if _, err := io.Copy(sum, f); err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("%x", sum.Sum(nil)), nil
+}
+
+func checkUpgradeSource(path, want string) error {
+	got, err := upgradeSourceChecksum(path)
+	if err != nil {
+		return fmt.Errorf("read upgrade candidate: %w", err)
+	}
+	if got != want {
+		return errors.New("upgrade candidate changed since the plan; inspect a new upgrade plan")
+	}
+	return nil
+}
+
+// installUpgradeSource checks the copied bytes before the atomic switch,
+// so a change to the source while copying cannot install unapproved bytes.
+func installUpgradeSource(from, to, want string) error {
+	source, err := os.Open(from)
+	if err != nil {
+		return err
+	}
+	defer source.Close()
+	tmp, err := os.CreateTemp(filepath.Dir(to), ".bedrock-upgrade-*")
+	if err != nil {
+		return err
+	}
+	defer os.Remove(tmp.Name())
+	defer tmp.Close()
+	sum := sha256.New()
+	if _, err := io.Copy(io.MultiWriter(tmp, sum), source); err != nil {
+		return err
+	}
+	if fmt.Sprintf("%x", sum.Sum(nil)) != want {
+		return errors.New("upgrade candidate changed since the plan; inspect a new upgrade plan")
+	}
+	if err := tmp.Chmod(0o755); err != nil {
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	return os.Rename(tmp.Name(), to)
 }
 
 // identity names a build. Two builds of one commit can differ (a release

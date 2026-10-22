@@ -149,3 +149,22 @@ func TestNextNamesWhatIsStillMissing(t *testing.T) {
 		t.Fatalf("a static app must be told where its files go: %v", static)
 	}
 }
+
+func TestStaticScaffoldPreservesTheDirectoryAsOneYAMLString(t *testing.T) {
+	for _, dir := range []string{"public # site", "public: files", "[public]", "null", "public\n    env: {UNEXPECTED: injected}"} {
+		t.Run(dir, func(t *testing.T) {
+			out, err := (Scaffold{App: "site", Kind: Static, Host: "site.example.com", Dir: dir}).Render()
+			if err != nil {
+				t.Fatal(err)
+			}
+			m, err := Parse(out)
+			if err != nil {
+				t.Fatal(err)
+			}
+			w := m.Workloads["pages"]
+			if w.Dir != dir || len(w.Env) != 0 {
+				t.Fatalf("directory changed or became YAML fields: %+v", w)
+			}
+		})
+	}
+}

@@ -917,3 +917,99 @@ func openIncident(t *testing.T, store *state.Store, key, message string, at time
 	inc.ID = id
 	return inc
 }
+
+// A late collection must apply the incident's end before scanning a bounded
+// number of changes, or newer deploys hide all of the relevant operations.
+func TestLateEvidenceFindsChangesBeforeNewerDeploys(t *testing.T) {
+	store := openStore(t)
+	saveChange(t, store, "op-before", apps.DeployKind, "web", apps.DeployInput{Revision: "r1"}, opened.Add(-time.Minute))
+	for i := range changeScan + 1 {
+		saveChange(t, store, fmt.Sprintf("op-after-%03d", i), apps.DeployKind, "web", apps.DeployInput{Revision: "r2"}, opened.Add(time.Duration(i+1)*time.Minute))
+	}
+	for _, key := range []string{"app:web", "host:disk"} {
+		t.Run(key, func(t *testing.T) {
+			e, err := Collect(context.Background(), openIncident(t, store, key, "failing", opened), Sources{Store: store, Secrets: fakeSecrets{}, Late: true})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if key == "app:web" {
+				if e.LastChange == nil || e.LastChange.Operation != "op-before" {
+					t.Fatal("late collection lost the last change before the incident")
+				}
+			} else if len(e.RecentDeploys) != 1 || e.RecentDeploys[0].Operation != "op-before" {
+				t.Fatal("late collection lost the recent deploy before the incident")
+			}
+		})
+	}
+}
+
+// A status page is bounded on input, but its text must be redacted before
+// a display cap can split a known value into an unrecognizable prefix.
+func TestUpstreamTextIsRedactedBeforeItIsCapped(t *testing.T) {
+	store := openStore(t)
+	sealed := fakeSecrets{versions: map[string]map[int]map[string]string{"web": {1: {"API_TOKEN": apiToken}}}}
+	page := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(map[string]any{"status": map[string]string{
+			"indicator":   strings.Repeat("i", noteMax-8) + apiToken,
+			"description": strings.Repeat("d", noteMax-8) + apiToken,
+		}})
+	}))
+	defer page.Close()
+	e, err := Collect(context.Background(), openIncident(t, store, "app:web", "failing", opened), Sources{
+		Store: store, Secrets: sealed, Upstream: []Statuspage{{Name: "status.example.test", Base: page.URL}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(e.Upstream) != 1 {
+		t.Fatal("missing upstream")
+	}
+	for _, text := range []string{e.Upstream[0].Indicator, e.Upstream[0].Description} {
+		if strings.Contains(text, apiToken[:8]) {
+			t.Error("upstream text retained a secret prefix")
+		}
+		if len(text) > noteMax+32 {
+			t.Error("upstream text exceeded its display cap")
+		}
+	}
+}
+
+// journalctl widens its query to whole seconds. Only the exact incident
+// window belongs in saved evidence, including journald's suppression notes.
+func TestJournalEvidenceKeepsOnlyItsExactWindow(t *testing.T) {
+	store := openStore(t)
+	at := opened.Add(500 * time.Millisecond)
+	since := at.Add(-window)
+	journal := &windowJournal{
+		recordingJournal: recordingJournal{containers: []docker.JournalContainer{
+			{Name: "outside", Lines: []docker.JournalLine{{At: at.Add(time.Millisecond), Text: "later"}}},
+			{Name: "web", Lines: []docker.JournalLine{
+				{At: since.Add(-time.Millisecond), Text: "earlier"},
+				{At: since, Text: "start"},
+				{At: at, Text: "end"},
+				{At: at.Add(time.Millisecond), Text: "later"},
+			}},
+		}},
+		notes: []docker.JournalSuppressed{{At: since.Add(-time.Millisecond), Count: 1}, {At: since, Count: 2}, {At: at, Count: 3}, {At: at.Add(time.Millisecond), Count: 4}},
+	}
+	inc := openIncident(t, store, "app:web", "failing", at)
+	e, err := Collect(context.Background(), inc, Sources{Store: store, Secrets: fakeSecrets{}, Journal: journal})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(e.Logs) != 1 || e.Logs[0].Container != "web" || e.Logs[0].LinesTotal != 2 || e.Logs[0].LinesKept != 2 || e.Logs[0].Lines[0].Text != "start" || e.Logs[0].Lines[1].Text != "end" {
+		t.Fatal("journal evidence included output outside its exact window")
+	}
+	if len(e.JournalSuppressed) != 2 || e.JournalSuppressed[0].Count != 2 || e.JournalSuppressed[1].Count != 3 {
+		t.Fatal("journal evidence included suppression notes outside its exact window")
+	}
+}
+
+type windowJournal struct {
+	recordingJournal
+	notes []docker.JournalSuppressed
+}
+
+func (j *windowJournal) Suppressed(context.Context, time.Time, time.Time) ([]docker.JournalSuppressed, error) {
+	return j.notes, nil
+}

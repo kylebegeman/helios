@@ -41,6 +41,9 @@ func (a *app) showDNS(ctx context.Context) error {
 		return err
 	}
 	if len(routes) == 0 {
+		if a.json {
+			return json.NewEncoder(a.stdout).Encode([]dns.Status{})
+		}
 		fmt.Fprintln(a.stdout, "no hosts routed yet")
 		return nil
 	}

@@ -461,7 +461,8 @@ func prepareInit(m *manifest.Manifest, source, stateDir string) (string, error) 
 	if err != nil {
 		return "", fmt.Errorf("data.postgres.init: %w", err)
 	}
-	if !strings.HasPrefix(from, root+string(filepath.Separator)) {
+	relative, err := filepath.Rel(root, from)
+	if err != nil || !filepath.IsLocal(relative) {
 		return "", fmt.Errorf("data.postgres.init: %s leads outside the source", m.Data.Postgres.Init)
 	}
 	info, err := os.Lstat(from)

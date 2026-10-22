@@ -91,7 +91,9 @@ func (s *Store) Checkpoint(ctx context.Context, path string) error {
 		if result != "ok" {
 			return fmt.Errorf("upgrade checkpoint is invalid: %s", result)
 		}
-		return nil
+		// Retain the original snapshot on recovery, with the same privacy
+		// guarantee as a newly written checkpoint.
+		return os.Chmod(path, 0o600)
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return err
 	}

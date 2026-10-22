@@ -147,11 +147,11 @@ func times(n int) string {
 // running shows the current step's line. In a terminal it replaces the
 // line already on screen.
 func (r *Renderer) running(line string) {
-	line = terminalText(line)
 	if !r.tty {
 		r.println(line)
 		return
 	}
+	line = terminalLine(line)
 	if runes := []rune(line); len(runes) > r.width {
 		line = string(runes[:r.width-1]) + "…"
 	}
@@ -185,6 +185,11 @@ func terminalText(s string) string {
 		}
 	}
 	return b.String()
+}
+
+// terminalLine also keeps table fields and updating step lines on one line.
+func terminalLine(s string) string {
+	return strings.NewReplacer("\n", `\n`, "\t", `\t`).Replace(terminalText(s))
 }
 
 // Plan prints a plan the way --plan shows it.
@@ -310,6 +315,7 @@ func (r *Renderer) History(rows []Summary) {
 		r.println("no operations yet")
 		return
 	}
+	r.endLine()
 	w := tabwriter.NewWriter(r.out, 0, 4, 2, ' ', 0)
 	fmt.Fprintln(w, "ID\tKIND\tTARGET\tSTATUS\tWHEN\tNOTE")
 	for _, row := range rows {
@@ -317,7 +323,7 @@ func (r *Renderer) History(rows []Summary) {
 		if row.Interruptions > 0 {
 			note = fmt.Sprintf("interrupted %s; %s", times(row.Interruptions), note)
 		}
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\n", row.ID, row.Kind, row.Target, row.Status, row.CreatedAt.Local().Format("2006-01-02 15:04"), strings.TrimSuffix(note, "; "))
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\n", terminalLine(row.ID), terminalLine(row.Kind), terminalLine(row.Target), terminalLine(string(row.Status)), row.CreatedAt.Local().Format("2006-01-02 15:04"), terminalLine(strings.TrimSuffix(note, "; ")))
 	}
 	w.Flush()
 }

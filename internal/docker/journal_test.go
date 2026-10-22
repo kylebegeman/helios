@@ -136,7 +136,6 @@ func TestJournalLinesSplitByDockerComeBackWhole(t *testing.T) {
 		"bbb 09:04:02 stdout worker up",
 		"aaa 09:04:03 stderr oops",
 		"aaa 09:04:01 stdout aaaabbbbcc",
-		"ccc 09:04:06 stdout cut off",
 	}
 	if !slices.Equal(lines, want) {
 		t.Fatalf("lines\n got %q\nwant %q", lines, want)
@@ -180,9 +179,7 @@ func TestAJournalLineThatLostItsFirstChunksIsLeftOutOfARead(t *testing.T) {
 		}
 	}
 	want := []string{
-		"ccc 09:04:04 a start ",
 		"ddd 09:04:06 one two three",
-		"eee 09:04:09 never finished ",
 		"eee 09:04:10 the next line",
 	}
 	if !slices.Equal(read, want) {

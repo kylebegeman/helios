@@ -292,6 +292,9 @@ func (l *leftovers) volumesStep() kernel.Step {
 				return err
 			}
 			defer e.Close()
+			if err := checkVolumeRemoval(ctx, e, l.volumes); err != nil {
+				return err
+			}
 			for _, v := range l.volumes {
 				removed, err := e.RemoveVolume(ctx, v)
 				if err != nil {

@@ -651,7 +651,8 @@ func deployTo(ctx context.Context, a *app, dir, appName, target string) error {
 // the untracked ones git doesn't ignore; elsewhere, everything but .git
 // and node_modules.
 func sourceFiles(ctx context.Context, dir string) ([]string, error) {
-	if out, err := exec.CommandContext(ctx, "git", "-C", dir, "ls-files", "-z", "--cached", "--others", "--exclude-standard").Output(); err == nil {
+	out, gitErr := exec.CommandContext(ctx, "git", "-C", dir, "ls-files", "-z", "--cached", "--others", "--exclude-standard").Output()
+	if gitErr == nil {
 		var files []string
 		seen := map[string]bool{}
 		for _, f := range strings.Split(string(out), "\x00") {
@@ -666,8 +667,28 @@ func sourceFiles(ctx context.Context, dir string) ([]string, error) {
 		sort.Strings(files)
 		return files, nil
 	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	// A failed Git query must not turn a checkout into an unfiltered upload.
+	// Repositories and worktrees both have .git metadata at their root;
+	// source directories may be nested below that root.
+	resolved, err := filepath.EvalSymlinks(dir)
+	if err != nil {
+		return nil, err
+	}
+	for current := resolved; ; current = filepath.Dir(current) {
+		if _, err := os.Lstat(filepath.Join(current, ".git")); err == nil {
+			return nil, fmt.Errorf("list Git source files: %w", gitErr)
+		} else if !errors.Is(err, os.ErrNotExist) {
+			return nil, err
+		}
+		if filepath.Dir(current) == current {
+			break
+		}
+	}
 	var files []string
-	err := filepath.WalkDir(dir, func(p string, d fs.DirEntry, err error) error {
+	err = filepath.WalkDir(dir, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
@@ -692,18 +713,22 @@ func isEnvironmentFile(path string) bool {
 
 // writeTree writes files as a gzipped tar stream.
 func writeTree(w io.Writer, dir string, files []string) error {
+	root, err := os.OpenRoot(dir)
+	if err != nil {
+		return err
+	}
+	defer root.Close()
 	bw := bufio.NewWriterSize(w, 256<<10)
 	gz := gzip.NewWriter(bw)
 	tw := tar.NewWriter(gz)
 	for _, f := range files {
-		path := filepath.Join(dir, f)
-		info, err := os.Lstat(path)
+		info, err := root.Lstat(f)
 		if err != nil {
 			return err
 		}
 		link := ""
 		if info.Mode()&os.ModeSymlink != 0 {
-			if link, err = os.Readlink(path); err != nil {
+			if link, err = root.Readlink(f); err != nil {
 				return err
 			}
 		} else if !info.Mode().IsRegular() {
@@ -719,7 +744,7 @@ func writeTree(w io.Writer, dir string, files []string) error {
 			return err
 		}
 		if info.Mode().IsRegular() {
-			file, err := os.Open(path)
+			file, err := root.Open(f)
 			if err != nil {
 				return err
 			}

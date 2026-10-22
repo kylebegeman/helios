@@ -131,8 +131,15 @@
           "type": "object"
         },
         "status": {
-          "maximum": 599,
-          "minimum": 0,
+          "anyOf": [
+            {
+              "const": 0
+            },
+            {
+              "maximum": 599,
+              "minimum": 100
+            }
+          ],
           "type": "integer"
         },
         "url": {
@@ -671,6 +678,14 @@
       "allOf": [
         {
           "if": {
+            "properties": {
+              "origin_pull": {
+                "enum": [
+                  "optional",
+                  "required"
+                ]
+              }
+            },
             "required": [
               "origin_pull"
             ]
@@ -706,12 +721,14 @@
           "type": "string"
         },
         "host": {
-          "pattern": "^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\\.)+[a-z]{2,}$",
+          "maxLength": 253,
+          "pattern": "^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\\.)+[a-z]{2,63}$",
           "type": "string"
         },
         "origin_pull": {
           "description": "Check the client certificate Cloudflare presents, minted with helios edge origin-pull mint: optional checks one that is presented, required refuses connections without one. Needs dns: proxied and the same value on every route to the host; omitted takes any connection.",
           "enum": [
+            "",
             "optional",
             "required"
           ],
@@ -1303,7 +1320,7 @@
           "type": "boolean"
         },
         "timeout": {
-          "description": "Go duration such as 10m; only cron and release workloads use it.",
+          "description": "Positive Go duration such as 10m; only cron and release workloads use it.",
           "type": "string"
         },
         "tmpfs": {

@@ -2,6 +2,7 @@ package peer
 
 import (
 	"encoding/binary"
+	"encoding/json"
 	"fmt"
 	"net/netip"
 	"path/filepath"
@@ -164,6 +165,47 @@ func TestLoadRefusesAnInvalidSealedList(t *testing.T) {
 		if tc.secret != "" && strings.Contains(err.Error(), tc.secret) {
 			t.Fatalf("the refusal repeats what was sealed: %v", err)
 		}
+	}
+}
+
+// A malformed name in either sealed peer list is still sealed data.
+// The listener logs Load's error, so it must not repeat that value.
+func TestInvalidSealedPeerNamesAreNotRepeated(t *testing.T) {
+	const invalidName = "sealed-name.example.test"
+	for _, observer := range []bool{false, true} {
+		t.Run(fmt.Sprintf("observer=%v", observer), func(t *testing.T) {
+			store := keyedStore(t)
+			token, err := NewToken()
+			if err != nil {
+				t.Fatal(err)
+			}
+			c := Config{Self: Self{Name: "web1"}}
+			observers := map[string]string{}
+			if observer {
+				observers[invalidName] = Fingerprint(token)
+			} else {
+				c.Peers = []Peer{{Name: invalidName, Mesh: at(in("100.64.0.0/10"), 7700), Public: []string{"https://web2.example.test"}}}
+			}
+			listJSON, err := json.Marshal(c)
+			if err != nil {
+				t.Fatal(err)
+			}
+			observersJSON, err := json.Marshal(observers)
+			if err != nil {
+				t.Fatal(err)
+			}
+			list, readers := string(listJSON), string(observersJSON)
+			if _, err := store.SetAll(manifest.ReservedApp, map[string]*string{ListKey: &list, TokenKey: &token, ObserversKey: &readers}); err != nil {
+				t.Fatal(err)
+			}
+			_, err = Load(store)
+			if err == nil {
+				t.Fatal("a malformed peer name was accepted")
+			}
+			if strings.Contains(err.Error(), invalidName) {
+				t.Fatal("Load's error repeated a value from the sealed peer configuration")
+			}
+		})
 	}
 }
 

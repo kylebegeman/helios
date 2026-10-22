@@ -151,3 +151,16 @@ func TestAMeshAddressIsFoundBackwardsEscapedOrRunIntoNumbers(t *testing.T) {
 		}
 	}
 }
+
+func TestQuotedCredentialValuesAreRedactedWithoutKnowingThem(t *testing.T) {
+	var r redactor
+	for _, input := range []string{
+		`level=info api_key="synthetic quoted value&more" page=2`,
+		`level=info api_key='synthetic quoted value&more' page=2`,
+		`level=info api_key="synthetic \"quoted\" value" page=2`,
+	} {
+		if got := r.String(input); got != "level=info api_key=[redacted] page=2" {
+			t.Error("a quoted credential was not fully redacted")
+		}
+	}
+}

@@ -112,6 +112,8 @@ type Prober struct {
 	Root string
 	// Disk reads a filesystem's free and total bytes; nil means DiskFree.
 	Disk func(path string) (free, total uint64, ok bool)
+	// Memory reads available and total bytes; nil means Memory.
+	Memory func() (available, total uint64, ok bool)
 	// CheckSecrets loads only the revision-bound credentials used by checks.
 	CheckSecrets func(app string, version int) (map[string]string, error)
 	// OriginPullTrust reads the CAs the edge's origin-pull hosts trust;
@@ -680,7 +682,15 @@ func healthProblem(ctx context.Context, info *docker.Info, w manifest.Workload) 
 	if err != nil {
 		return err.Error()
 	}
-	resp, err := (&http.Client{Timeout: 10 * time.Second}).Do(req)
+	resp, err := (&http.Client{Timeout: 10 * time.Second, CheckRedirect: func(next *http.Request, via []*http.Request) error {
+		if len(via) >= 10 {
+			return fmt.Errorf("health check stopped after 10 redirects")
+		}
+		if len(via) == 0 || next.URL.Scheme != via[0].URL.Scheme || next.URL.Host != via[0].URL.Host {
+			return fmt.Errorf("health check refused a redirect outside the checked container")
+		}
+		return nil
+	}}).Do(req)
 	if err != nil {
 		return "doesn't answer: " + trimURLError(err.Error())
 	}
@@ -758,12 +768,21 @@ func (p *Prober) host(ctx context.Context) []Condition {
 		if disk != nil {
 			out = append(out, *disk)
 		}
+	} else {
+		// A missing or invalid measurement says nothing about recovery.
+		out = append(out, Condition{Key: "host:disk", Unknown: true}, Condition{Key: "host:disk-forecast", Unknown: true})
 	}
-	if available, total, ok := Memory(); ok {
+	memory := p.Memory
+	if memory == nil {
+		memory = Memory
+	}
+	if available, total, ok := memory(); ok && total > 0 && available <= total {
 		pct := float64(available) / float64(total) * 100
 		if pct < MemoryAvailableMin {
 			out = append(out, Condition{Key: "host:memory", Subject: "memory", Severity: state.SeverityWarning, Message: fmt.Sprintf("only %s of %s available (%.0f%%)", app.HumanBytes(int64(available)), app.HumanBytes(int64(total)), pct)})
 		}
+	} else {
+		out = append(out, Condition{Key: "host:memory", Unknown: true})
 	}
 	return out
 }

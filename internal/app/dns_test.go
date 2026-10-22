@@ -3,14 +3,18 @@ package app
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/kylebegeman/helios/internal/cloudflare/cloudflaretest"
+	"github.com/kylebegeman/helios/internal/dns"
 	"github.com/kylebegeman/helios/internal/integration"
+	"github.com/kylebegeman/helios/internal/manifest"
 	"github.com/kylebegeman/helios/internal/state"
 )
 
@@ -94,5 +98,110 @@ func TestDroppingARecordNoRouteHereKeeps(t *testing.T) {
 	}
 	if err := plan("*.loom.begam.in"); err != nil {
 		t.Fatalf("a wildcard no route falls under, named: %v", err)
+	}
+}
+
+func TestDNSCleanupPreservesSharedHostsUntilTheLastAppLeaves(t *testing.T) {
+	for _, retire := range []bool{false, true} {
+		t.Run(map[bool]string{false: "remove", true: "retire-route"}[retire], func(t *testing.T) {
+			ctx := context.Background()
+			store := releaseTestStore(t)
+			owner := routeFixture(t, "owner", "/", manifest.DNSProxied)
+			survivor := routeFixture(t, "survivor", "/api", manifest.DNSProxied)
+			saveActive(t, store, owner)
+			saveActive(t, store, survivor)
+			const here = "203.0.113.10"
+			fake := cloudflaretest.New("fixture-token", "example.com")
+			server := httptest.NewServer(fake)
+			defer server.Close()
+			hostname, _ := os.Hostname()
+			fake.Seed(cloudflaretest.Record{Type: "A", Name: "shared.example.com", Content: here, Proxied: true, Comment: dns.Comment("owner", hostname)})
+			sec := newSecrets(t)
+			if _, _, err := integration.Set(sec, integration.CloudflareName, map[string]string{"token": "fixture-token", "api": server.URL + "/client/v4"}); err != nil {
+				t.Fatal(err)
+			}
+			removeRecords := func(app string) error {
+				return (&removal{r: Remove{Store: store, Secrets: sec, Addresses: func(context.Context) []string { return []string{here} }}, in: RemoveInput{App: app}, m: *owner}).dnsStep().Apply(ctx, io.Discard)
+			}
+			var err error
+			if retire {
+				err = store.SetRevisionStatus(ctx, "owner", "20260920-120000", state.RevisionRetired)
+				if err == nil {
+					err = pruneRecords(ctx, store, sec, "owner", []string{here}, io.Discard)
+				}
+			} else {
+				err = removeRecords("owner")
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if records := fake.Records(); len(records) != 1 || records[0].Content != here || records[0].Comment != dns.Comment("survivor", hostname) {
+				t.Fatalf("cleanup removed or orphaned a host still routed by another app: %+v", records)
+			}
+			if err := store.SetRevisionStatus(ctx, "owner", "20260920-120000", state.RevisionRetired); err != nil {
+				t.Fatal(err)
+			}
+			if err := removeRecords("survivor"); err != nil {
+				t.Fatal(err)
+			}
+			if records := fake.Records(); len(records) != 0 {
+				t.Fatalf("the final app's DNS record survived cleanup: %+v", records)
+			}
+		})
+	}
+}
+
+func TestDNSCleanupTransfersExistingOwnershipToAManagedSurvivor(t *testing.T) {
+	for _, record := range []string{"owned", "absent", "foreign"} {
+		t.Run(record, func(t *testing.T) {
+			ctx := context.Background()
+			store := releaseTestStore(t)
+			for _, route := range []struct {
+				app, path string
+				mode      manifest.DNSMode
+			}{{"owner", "/", manifest.DNSProxied}, {"amanual", "/manual", manifest.DNSManual}, {"zmanaged", "/api", manifest.DNSProxied}} {
+				if record == "absent" && route.app == "amanual" {
+					continue
+				}
+				saveActive(t, store, routeFixture(t, route.app, route.path, route.mode))
+			}
+			const here = "203.0.113.10"
+			fake := cloudflaretest.New("fixture-token", "example.com")
+			server := httptest.NewServer(fake)
+			defer server.Close()
+			hostname, _ := os.Hostname()
+			comment := dns.Comment("owner", hostname)
+			if record == "foreign" {
+				comment = "managed by another system"
+			}
+			if record != "absent" {
+				fake.Seed(cloudflaretest.Record{Type: "A", Name: "shared.example.com", Content: here, Proxied: true, Comment: comment})
+			}
+			sec := newSecrets(t)
+			if _, _, err := integration.Set(sec, integration.CloudflareName, map[string]string{"token": "fixture-token", "api": server.URL + "/client/v4"}); err != nil {
+				t.Fatal(err)
+			}
+			mgr, err := DNSManager(sec, []string{here})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := removeUnroutedRecords(ctx, store, mgr, "owner", []string{"shared.example.com"}, io.Discard); err != nil {
+				t.Fatal(err)
+			}
+			records := fake.Records()
+			if record == "absent" {
+				if len(records) != 0 {
+					t.Fatalf("cleanup created DNS: %+v", records)
+				}
+				return
+			}
+			want := comment
+			if record == "owned" {
+				want = dns.Comment("zmanaged", hostname)
+			}
+			if len(records) != 1 || records[0].Comment != want || records[0].Content != here || !records[0].Proxied {
+				t.Fatalf("cleanup changed or orphaned DNS: %+v, want comment %q", records, want)
+			}
+		})
 	}
 }

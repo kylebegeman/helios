@@ -229,7 +229,7 @@ func (c *collection) addEnv(env map[string]string) {
 func (c *collection) lastChange(ctx context.Context, app string) {
 	var last *state.Operation
 	for _, kind := range []string{apps.DeployKind, apps.RollbackKind} {
-		ops, err := c.src.Store.ListFiltered(ctx, state.OperationFilter{Target: app, Kind: kind, Limit: changeScan})
+		ops, err := c.src.Store.ListFiltered(ctx, state.OperationFilter{Target: app, Kind: kind, Until: c.at, Limit: changeScan})
 		if err != nil {
 			c.fail("operations", err)
 			return
@@ -270,7 +270,7 @@ func (c *collection) recentDeploys(ctx context.Context) {
 	since := c.at.Add(-recentWindow)
 	var changes []Change
 	for _, kind := range []string{apps.DeployKind, apps.RollbackKind} {
-		ops, err := c.src.Store.ListFiltered(ctx, state.OperationFilter{Kind: kind, Since: since, Limit: changeScan})
+		ops, err := c.src.Store.ListFiltered(ctx, state.OperationFilter{Kind: kind, Since: since, Until: c.at, Limit: changeScan})
 		if err != nil {
 			c.fail("operations", err)
 			return
@@ -338,11 +338,21 @@ func (c *collection) logs(ctx context.Context, app string) {
 			if name == "" {
 				name = jc.ID[:min(len(jc.ID), 12)]
 			}
-			seen[name] = true
-			log := Log{Container: name, Workload: jc.Workload, Revision: jc.Revision, Source: sourceJournal, LinesTotal: len(jc.Lines)}
-			for _, l := range jc.Lines[max(0, len(jc.Lines)-linesPerContainer):] {
+			log := Log{Container: name, Workload: jc.Workload, Revision: jc.Revision, Source: sourceJournal}
+			for _, l := range jc.Lines {
+				// journalctl widens the query to whole seconds. Keep only
+				// output in the incident's exact window.
+				if l.At.Before(since) || l.At.After(until) {
+					continue
+				}
 				log.Lines = append(log.Lines, Line{T: l.At.UTC(), Stream: l.Stream, Text: clean(l.Text)})
 			}
+			log.LinesTotal = len(log.Lines)
+			if log.LinesTotal == 0 {
+				continue
+			}
+			seen[name] = true
+			log.Lines = log.Lines[max(0, len(log.Lines)-linesPerContainer):]
 			log.LinesKept = len(log.Lines)
 			logs = append(logs, log)
 		}
@@ -377,9 +387,13 @@ func (c *collection) suppressed(ctx context.Context) {
 		c.fail(sourceJournal, err)
 		return
 	}
-	for _, n := range notes[max(0, len(notes)-maxSuppressed):] {
+	for _, n := range notes {
+		if n.At.Before(c.e.Window.Since) || n.At.After(c.e.Window.Until) {
+			continue
+		}
 		c.e.JournalSuppressed = append(c.e.JournalSuppressed, Suppressed{At: n.At.UTC(), Count: n.Count})
 	}
+	c.e.JournalSuppressed = c.e.JournalSuppressed[max(0, len(c.e.JournalSuppressed)-maxSuppressed):]
 }
 
 // engineLogs reads the active revision's containers the journal didn't
@@ -670,7 +684,8 @@ func capStrings(e *Evidence) {
 		}
 	}
 	for i := range e.Upstream {
-		e.Upstream[i].Error = cut(e.Upstream[i].Error, noteMax)
+		u := &e.Upstream[i]
+		u.Indicator, u.Description, u.Error = cut(u.Indicator, noteMax), cut(u.Description, noteMax), cut(u.Error, noteMax)
 	}
 	for i := range e.Errors {
 		e.Errors[i].Error = cut(e.Errors[i].Error, noteMax)

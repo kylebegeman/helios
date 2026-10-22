@@ -234,3 +234,37 @@ func TestABackupPauseIsExcusedUntilItRunsLong(t *testing.T) {
 		t.Fatalf("without a pause: %q", got)
 	}
 }
+
+func TestARestartDoesNotPostponeAnOverdueAlertTest(t *testing.T) {
+	sched, err := manifest.ParseSchedule("15 9 * * 1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	monday := time.Date(2026, 10, 19, 9, 15, 0, 0, time.UTC)
+	for _, tc := range []struct {
+		name string
+		last time.Time
+		now  time.Time
+		due  bool
+	}{
+		{"overdue after restart", monday.Add(-7 * 24 * time.Hour), monday.Add(time.Minute), true},
+		{"not yet due after restart", monday.Add(-7 * 24 * time.Hour), monday.Add(-time.Minute), false},
+		{"already tested this week", monday, monday.Add(time.Minute), false},
+		{"only a single leg was tested", time.Time{}, monday.Add(time.Minute), false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			w, _ := newWatcher(t, nil)
+			record := &AlertTest{At: tc.last, Legs: map[string]LegTest{
+				EmailLeg: {At: tc.now},
+			}}
+			if err := writeAlertTest(w.Store, record); err != nil {
+				t.Fatal(err)
+			}
+			// The daemon starts at now, after any earlier full test. A
+			// recent test of one leg does not move the full test's clock.
+			if got := AlertTestDue(w.Store, sched.Next, tc.now, tc.now); got != tc.due {
+				t.Fatalf("due = %v, want %v after restarting with a full test at %s", got, tc.due, tc.last)
+			}
+		})
+	}
+}

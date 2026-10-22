@@ -354,8 +354,8 @@ func (l *LoomNotifier) post(ctx context.Context, body []byte, key string) loomAn
 		Error      string `json:"error"`
 	}
 	if json.Unmarshal(data, &answer) == nil {
-		if loomCode.MatchString(answer.Error) {
-			a.code = answer.Error
+		if code := l.hide(answer.Error); loomCode.MatchString(code) {
+			a.code = code
 		}
 		a.deliveryID = truncateBytes(l.hide(answer.DeliveryID), 200)
 		a.held = answer.Queued && a.status/100 == 2

@@ -179,7 +179,7 @@ func CheckSource(dir, name string) CheckReport {
 			if context == "" {
 				context = "."
 			}
-			if _, ok := checkPath(at+".build.context", context, true); ok {
+			if buildContext, ok := checkPath(at+".build.context", context, true); ok {
 				dockerfile := w.Build.Dockerfile
 				if dockerfile == "" {
 					dockerfile = "Dockerfile"
@@ -187,7 +187,19 @@ func CheckSource(dir, name string) CheckReport {
 				if filepath.IsAbs(dockerfile) {
 					add("source.outside", at+".build.dockerfile", "Dockerfile must be relative to its build context")
 				} else {
-					checkPath(at+".build.dockerfile", filepath.Join(context, dockerfile), false)
+					if _, ok := checkPath(at+".build.dockerfile", filepath.Join(context, dockerfile), false); ok {
+						// Match the builder's rooted lookup too. A symlink may stay
+						// inside the source yet escape this narrower build context.
+						root, err := os.OpenRoot(buildContext)
+						if err != nil {
+							add("source.unreadable", at+".build.context", err.Error())
+						} else {
+							if _, err := root.Stat(dockerfile); err != nil {
+								add("source.outside", at+".build.dockerfile", "Dockerfile must stay inside its build context: "+err.Error())
+							}
+							root.Close()
+						}
+					}
 				}
 			}
 		}

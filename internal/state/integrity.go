@@ -13,9 +13,10 @@ const integrityLimit = 10
 // which needn't be Helios's own, and returns the problems it found: none
 // when the database is sound. The file is opened for writing so that a
 // write-ahead log or hot journal beside it is read as the database's own
-// program would read it; the connection itself writes nothing.
+// program would read it. mode=rw refuses a missing database instead of
+// creating an empty one that would pass the check; query_only rejects SQL writes.
 func IntegrityCheck(ctx context.Context, path string) ([]string, error) {
-	db, err := sql.Open("sqlite", "file:"+dsnPath.Replace(path)+"?_pragma=busy_timeout(5000)&_pragma=query_only(ON)")
+	db, err := sql.Open("sqlite", "file:"+dsnPath.Replace(path)+"?mode=rw&_pragma=busy_timeout(5000)&_pragma=query_only(ON)")
 	if err != nil {
 		return nil, err
 	}

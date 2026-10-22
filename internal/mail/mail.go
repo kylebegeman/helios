@@ -108,7 +108,10 @@ func Send(ctx context.Context, s Server, m Message) (err error) {
 	if err := w.Close(); err != nil {
 		return fmt.Errorf("mail server %s didn't accept the message: %w", addr, err)
 	}
-	return c.Quit()
+	// DATA's successful final reply accepts responsibility for delivery.
+	// A failed session teardown must not send the same alert through a fallback.
+	_ = c.Quit()
+	return nil
 }
 
 // auth picks PLAIN, which net/smtp only allows over TLS or to localhost,

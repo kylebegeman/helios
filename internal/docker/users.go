@@ -47,11 +47,12 @@ func (u User) String() string {
 
 // rootish reports whether an image's configured user means root.
 func rootish(user string) bool {
-	switch strings.TrimSpace(user) {
-	case "", "root", "0", "0:0", "root:root", "root:0", "0:root":
+	who, _, _ := strings.Cut(strings.TrimSpace(user), ":")
+	if who == "" || who == "root" {
 		return true
 	}
-	return false
+	uid, err := strconv.Atoi(who)
+	return err == nil && uid == 0
 }
 
 // accounts are an image's /etc/passwd and /etc/group.
@@ -161,9 +162,6 @@ func (e *Engine) copyFile(ctx context.Context, containerID, path string) (string
 // uid:gid) into numeric ids, looking names up in the image.
 func (e *Engine) ResolveUser(ctx context.Context, image, user string) (User, error) {
 	user = strings.TrimSpace(user)
-	if rootish(user) {
-		return User{UID: 0, GID: 0, Name: "root"}, nil
-	}
 	who, group, hasGroup := strings.Cut(user, ":")
 	var a *accounts
 	lookup := func() (*accounts, error) {
@@ -175,7 +173,9 @@ func (e *Engine) ResolveUser(ctx context.Context, image, user string) (User, err
 		return a, err
 	}
 	var u User
-	if uid, err := strconv.Atoi(who); err == nil {
+	if rootish(user) {
+		u = User{UID: 0, GID: 0, Name: "root"}
+	} else if uid, err := strconv.Atoi(who); err == nil {
 		u = User{UID: uid, GID: uid}
 		if acc, err := lookup(); err == nil {
 			if known, ok := acc.byUID[uid]; ok {
@@ -194,7 +194,9 @@ func (e *Engine) ResolveUser(ctx context.Context, image, user string) (User, err
 		u = known
 	}
 	if hasGroup {
-		if gid, err := strconv.Atoi(group); err == nil {
+		if group == "root" && u.Root() {
+			u.GID = 0
+		} else if gid, err := strconv.Atoi(group); err == nil {
 			u.GID = gid
 		} else {
 			acc, err := lookup()
@@ -225,7 +227,11 @@ func (e *Engine) EffectiveUser(ctx context.Context, image, manifestUser string) 
 	if rootish(imageUser) {
 		return User{UID: NobodyUID, GID: NobodyGID, Name: "nobody"}, nil
 	}
-	return e.ResolveUser(ctx, image, imageUser)
+	u, err := e.ResolveUser(ctx, image, imageUser)
+	if err == nil && u.Root() {
+		return User{UID: NobodyUID, GID: NobodyGID, Name: "nobody"}, nil
+	}
+	return u, err
 }
 
 // EnsureVolumeOwner gives a volume to a user when it belongs to root,

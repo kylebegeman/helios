@@ -72,23 +72,45 @@ CREATE TABLE IF NOT EXISTS integration_uses (
 // AddSignal adds a sample to an hour's rollup: the value is summed and the
 // sample count grows, so averages come out as value/samples.
 func (s *Store) AddSignal(ctx context.Context, sig Signal) error {
-	if math.IsNaN(sig.Value) || math.IsInf(sig.Value, 0) {
-		return errors.New("signal value must be finite")
+	return s.AddSignals(ctx, []Signal{sig})
+}
+
+// AddSignals adds samples to their hourly rollups in one transaction. If
+// any value or write fails, none of the batch changes the saved rollups.
+func (s *Store) AddSignals(ctx context.Context, signals []Signal) error {
+	if len(signals) == 0 {
+		return nil
 	}
-	result, err := s.db.ExecContext(ctx, `INSERT INTO signals (hour, app, key, metric, value, samples) VALUES (?, ?, ?, ?, ?, ?)
-		ON CONFLICT(hour, app, key, metric) DO UPDATE SET value = value + excluded.value, samples = samples + excluded.samples WHERE ABS(value + excluded.value) <= ?`,
-		unix(sig.Hour.Truncate(time.Hour)), sig.App, sig.Key, sig.Metric, sig.Value, sig.Samples, math.MaxFloat64)
+	for _, sig := range signals {
+		if math.IsNaN(sig.Value) || math.IsInf(sig.Value, 0) {
+			return errors.New("signal value must be finite")
+		}
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
-	count, err := result.RowsAffected()
+	defer tx.Rollback()
+	stmt, err := tx.PrepareContext(ctx, `INSERT INTO signals (hour, app, key, metric, value, samples) VALUES (?, ?, ?, ?, ?, ?)
+		ON CONFLICT(hour, app, key, metric) DO UPDATE SET value = value + excluded.value, samples = samples + excluded.samples WHERE ABS(value + excluded.value) <= ?`)
 	if err != nil {
 		return err
 	}
-	if count == 0 {
-		return errors.New("signal rollup value must stay finite")
+	defer stmt.Close()
+	for _, sig := range signals {
+		result, err := stmt.ExecContext(ctx, unix(sig.Hour.Truncate(time.Hour)), sig.App, sig.Key, sig.Metric, sig.Value, sig.Samples, math.MaxFloat64)
+		if err != nil {
+			return err
+		}
+		count, err := result.RowsAffected()
+		if err != nil {
+			return err
+		}
+		if count == 0 {
+			return errors.New("signal rollup value must stay finite")
+		}
 	}
-	return nil
+	return tx.Commit()
 }
 
 // MaxSignal keeps the largest value seen in an hour.

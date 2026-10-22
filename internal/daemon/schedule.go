@@ -129,7 +129,7 @@ func (s *Scheduler) dueOp(ctx context.Context, kind, schedule string, since, now
 	if err != nil {
 		return false
 	}
-	if last, err := s.Store.LastOfKind(ctx, kind); err == nil && last != nil && last.CreatedAt.After(since) {
+	if last, err := s.Store.LastOfKind(ctx, kind); err == nil && last != nil {
 		since = last.CreatedAt
 	}
 	if since.IsZero() {
@@ -145,7 +145,7 @@ func (s *Scheduler) due(ctx context.Context, appName, kind, schedule string, sin
 	if err != nil {
 		return false
 	}
-	if last, err := s.Store.LastBackupRun(ctx, appName, kind); err == nil && last != nil && last.StartedAt.After(since) {
+	if last, err := s.Store.LastBackupRun(ctx, appName, kind); err == nil && last != nil {
 		since = last.StartedAt
 	}
 	if since.IsZero() {

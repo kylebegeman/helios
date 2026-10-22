@@ -220,7 +220,16 @@ func fenceMigration(ctx context.Context, e migrationEngine, stateFile string, m 
 }
 
 func enforceMigration(ctx context.Context, e migrationEngine, record *migrationRecord) error {
-	return enforceMigrationWriters(ctx, e, record, true)
+	err := enforceMigrationWriters(ctx, e, record, true)
+	if ctx.Err() == nil {
+		return err
+	}
+	// Once the fence is durable, cancellation must not leave the remaining
+	// writers running or able to restart. Keep the cancellation result and
+	// retry their stops with a bounded context, without ever resuming them.
+	cleanup, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	return errors.Join(ctx.Err(), err, enforceMigrationWriters(cleanup, e, record, true))
 }
 
 func enforceMigrationWriters(ctx context.Context, e migrationEngine, record *migrationRecord, requireCleanStop bool) error {

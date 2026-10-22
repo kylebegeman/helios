@@ -247,7 +247,7 @@ func TestJobReconciliationUsesImmutableContainerID(t *testing.T) {
 func TestLegacyJobReconciliationDoesNotAdoptAnotherRevision(t *testing.T) {
 	run := state.JobRun{App: "site", Workload: "nightly", Revision: "r1"}
 	owned := []docker.Info{{ID: "newer-id", Name: "bedrock-site-nightly-job-newer", Running: true, Labels: imageLabels("site", "nightly", "r2")}}
-	if got := jobContainerOf(owned, run); got != "" {
+	if got, err := jobContainerOf(owned, run); got != "" || err != nil {
 		t.Fatalf("legacy job adopted newer revision: %s", got)
 	}
 }
@@ -300,5 +300,25 @@ func TestAdoptedCronDaemonCancellationKeepsItsRunOpen(t *testing.T) {
 	adopted.Wait()
 	if len(mustOpen(t, store)) != 1 || len(e.removed) != 0 {
 		t.Fatalf("daemon cancellation settled or removed an unfinished cron: %v", e.removed)
+	}
+}
+
+func TestAmbiguousLegacyCronContainersKeepTheirRunOpen(t *testing.T) {
+	ctx := context.Background()
+	store := releaseTestStore(t)
+	if _, err := store.StartJobRun(ctx, state.JobRun{App: "test", Workload: "nightly", Revision: "r1", Kind: JobCron, StartedAt: time.Now()}); err != nil {
+		t.Fatal(err)
+	}
+	e := &jobFixture{containers: []docker.Info{
+		{ID: "first-id", Name: "bedrock-test-nightly-job-first", Running: true, Labels: imageLabels("test", "nightly", "r1")},
+		{ID: "second-id", Name: "bedrock-test-nightly-job-second", Running: true, Labels: imageLabels("test", "nightly", "r1")},
+	}}
+	adopted, err := reconcileJobRuns(ctx, store, e, mustOpen(t, store), time.Now(), func(string, ...any) {})
+	adopted.Wait()
+	if err == nil || !strings.Contains(err.Error(), "multiple") {
+		t.Fatalf("ambiguous writers were treated as a missing container: %v", err)
+	}
+	if len(mustOpen(t, store)) != 1 || len(e.removed) != 0 {
+		t.Fatalf("ambiguous writers lost their overlap guard: open=%+v removed=%v", mustOpen(t, store), e.removed)
 	}
 }

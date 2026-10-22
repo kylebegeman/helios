@@ -21,6 +21,11 @@ type fakeSMTP struct {
 
 func serve(t *testing.T) (*fakeSMTP, Server) {
 	t.Helper()
+	return serveReplies(t, "250 queued", "221 bye")
+}
+
+func serveReplies(t *testing.T, dataReply, quitReply string) (*fakeSMTP, Server) {
+	t.Helper()
 	l, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
@@ -66,9 +71,11 @@ func serve(t *testing.T) (*fakeSMTP, Server) {
 					b.WriteString(l)
 				}
 				f.data = b.String()
-				w("250 queued")
+				w(dataReply)
 			case line == "QUIT":
-				w("221 bye")
+				if quitReply != "" {
+					w(quitReply)
+				}
 				return
 			default:
 				w("250 ok")
@@ -124,5 +131,27 @@ func TestHeadersStayOnOneLineWhateverTheAddressesHold(t *testing.T) {
 	}
 	if !strings.Contains(headers, "From: a@b  Bcc: x@y") {
 		t.Fatalf("the address was not kept on its line: %q", headers)
+	}
+}
+
+func TestAcceptedMailStaysDeliveredWhenTheServerCannotFinishQuit(t *testing.T) {
+	for _, reply := range []string{"", "451 closing session failed"} {
+		t.Run(reply, func(t *testing.T) {
+			_, server := serveReplies(t, "250 queued", reply)
+			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+			defer cancel()
+			if err := Send(ctx, server, Message{From: "a@example.com", To: []string{"b@example.com"}, Body: "hello"}); err != nil {
+				t.Fatalf("the server accepted the message, but delivery was reported failed: %v", err)
+			}
+		})
+	}
+}
+
+func TestRejectedMailStillFailsBeforeQuit(t *testing.T) {
+	_, server := serveReplies(t, "451 queue unavailable", "221 bye")
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	if err := Send(ctx, server, Message{From: "a@example.com", To: []string{"b@example.com"}, Body: "hello"}); err == nil {
+		t.Fatal("a rejected message was reported delivered")
 	}
 }

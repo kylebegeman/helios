@@ -11,6 +11,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -175,7 +176,7 @@ func (r Rehearse) Plan(ctx context.Context, raw json.RawMessage) (*kernel.Plan, 
 
 func rehearsalNames(workspace string, m *manifest.Manifest, revision string) drillNames {
 	prefix := "bedrock." + m.App + ".rehearse." + revision
-	n := drillNames{dir: filepath.Join(workspace, "restore"), network: prefix, postgres: prefix + ".postgres", postgresVolume: prefix + ".postgres", objects: prefix + ".objects", volumes: map[string]string{}, containers: map[string]string{}}
+	n := drillNames{app: m.App, dir: filepath.Join(workspace, "restore"), network: prefix, postgres: prefix + ".postgres", postgresVolume: prefix + ".postgres", objects: prefix + ".objects", volumes: map[string]string{}, containers: map[string]string{}}
 	for _, v := range m.DataVolumes() {
 		n.volumes[v] = prefix + ".volume." + v
 	}
@@ -193,22 +194,36 @@ func (x *releaseRehearsal) cleanup(ctx context.Context, out io.Writer) error {
 		return err
 	}
 	defer e.Close()
+	if err := checkScratchRemoval(ctx, e, x.names, x.candidate.App); err != nil {
+		return err
+	}
 	var failures []error
 	for _, name := range sortedKeys(x.names.containers) {
 		failures = append(failures, e.Remove(ctx, x.names.containers[name], 5*time.Second))
 	}
-	failures = append(failures, e.Remove(ctx, x.names.postgres, 10*time.Second), e.Remove(ctx, x.names.objects, 10*time.Second), e.RemoveNetwork(ctx, x.names.network))
+	failures = append(failures, e.Remove(ctx, x.names.postgres, 10*time.Second), e.Remove(ctx, x.names.objects, 10*time.Second))
+	if err := errors.Join(failures...); err != nil {
+		return err // Keep restored data and staging until all writers are gone.
+	}
+	failures = append(failures, e.RemoveNetwork(ctx, x.names.network))
 	_, err = e.RemoveVolume(ctx, x.names.postgresVolume)
 	failures = append(failures, err)
 	for _, name := range sortedKeys(x.names.volumes) {
 		_, err := e.RemoveVolume(ctx, x.names.volumes[name])
 		failures = append(failures, err)
 	}
+	images, err := e.OwnedImages(ctx)
+	failures = append(failures, err)
 	for _, group := range buildGroups(x.candidate) {
 		name := group[0]
 		w := x.candidate.Workloads[name]
 		if w.Build != nil || w.Kind == manifest.Static {
-			failures = append(failures, e.RemoveImage(ctx, docker.ImageRef(x.candidate.App, name, "rehearse-"+x.input.Revision)))
+			ref := docker.ImageRef(x.candidate.App, name, "rehearse-"+x.input.Revision)
+			for _, image := range images {
+				if slices.Contains(image.Tags, ref) && image.Labels[docker.LabelApp] == x.candidate.App && image.Labels[docker.LabelWorkload] == name && image.Labels[docker.LabelRevision] == x.input.Revision {
+					failures = append(failures, e.RemoveImage(ctx, ref))
+				}
+			}
 		}
 	}
 	failures = append(failures, os.RemoveAll(x.workspace))

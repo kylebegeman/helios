@@ -247,7 +247,7 @@ func sortedLegs(legs map[string]LegTest) []string {
 // AlertTestDue says whether the weekly test has come round on a schedule
 // since the last full test, or since a starting point when there was none.
 func AlertTestDue(store *state.Store, next func(time.Time) time.Time, since, now time.Time) bool {
-	if record, err := ReadAlertTest(store); err == nil && record != nil && record.At.After(since) {
+	if record, err := ReadAlertTest(store); err == nil && record != nil && !record.At.IsZero() {
 		since = record.At
 	}
 	return !since.IsZero() && !next(since).After(now)

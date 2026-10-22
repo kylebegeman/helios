@@ -84,9 +84,9 @@
 
 <main>
   <header>
-    <div class="eyebrow">Direction · September 21, 2026</div>
+    <div class="eyebrow">Direction · September 21, 2026 · capability inventory refreshed October 21, 2026</div>
     <h1>Helios Direction</h1>
-    <p class="lead">Helios hosts any software on a VPS, and makes the next VPS cost almost nothing. There are no more milestone releases. It stays on 0.7.x and ships one feature at a time. Helios is the new product name; live installations retain their existing identities until the planned migration.</p>
+    <p class="lead">Helios hosts any software on a VPS, and makes the next VPS cost almost nothing. There are no more milestone releases. It stays on 0.7.x and ships one feature at a time. Helios is the product name; installed services and data retain their established identities for compatibility.</p>
     <p class="muted">This replaces the release ladder in the <a href="plan.html">0.7 plan</a>, which is delivered and closed. The backlog is still <a href="ideas.html">Ideas</a>.</p>
   </header>
 
@@ -125,19 +125,21 @@
           <tr><td class="k">Workload shapes</td><td>Done</td><td><code>web</code>, <code>static</code>, <code>worker</code>, <code>cron</code> and <code>release</code>. A release workload runs migrations after the data is up and before the new revision starts.</td></tr>
           <tr><td class="k">Getting an image</td><td>Done</td><td>Build from a Dockerfile with BuildKit into a local registry, or pull a published image. Build context, target stage and args are all in the manifest.</td></tr>
           <tr><td class="k">Routing and TLS</td><td>Done</td><td>Caddy, routes by host and path, certificates issued and renewed automatically, DNS written to Cloudflare to match the manifest. As of 0.7.8 a reload lets upgraded connections finish for up to five minutes instead of cutting them. As of 0.7.9 apps are told their visitor's address, trusting only Cloudflare's ranges to name it, and <code>host setup --web-from cloudflare</code> lets only Cloudflare's proxy reach 80 and 443.</td></tr>
-          <tr><td class="k">Data</td><td>Partial</td><td>Postgres and named volumes are first class. S3-compatible object storage is first class. Everything else, including Redis or MySQL, has to be hand-rolled as a worker with a volume. As of 0.7.9 the daemon alerts, and <code>helios doctor</code> names the fix, when a workload can't write files in its own volume.</td></tr>
-          <tr><td class="k">Secrets</td><td>Done</td><td>Sealed with age against a recovery identity, generated or derived per app, never in arguments, logs, receipts or backups.</td></tr>
+          <tr><td class="k">Data</td><td>Partial</td><td>Postgres and named volumes are first class. S3-compatible object storage is first class, with an <a href="technical/minio-image-availability.md">open production image availability issue</a> for fresh pulls. Everything else, including Redis or MySQL, has to be hand-rolled as a worker with a volume. As of 0.7.9 the daemon alerts, and <code>helios doctor</code> names the fix, when a workload can't write files in its own volume.</td></tr>
+          <tr><td class="k">Secrets</td><td>Done</td><td>Sealed with age against a recovery identity, generated or derived per app. Plaintext values stay out of arguments, logs, receipts and backups; machine recovery preserves sealed histories.</td></tr>
           <tr><td class="k">Backups</td><td>Done</td><td>restic to B2, writers quiesced before the snapshot and the capture refused if a writer had to be killed, scheduled, with restore drills and a verification query. As of 0.7.9 a drill fails when the app can't write what it restored.</td></tr>
           <tr><td class="k">Isolation</td><td>Done</td><td>Read-only root, no capabilities, non-root user, tmpfs <code>/tmp</code>, memory and pid ceilings, all by default and all overridable per workload.</td></tr>
           <tr><td class="k">Housekeeping</td><td>Done</td><td>Nightly at 04:00. Old revisions, unused images, dangling volumes, and build cache trimmed by age and then to an 8&nbsp;GiB ceiling. As of 0.7.9 <code>helios remove --data</code> clears what a removed app left behind, and <code>helios dns drop</code> deletes records that point here with nothing routed.</td></tr>
           <tr><td class="k">Machine setup</td><td>Done</td><td>One command on a fresh Ubuntu 22.04 or 24.04, or Debian 12 or 13, on x86_64 or aarch64. Docker, firewall, key-only SSH, updates, swap and a local registry.</td></tr>
-          <tr><td class="k">Getting Helios onto a machine</td><td>Done</td><td><code>helios upgrade --version</code> as of 0.7.4: the machine fetches its own build and checksums it. <code>scripts/install-release.sh</code> remains the bootstrap for a machine with no bedrock yet.</td></tr>
+          <tr><td class="k">Getting Helios onto a machine</td><td>Done</td><td><code>helios upgrade --version</code> fetches and verifies the selected release. For a fresh machine, <a href="features/targets-and-bootstrap.md"><code>helios --target staging host bootstrap --profile staging.json</code></a> installs a profile-pinned binary and host settings. <code>scripts/install-release.sh</code> supports a direct initial installation.</td></tr>
           <tr><td class="k">Starting a new app</td><td>Done</td><td><code>helios init</code> as of 0.7.3 writes a commented manifest; <code>bedrock launch &lt;repo&gt;</code> as of 0.7.6 goes from a repository to running in one command.</td></tr>
-          <tr><td class="k">Moving an app to its own machine</td><td>Partial</td><td><code>helios move</code> as of 0.7.6: two commands, one per machine, over the shared bucket. Needs both machines reading the same storage, which these two do not.</td></tr>
+          <tr><td class="k">Moving an app to its own machine</td><td>Implemented</td><td><a href="features/safe-moves.md">Rehearsal, final capture, source fencing, staging and explicit cutover</a> preserve a retryable handoff. For apps with data, both machines need access to the selected backup repository.</td></tr>
           <tr><td class="k">Putting a sign-in on a route</td><td>Done</td><td><code>auth: loom</code> as of 0.7.6, through the edge, with no auth code in the app. Fixed in 0.7.7: a status code alone could be answered by the Core's single-page fallback, which left the guard open.</td></tr>
           <tr><td class="k">Previewing a branch</td><td>Done</td><td><code>helios preview up</code> as of 0.7.7. A branch runs as its own app, guarded, with an empty database.</td></tr>
           <tr><td class="k">Publishing a port on the machine</td><td>Done</td><td><code>ports:</code> as of 0.7.8, for a singleton web or worker workload, such as a STUN relay on 3478/udp. Docker publishes ahead of ufw, so <code>helios doctor</code> reports each public port ufw does not allow.</td></tr>
-          <tr><td class="k">Setting up machine number two</td><td>Partial</td><td>Every integration is sealed per machine and typed in again on each new one. Nothing carries over.</td></tr>
+          <tr><td class="k">Setting up machine number two</td><td>Implemented</td><td><a href="features/targets-and-bootstrap.md">Pinned SSH targets, saved host profiles, bootstrap and sealed integration transfer</a> carry configuration to a new machine without retyping secrets.</td></tr>
+          <tr><td class="k">Whole-machine recovery</td><td>Implemented</td><td><a href="features/machine-recovery.md">Self-contained machine snapshots, private rehearsal and explicit cutover</a> restore app state, images and sealed histories onto a clean compatible target.</td></tr>
+          <tr><td class="k">Editor and offline checks</td><td>Implemented</td><td><a href="../schema/README.md">Generated JSON Schema and <code>helios check</code></a> validate source inputs; <code>--host</code> adds read-only target preflight.</td></tr>
           <tr><td class="k">The test bed</td><td>Available</td><td>The disposable Linux lane provides local QEMU guests and guarded SSH targets. CI proves daemon recovery; other workflows report their external prerequisites.</td></tr>
         </tbody>
       </table>
@@ -150,9 +152,9 @@
     <p>The manifest already describes more than anything currently deployed uses. The obstacle was never that Helios could not express a new app, it was that expressing one meant opening an existing app's <code>helios.yaml</code> and copying from it, with nothing in the repo to copy from.</p>
     <p><code>helios init</code> closed that in 0.7.3. It writes a commented manifest for a web, static, worker or cron app, adds a database on request, and validates what it wrote before it reaches disk, so a generated manifest always loads.</p>
     <pre><code>helios init api --host api.example.com --postgres</code></pre>
+    <p>The <a href="../schema/README.md">generated editor schema</a> and <code>helios check</code> now pair with <code>init</code> to validate manifests and source inputs before deployment.</p>
     <p>What is left:</p>
     <ul class="rules">
-      <li><strong>A manifest schema.</strong> Editors could then complete and validate a <code>helios.yaml</code> while it is being written rather than at deploy time. This is <a href="ideas.html#i5">item 5</a>, dropped before 0.7 and worth reviving now that <code>init</code> exists to pair with it.</li>
       <li><strong>Redis or Valkey as a declared data service</strong>, the way Postgres is. It is the one dependency common enough that hand-rolling it as a worker with a volume will keep coming up.</li>
       <li><strong>An adopt path</strong> for software with no Dockerfile. Today the answer is to write one. Whether Helios should ever generate one is an open question, not a plan.</li>
     </ul>
@@ -162,20 +164,9 @@
     <div class="eyebrow">Gap two</div>
     <h2>Any VPS: make the next one cost nothing</h2>
     <p>Every VPS worth buying runs Ubuntu or Debian, and <code>helios host setup</code> takes one from bare to ready in a single command. The distribution is not the problem. The problem is everything around it.</p>
-    <p>Standing up a new machine today is five steps, and three of them are typed in by hand:</p>
-    <pre><code>scripts/install-release.sh 0.7.3 new-box   # get the binary there
-helios host setup                         # one command, fine
-helios integration set cloudflare         # typed in, again
-helios integration set storage            # typed in, again
-helios integration set email              # typed in, again</code></pre>
-    <p>The integrations are the cost. Each one is sealed on the machine it was entered on, so the same Cloudflare token, the same B2 credentials and the same SMTP details are retyped on every new VPS. That is fine twice and tiresome at nine, and retyping a credential is how a wrong one gets in.</p>
-    <p>The work, in the order it is worth doing:</p>
-    <ul class="rules">
-      <li><strong>Integrations that carry over.</strong> <code>integration set</code> already accepts piped <code>field=value</code> lines, so the machinery is there; what is missing is a way to hand a new machine the set the other machines already use, without the values passing through a terminal or a shell history.</li>
-      <li><strong>One command to bring up a machine.</strong> Install, host setup and integrations in a single step against a fresh VPS, so buying one and using one are the same act.</li>
-      <li><strong>Bootstrapping a brand new machine.</strong> Self-upgrade landed in 0.7.4, so a machine already running bedrock fetches and checksums its own builds. Getting the first binary onto a VPS that has nothing is still a push from somewhere else.</li>
-      <li><strong>A maintained proving ground.</strong> Use the disposable Linux lane for runtime and migration proofs. Keep its target-safety guards intact and record any missing external prerequisites.</li>
-    </ul>
+    <p><a href="features/targets-and-bootstrap.md">Targets and bootstrap</a> now cover the repeated setup: a profile pins the binary and host settings, while sealed integration transfer carries selected configuration to the target identity. The target connection, machine, source and approval remain bound through the workflow.</p>
+    <p>Use <a href="features/safe-moves.md">safe moves</a> for an app and <a href="features/machine-recovery.md">machine recovery</a> for a lost host. Both make readiness private before an explicit cutover. Access to the backup repository and protected recovery material remains a prerequisite.</p>
+    <p>The ongoing work is keeping those paths proven: run the disposable Linux lane for runtime, bootstrap, transfer and recovery changes, preserve its target-safety guards, and report external prerequisites separately from passing proofs. New providers or a different deployment experience are product choices, not missing wiring in the existing bootstrap feature.</p>
     <p class="muted">Two things are deliberately not on this list. Distributions beyond Debian and Ubuntu, because nothing needs them and a second package manager is a second setup path forever. And running on a machine in a home rack: it needs an inbound path from the internet that a racked machine does not have, and it is a fun experiment rather than something a business depends on. If that changes, it changes because the rack got a public address, and this page gets revisited then.</p>
   </section>
 

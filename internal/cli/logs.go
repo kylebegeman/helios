@@ -40,15 +40,15 @@ func (a *app) pastLogs(ctx context.Context, p pastLogs) error {
 	}
 	defer store.Close()
 	p.store = store
+	if p.job != "" {
+		return p.ofJob(ctx)
+	}
 	engine, err := docker.Connect(ctx)
 	if err != nil {
 		return err
 	}
 	defer engine.Close()
 	p.engine = engine
-	if p.job != "" {
-		return p.ofJob(ctx)
-	}
 	return p.ofRevision(ctx)
 }
 
@@ -167,6 +167,14 @@ func (p pastLogs) ofJob(ctx context.Context) error {
 	}
 	note := "journal has nothing for this job; showing the last 40 lines kept with the run"
 	if run.Container != "" {
+		if p.engine == nil {
+			engine, err := docker.Connect(ctx)
+			if err != nil {
+				return err
+			}
+			defer engine.Close()
+			p.engine = engine
+		}
 		live, err := p.exists(ctx, run.Container)
 		if err != nil {
 			return err

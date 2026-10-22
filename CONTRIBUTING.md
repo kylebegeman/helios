@@ -1,10 +1,15 @@
 # Contributing To Helios
 
-Helios is one Go program (Go 1.26, no cgo) that runs a machine. Changes
+Helios is one Go program (Go 1.26.10 or newer, no cgo) that runs a machine. Changes
 are small, proven where they can be, and written in plain prose: an error
 says what to do next, a plan says what will change.
 
 ## Development
+
+The module selects Go 1.27.3 with automatic toolchain selection. Use that
+patched toolchain, or a maintained security patch release such as Go 1.26.10
+when explicitly overriding `GOTOOLCHAIN`; older 1.27 builds are not made safe
+by satisfying the module's minimum 1.26 version.
 
 ```sh
 make check   # gofmt, go vet, go test ./...

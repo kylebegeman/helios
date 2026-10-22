@@ -12,7 +12,10 @@ schema through a read-only inspection before opening the file for writes or
 WAL changes. Schema changes live in the migration sequence; generated manifest
 schema stays aligned with the Go validator.
 
-An upgrade probes the actual candidate binary before switching. It checks
+An upgrade binds its plan digest to the candidate binary's SHA-256 checksum
+and checks the bytes again before staging and before the atomic switch. A
+changed binary needs a new inspected plan, even when it reports the same
+version. The upgrade probes the actual candidate binary before switching. It checks
 contract versions, required capabilities and the state reader range, then
 writes a private consistent SQLite checkpoint before staging the binary.
 Checkpoint metadata is bound to the kernel operation ID so an interrupted
@@ -47,6 +50,16 @@ must also report `edge.origin-pull.v1`: an older build reads the stored
 client certificate on that host. The upgrade names those hosts and stops
 before the journal or binary changes; upgrade to a build that has it, or
 deploy those apps without `origin_pull` first.
+
+The secret-store lock now lives beside the store, at `<store>.locks/<app>.lock`,
+so deleting an app cannot unlink a lock a waiting writer already opened. When
+crossing this boundary during an upgrade or rollback, let active secret and
+integration changes, imports, copies, and app removals finish before switching
+binaries. Keep those commands idle until the daemon restart completes, and
+prevent retained binaries using the other lock path from writing afterward.
+Old and new processes cannot coordinate simultaneous writes across that
+boundary. A daemon restart alone does not drain active CLI writers. Encrypted
+secret versions and recovery formats are unchanged.
 
 Automatic binary rollback requires both binaries to read the resulting state.
 A candidate that migrates beyond the running binary's reader is refused with

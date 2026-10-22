@@ -35,3 +35,16 @@ func TestCheckContextsAndCredentialNamesAreValidated(t *testing.T) {
 		})
 	}
 }
+
+func TestChecksRequireAnHTTPStatusOrTheDefault(t *testing.T) {
+	for _, status := range []string{"0", "100", "200", "599", "1", "99", "600"} {
+		_, err := Parse([]byte(checkedApp + "checks:\n  - {url: https://site.example.com/, status: " + status + "}\n"))
+		valid := status == "0" || status == "100" || status == "200" || status == "599"
+		if valid && err != nil {
+			t.Errorf("status %s: %v", status, err)
+		}
+		if !valid && (err == nil || !strings.Contains(err.Error(), "status must be an HTTP status")) {
+			t.Errorf("accepted status %s: %v", status, err)
+		}
+	}
+}

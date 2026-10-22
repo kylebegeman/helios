@@ -271,3 +271,24 @@ func TestAnOperationThatNeverStartedIsNotWaitedOnForever(t *testing.T) {
 		t.Fatalf("got %v", err)
 	}
 }
+
+// A daemon can accept a connection without replying, as a wedged process does.
+// A receipt read must not outlive the time the command promises to wait for it.
+type silentReceiptRunner struct{ api.Runner }
+
+func (silentReceiptRunner) Receipt(ctx context.Context, _ string) (*kernel.Receipt, error) {
+	<-ctx.Done()
+	return nil, ctx.Err()
+}
+
+func TestFollowingASilentDaemonStopsWithinItsPatience(t *testing.T) {
+	shortenFollowing(t, 20*time.Millisecond)
+	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+	defer cancel()
+	var stdout bytes.Buffer
+	a := &app{stdout: &stdout}
+	_, err := a.follow(ctx, silentReceiptRunner{}, a.renderer(), "op-silent")
+	if ctx.Err() != nil || !errors.Is(err, api.ErrDisconnected) {
+		t.Fatalf("a silent receipt read outlived the follow patience: %v (caller: %v)", err, ctx.Err())
+	}
+}

@@ -219,8 +219,9 @@ var (
 	authorizationPattern = regexp.MustCompile(`(?i)(authorization"?\s*[:=]\s*"?)(?:(?:basic|bearer|digest|negotiate|token)\s+)?[^\s"',;]+`)
 	bearerPattern        = regexp.MustCompile(`(?i)\b(bearer\s+)[a-z0-9\-._~+/]+=*`)
 	// credentialPattern is name=value where the name ends in a word that
-	// names a credential, as in a query string or a logfmt line.
-	credentialPattern = regexp.MustCompile(`(?i)(^|[^a-z0-9_.\-])([a-z0-9_.\-]*(?:token|secret|key|password|signature|sig|auth))=[^\s&#;,"'<>]+`)
+	// names a credential, as in a query string or a logfmt line. Quoted
+	// values can contain whitespace and delimiters until their closing quote.
+	credentialPattern = regexp.MustCompile(`(?i)(^|[^a-z0-9_.\-])([a-z0-9_.\-]*(?:token|secret|key|password|signature|sig|auth))=(?:"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|[^\s&#;,"'<>]+)`)
 	// credentialJSONPattern is the same name with a string value in JSON.
 	credentialJSONPattern = regexp.MustCompile(`(?i)("[a-z0-9_.\-]*(?:token|secret|key|password|signature|sig|auth)"\s*:\s*)"(?:[^"\\]|\\.)*"`)
 	tailnetNamePattern    = regexp.MustCompile(`(?i)\b(?:[a-z0-9](?:[a-z0-9\-]*[a-z0-9])?\.)+ts\.net\b`)

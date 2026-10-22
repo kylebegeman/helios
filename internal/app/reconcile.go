@@ -110,7 +110,13 @@ func reconcileJobRunBatch(ctx context.Context, store *state.Store, e jobEngine, 
 	for _, run := range open {
 		name := run.Container
 		if name == "" {
-			name = jobContainerOf(owned, run)
+			var err error
+			name, err = jobContainerOf(owned, run)
+			if err != nil {
+				failures = append(failures, err)
+				pending = append(pending, run)
+				continue
+			}
 		}
 		var info *docker.Info
 		var inspectErr error
@@ -228,18 +234,18 @@ func jobContainerMatches(info *docker.Info, run state.JobRun) bool {
 // jobContainerOf finds the one running job container that carries a run's
 // app and workload, for a run recorded before the container's name was
 // kept. Two candidates mean neither can be called this run's.
-func jobContainerOf(owned []docker.Info, run state.JobRun) string {
+func jobContainerOf(owned []docker.Info, run state.JobRun) (string, error) {
 	name := ""
 	for _, c := range owned {
 		if !c.Running || !strings.Contains(c.Name, "-job-") || !jobContainerMatches(&c, run) {
 			continue
 		}
 		if name != "" {
-			return ""
+			return "", fmt.Errorf("job %s/%s run %d has multiple matching running containers; inspect them before releasing its overlap guard", run.App, run.Workload, run.ID)
 		}
 		name = c.ID
 	}
-	return name
+	return name, nil
 }
 
 // settleJobRun records how a run the daemon lost track of ended and removes

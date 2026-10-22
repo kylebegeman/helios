@@ -216,6 +216,8 @@ type Receiver struct {
 	pending map[string]bool
 }
 
+const maxWebhookBody = 5 << 20
+
 type pushEvent struct {
 	Ref     string `json:"ref"`
 	After   string `json:"after"`
@@ -243,9 +245,13 @@ func (r *Receiver) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		http.NotFound(w, req)
 		return
 	}
-	body, err := io.ReadAll(io.LimitReader(req.Body, 5<<20))
+	body, err := io.ReadAll(io.LimitReader(req.Body, maxWebhookBody+1))
 	if err != nil {
 		http.Error(w, "can't read the body", http.StatusBadRequest)
+		return
+	}
+	if len(body) > maxWebhookBody {
+		http.Error(w, "webhook body is too large", http.StatusRequestEntityTooLarge)
 		return
 	}
 	values, _, err := r.Secrets.LoadCurrent(integration.App)
@@ -532,9 +538,11 @@ func (r *Receiver) fetch(ctx context.Context, h state.GitHook) (string, string, 
 		return commit, signer, "", err
 	}
 	if err := ExportCommit(ctx, mirror, commit, dir); err != nil {
+		_ = os.RemoveAll(dir)
 		return commit, signer, "", err
 	}
 	if _, err := CheckSource(dir, h.App); err != nil {
+		_ = os.RemoveAll(dir)
 		return commit, signer, "", err
 	}
 	return commit, signer, dir, nil

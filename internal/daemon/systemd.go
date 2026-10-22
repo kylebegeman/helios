@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -37,7 +38,7 @@ OnFailure=bedrock-rollback.service
 [Service]
 Type=notify
 NotifyAccess=main
-ExecStart=%s daemon run
+ExecStart=%s
 Restart=always
 RestartSec=2
 WatchdogSec=30
@@ -52,6 +53,19 @@ LimitNOFILE=65536
 [Install]
 WantedBy=multi-user.target
 `
+
+func daemonUnit(executable string) string {
+	// systemd rejects quotes and backslashes in its executable name, even
+	// when quoted. Pass the path as an argument to a fixed shell command;
+	// exec preserves the main PID for notifications, watchdog and signals.
+	args := []string{":/bin/sh", "-c", `exec "$@"`, "sh", executable, "daemon", "run"}
+	for i, arg := range args {
+		// systemd unquotes C-style strings and expands percent specifiers in
+		// every argument. ':' disables its dollar/environment expansion.
+		args[i] = strconv.Quote(strings.ReplaceAll(arg, "%", "%%"))
+	}
+	return fmt.Sprintf(unitTemplate, strings.Join(args, " "))
+}
 
 // RollbackUnitPath is the unit systemd runs when the daemon can't start.
 const RollbackUnitPath = "/etc/systemd/system/bedrock-rollback.service"
@@ -90,7 +104,7 @@ func Install(ctx context.Context, out io.Writer) error {
 		path, content string
 		mode          os.FileMode
 	}{
-		{UnitPath, fmt.Sprintf(unitTemplate, exe), 0o644},
+		{UnitPath, daemonUnit(exe), 0o644},
 		{RollbackUnitPath, rollbackUnit, 0o644},
 		{host.RollbackScript, host.RollbackScriptContent, 0o755},
 	} {

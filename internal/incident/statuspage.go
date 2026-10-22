@@ -89,5 +89,7 @@ func (s Statuspage) Fetch(ctx context.Context) (indicator, description string, e
 	if page.Status.Indicator == "" {
 		return "", "", errors.New("the status page has no indicator")
 	}
-	return cut(page.Status.Indicator, noteMax), cut(page.Status.Description, noteMax), nil
+	// Keep complete values until collection redacts them; cutting here could
+	// leave a secret prefix that no longer matches its known value.
+	return page.Status.Indicator, page.Status.Description, nil
 }

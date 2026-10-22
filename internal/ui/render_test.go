@@ -148,3 +148,45 @@ func TestHumanOutputEscapesUnicodeControlsButJSONKeepsOriginal(t *testing.T) {
 		t.Fatalf("JSON changed untrusted value: %+v, %v", decoded, err)
 	}
 }
+
+func TestHistoryEscapesTerminalControlsAndKeepsEachOperationOnOneRow(t *testing.T) {
+	row := Summary{
+		ID: "op-1\x1b]52;c;clipboard\x07", Kind: "app.deploy\u009b31m",
+		Target: "site\tforged\nrow", Status: state.Failed, Error: "failed\rhidden\nnext\tcolumn",
+	}
+	var human, machine bytes.Buffer
+	New(&human, false, false).History([]Summary{row})
+	got := human.String()
+	if strings.ContainsAny(got, "\x1b\x07\r\u009b") || strings.Count(got, "\n") != 2 {
+		t.Fatalf("history let a field control the terminal or create a row: %q", got)
+	}
+	for _, want := range []string{`op-1\x1b]52;c;clipboard\x07`, `app.deploy\x9b31m`, `site\tforged\nrow`, `failed\x0dhidden\nnext\tcolumn`} {
+		if !strings.Contains(got, want) {
+			t.Errorf("history lost the visible field %q: %q", want, got)
+		}
+	}
+	New(&machine, true, true).History([]Summary{row})
+	var decoded []Summary
+	if err := json.Unmarshal(machine.Bytes(), &decoded); err != nil || len(decoded) != 1 || decoded[0] != row {
+		t.Fatalf("JSON history changed the original fields: %+v, %v", decoded, err)
+	}
+}
+
+func TestHistoryClearsTheRunningLineBeforeItsTable(t *testing.T) {
+	var out bytes.Buffer
+	r := New(&out, true, false)
+	r.Event(events()[1])
+	r.History([]Summary{{ID: "op-1", Kind: "app.deploy", Target: "site", Status: state.Applying}})
+	if !strings.HasPrefix(out.String(), "\r\033[K  ...  step-1\r\033[KID") {
+		t.Fatalf("history shared the running line: %q", out.String())
+	}
+}
+
+func TestRunningOutputKeepsTabsAndNewlinesOnOneTerminalLine(t *testing.T) {
+	var out bytes.Buffer
+	r := New(&out, true, false)
+	r.Event(kernel.Event{Type: kernel.EventStepOutput, Step: &kernel.StepView{Name: "build"}, Line: "one\ttwo\nthree"})
+	if got, want := out.String(), "\r\033[K  ...  build: one\\ttwo\\nthree"; got != want {
+		t.Fatalf("running output escaped its terminal line: got %q, want %q", got, want)
+	}
+}

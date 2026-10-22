@@ -176,6 +176,38 @@ func TestSummaryReports(t *testing.T) {
 	}
 }
 
+// A URL watch's incident key and subject both hold the watched URL.
+// The summary identifies that incident without sharing its address or any
+// credentials or query values in the URL with other machines.
+func TestSummaryKeepsWatchedURLsPrivate(t *testing.T) {
+	w := setUpWeb1(t)
+	const watched = "https://reader:sample-password@private.mesh.example.test/health?token=sample-token"
+	opened(t, w.store, state.Incident{Key: "watch:" + watched, Subject: watched, Severity: state.SeverityCritical, OpenedAt: now})
+	s := w.server(t)
+	rec := asked(s, at(in("100.64.0.0/10"), 7700), http.MethodGet, SummaryPath, w.keys["web2"], "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("summary answered %d", rec.Code)
+	}
+	for _, private := range []string{"private.mesh.example.test", "sample-password", "sample-token"} {
+		if strings.Contains(rec.Body.String(), private) {
+			t.Fatal("the summary exposed part of a watched URL")
+		}
+	}
+	var summary Summary
+	if err := json.Unmarshal(rec.Body.Bytes(), &summary); err != nil {
+		t.Fatal(err)
+	}
+	if len(summary.Incidents) != 1 || summary.Incidents[0].Key != "watch:1" || summary.Incidents[0].Subject != "watched URL (incident 1)" || summary.Incidents[0].Severity != state.SeverityCritical {
+		t.Fatal("the summary did not identify the watched URL's incident and severity")
+	}
+	rep := summary.report()
+	rep.Legs = []Leg{{Name: "email"}}
+	message := strings.Join(deadMan(*rep), "; ")
+	if !strings.Contains(message, "watched URL (incident 1) (critical)") || strings.Contains(message, watched) {
+		t.Fatal("a peer's silent-alert finding did not safely identify the watched URL's incident")
+	}
+}
+
 // A peer incident's tells count each at its own severity, so a warning
 // told still reads as told to an observer that sees a warning, and never
 // to one that sees the outage. A summary from a version before tells

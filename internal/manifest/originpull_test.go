@@ -153,3 +153,16 @@ func TestARouteWithoutOriginPullMarshalsAsBefore(t *testing.T) {
 		t.Fatalf("json with origin pull: %s", js)
 	}
 }
+
+func TestExplicitlyEmptyOriginPullUsesTheDefaultWithEveryDNSMode(t *testing.T) {
+	for _, dns := range []string{"", "direct", "proxied"} {
+		body := "app: site\nworkloads:\n  web:\n    kind: web\n    image: image\n    port: 8000\n    routes: [{host: site.example.com, dns: '" + dns + "', origin_pull: ''}]\n"
+		m, err := Parse([]byte(body))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(m.OriginPullHosts()) != 0 {
+			t.Fatalf("empty origin pull changed the default: %+v", m.OriginPullHosts())
+		}
+	}
+}

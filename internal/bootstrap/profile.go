@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"regexp"
 
 	"github.com/kylebegeman/helios/internal/host"
@@ -15,6 +16,8 @@ import (
 )
 
 const ProfileVersion = 1
+
+const maxProfileSize = 1 << 20
 
 var checksumPattern = regexp.MustCompile(`^[a-f0-9]{64}$`)
 
@@ -68,11 +71,11 @@ func Load(path string) (Profile, error) {
 		return Profile{}, err
 	}
 	defer f.Close()
-	data, err := io.ReadAll(io.LimitReader(f, (1<<20)+1))
+	data, err := io.ReadAll(io.LimitReader(f, maxProfileSize+1))
 	if err != nil {
 		return Profile{}, err
 	}
-	if len(data) > 1<<20 {
+	if len(data) > maxProfileSize {
 		return Profile{}, errors.New("bootstrap profile is oversized")
 	}
 	var p Profile
@@ -94,5 +97,24 @@ func Save(path string, p Profile) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(path, append(data, '\n'), 0o600)
+	data = append(data, '\n')
+	if len(data) > maxProfileSize {
+		return errors.New("bootstrap profile is oversized")
+	}
+	f, err := os.CreateTemp(filepath.Dir(path), ".bootstrap-profile-*")
+	if err != nil {
+		return err
+	}
+	defer os.Remove(f.Name())
+	if _, err = f.Write(data); err == nil {
+		err = f.Sync()
+	}
+	closeErr := f.Close()
+	if err == nil {
+		err = closeErr
+	}
+	if err != nil {
+		return err
+	}
+	return os.Rename(f.Name(), path)
 }

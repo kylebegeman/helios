@@ -55,7 +55,7 @@ func (s Scaffold) Check() error {
 		if s.Host == "" {
 			return fmt.Errorf("a %s app is reached by a hostname: pass --host, such as --host %s.example.com", s.Kind, s.App)
 		}
-		if !hostPattern.MatchString(s.Host) {
+		if !ValidHost(s.Host) {
 			return fmt.Errorf("--host %q isn't a hostname such as %s.example.com", s.Host, s.App)
 		}
 	case Worker, Cron:
@@ -149,7 +149,7 @@ func (r *rendering) static() {
 	r.w("  # no image and no port; the edge serves the directory itself.\n")
 	r.w("  pages:\n")
 	r.w("    kind: static\n")
-	r.w("    dir: %s\n", dir)
+	r.w("    dir: %q\n", dir)
 	r.w("    routes:\n")
 	r.w("      - host: %s\n", r.s.Host)
 }

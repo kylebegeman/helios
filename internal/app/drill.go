@@ -50,6 +50,7 @@ func drillAdvice(app string) string {
 
 // drillNames are the scratch things a drill makes.
 type drillNames struct {
+	app                                             string
 	dir, network, postgres, postgresVolume, objects string
 	volumes                                         map[string]string // app volume name -> drill volume
 	containers                                      map[string]string // workload -> drill container
@@ -61,6 +62,7 @@ func newDrillNames(stateDir string, m *manifest.Manifest) drillNames {
 	// another app's volumes, which the cleanup would otherwise remove.
 	prefix := drillPrefix(app)
 	n := drillNames{
+		app:            app,
 		dir:            filepath.Join(stateDir, "drills", app),
 		network:        prefix,
 		postgres:       prefix + ".postgres",
@@ -80,22 +82,33 @@ func newDrillNames(stateDir string, m *manifest.Manifest) drillNames {
 	return n
 }
 
-// cleanup removes everything a drill made. It never fails loudly: what
-// it can't remove, the next drill removes first.
-func (n drillNames) cleanup(e *docker.Engine) {
+// cleanup removes everything a drill made. A failed writer removal keeps
+// the restored data and staging intact until the next cleanup can stop it.
+func (n drillNames) cleanup(e *docker.Engine) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
-	for _, c := range n.containers {
-		_ = e.Remove(ctx, c, 5*time.Second)
+	if err := checkScratchRemoval(ctx, e, n, n.app); err != nil {
+		return err
 	}
-	_ = e.Remove(ctx, n.postgres, 10*time.Second)
-	_ = e.Remove(ctx, n.objects, 10*time.Second)
-	_ = e.RemoveNetwork(ctx, n.network)
-	_, _ = e.RemoveVolume(ctx, n.postgresVolume)
-	for _, v := range n.volumes {
-		_, _ = e.RemoveVolume(ctx, v)
+	var failures []error
+	for _, name := range sortedKeys(n.containers) {
+		failures = append(failures, e.Remove(ctx, n.containers[name], 5*time.Second))
 	}
-	_ = os.RemoveAll(n.dir)
+	failures = append(failures, e.Remove(ctx, n.postgres, 10*time.Second), e.Remove(ctx, n.objects, 10*time.Second))
+	if err := errors.Join(failures...); err != nil {
+		return fmt.Errorf("remove drill writers: %w", err)
+	}
+	failures = append(failures, e.RemoveNetwork(ctx, n.network))
+	_, err := e.RemoveVolume(ctx, n.postgresVolume)
+	failures = append(failures, err)
+	for _, name := range sortedKeys(n.volumes) {
+		_, err := e.RemoveVolume(ctx, n.volumes[name])
+		failures = append(failures, err)
+	}
+	if err := errors.Join(failures...); err != nil {
+		return fmt.Errorf("remove drill scratch resources: %w", err)
+	}
+	return os.RemoveAll(n.dir)
 }
 
 // drillState is one drill being planned: what its steps share, and each
@@ -116,8 +129,7 @@ type drillState struct {
 }
 
 func (d *drillState) abort(e *docker.Engine, err error) error {
-	d.names.cleanup(e)
-	return d.run.fail(err)
+	return d.run.fail(errors.Join(err, d.names.cleanup(e)))
 }
 
 // Plan implements kernel.Definition.
@@ -189,7 +201,9 @@ func (d *drillState) restoreStep() kernel.Step {
 				return d.run.fail(err)
 			}
 			defer e.Close()
-			d.names.cleanup(e)
+			if err := d.names.cleanup(e); err != nil {
+				return d.run.fail(err)
+			}
 			if err := os.MkdirAll(d.names.dir, 0o700); err != nil {
 				return d.abort(e, err)
 			}
@@ -675,7 +689,9 @@ func (d *drillState) cleanupStep() kernel.Step {
 				return d.run.fail(err)
 			}
 			defer e.Close()
-			d.names.cleanup(e)
+			if err := d.names.cleanup(e); err != nil {
+				return d.run.fail(err)
+			}
 			if d.found == nil {
 				// Resumed past the restore step: the record can't say more.
 				return d.run.fail(errors.New("the drill was interrupted; run it again"))
