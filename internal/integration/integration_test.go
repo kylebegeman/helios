@@ -148,6 +148,9 @@ func TestEmailAddressesLoadAsSMTPEnvelopeMailboxes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if email.FromName != "Helios Alerts" {
+		t.Fatalf("email sender display name was lost: %q", email.FromName)
+	}
 	if email.From != "helios@example.com" || len(email.To) != 2 || email.To[0] != "jane@example.com" || email.To[1] != "ops@example.com" {
 		t.Fatalf("email did not load plain envelope mailboxes: from=%q to=%q", email.From, email.To)
 	}

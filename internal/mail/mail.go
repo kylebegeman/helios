@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	stdmail "net/mail"
 	"net/smtp"
 	"strconv"
 	"strings"
@@ -25,10 +26,11 @@ type Server struct {
 
 // Message is one plain-text mail.
 type Message struct {
-	From    string
-	To      []string
-	Subject string
-	Body    string
+	From     string // Plain mailbox for the SMTP envelope.
+	FromName string // Optional display name for the message header only.
+	To       []string
+	Subject  string
+	Body     string
 }
 
 // Send delivers a message. Port 465 speaks TLS from the start; other ports
@@ -182,7 +184,11 @@ func clientName() string {
 
 func (m Message) render() string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "From: %s\r\n", headerLine(m.From))
+	from := headerLine(m.From)
+	if m.FromName != "" {
+		from = (&stdmail.Address{Address: from, Name: headerLine(m.FromName)}).String()
+	}
+	fmt.Fprintf(&b, "From: %s\r\n", from)
 	to := make([]string, 0, len(m.To))
 	for _, addr := range m.To {
 		to = append(to, headerLine(addr))

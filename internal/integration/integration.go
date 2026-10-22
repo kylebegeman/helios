@@ -657,6 +657,7 @@ type Email struct {
 	User     string
 	Password string
 	From     string
+	FromName string
 	To       []string
 }
 
@@ -693,25 +694,25 @@ func loadEmail(store *secrets.Store, name string) (*Email, error) {
 		return nil, err
 	}
 	port, _ := strconv.Atoi(v["smtp_port"])
-	return &Email{Name: name, Host: v["smtp_host"], Port: port, User: v["smtp_user"], Password: v["smtp_password"], From: from, To: to}, nil
+	return &Email{Name: name, Host: v["smtp_host"], Port: port, User: v["smtp_user"], Password: v["smtp_password"], From: from.Address, FromName: from.Name, To: to}, nil
 }
 
 // emailAddresses keeps the SMTP envelope to mailboxes, even when a person
 // enters display names. Only the recipient field accepts an address list.
-func emailAddresses(name string, values map[string]string) (string, []string, error) {
+func emailAddresses(name string, values map[string]string) (*mail.Address, []string, error) {
 	from, err := mail.ParseAddress(values["from"])
 	if err != nil {
-		return "", nil, fmt.Errorf("%s.from: isn't an address", name)
+		return nil, nil, fmt.Errorf("%s.from: isn't an address", name)
 	}
 	recipients, err := mail.ParseAddressList(values["to"])
 	if err != nil || len(recipients) == 0 {
-		return "", nil, fmt.Errorf("%s.to: isn't an address list", name)
+		return nil, nil, fmt.Errorf("%s.to: isn't an address list", name)
 	}
 	to := make([]string, 0, len(recipients))
 	for _, address := range recipients {
 		to = append(to, address.Address)
 	}
-	return from.Address, to, nil
+	return from, to, nil
 }
 
 // Pushover is the Pushover application and user alerts go to.
