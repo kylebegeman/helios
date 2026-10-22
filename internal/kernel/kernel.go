@@ -343,7 +343,7 @@ func (e *Engine) recoverOperation(ctx context.Context, op *state.Operation, emit
 	defer cancel()
 	stopRenewing := e.keepLease(ctx, op.ID, cancel)
 	defer stopRenewing()
-	plan, view, planErr := e.plan(ctx, op.Kind, op.Input)
+	plan, view, planErr := e.plan(withOperationID(ctx, op.ID), op.Kind, op.Input)
 	switch {
 	case planErr != nil:
 		return e.abandon(ctx, op, "interrupted, and the plan can't be rebuilt: "+planErr.Error(), emit)

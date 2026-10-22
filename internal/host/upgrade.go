@@ -221,7 +221,46 @@ func (u Upgrade) Plan(ctx context.Context, raw json.RawMessage) (*kernel.Plan, e
 			},
 		},
 	)
+	if err := u.preserveLegacySwitch(ctx, plan); err != nil {
+		return nil, err
+	}
 	return plan, nil
+}
+
+// preserveLegacySwitch retains the pre-0.7.19 description only when recovery
+// has already completed the binary switch. No executable installation can run
+// under this legacy approval. The kernel still checks every semantic field and
+// the original digest before resuming restart/verify, and retains that digest
+// in the receipt. New plans always bind the executable bytes.
+func (u Upgrade) preserveLegacySwitch(ctx context.Context, plan *kernel.Plan) error {
+	id := kernel.OperationID(ctx)
+	if id == "" || u.Store == nil {
+		return nil
+	}
+	op, steps, err := u.Store.Get(ctx, id)
+	if err != nil {
+		return fmt.Errorf("read recovering upgrade: %w", err)
+	}
+	if op.Kind != UpgradeKind || op.Status != state.Applying || len(steps) != len(plan.Steps) {
+		return nil
+	}
+	for i, st := range steps {
+		if st.Index != i || st.Name != plan.Steps[i].Name {
+			return nil
+		}
+	}
+	if steps[0].Status != state.StepSucceeded || steps[1].Status != state.StepSucceeded {
+		return nil
+	}
+	var saved kernel.PlanView
+	if json.Unmarshal(op.Plan, &saved) != nil || len(saved.Steps) != len(plan.Steps) {
+		return nil
+	}
+	legacy := "put the new binary at " + BinaryPath
+	if saved.Steps[1].Change == legacy {
+		plan.Steps[1].Change = legacy
+	}
+	return nil
 }
 
 // upgradeSourceChecksum binds a plan to the executable's bytes, even when

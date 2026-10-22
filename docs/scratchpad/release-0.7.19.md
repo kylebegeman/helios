@@ -5,7 +5,9 @@ across the CLI, daemon and app lifecycle. It retains 0.7.18's alert sender names
 while validating and normalizing SMTP envelope addresses.
 
 - Approval digests bind exact one-off argv, revision and extra secret names;
-  upgrade approval binds the candidate executable's bytes.
+  upgrade approval binds the candidate executable's bytes. Already-switched
+  0.7.18 upgrade journals finish restart and verification under their original
+  approval; unfinished legacy switches remain refused.
 - App cleanup preserves foreign resources and scratch data whose writers could
   not be stopped. Move and recovery retries retain reservations and fences and
   revalidate cutover. Cron admission checks holds atomically.
@@ -54,7 +56,12 @@ real SMTP watch regression, and affected vet checks pass with both contracts
 preserved. The merged source passes `make check`: all 107 lane safeguard tests,
 formatting, full vet and the complete Go test suite. Release artifacts, signed
 publication and the personal-vps upgrade remain pending their separate gates.
-No production host has been contacted in this release preparation.
+The cross-version regression reproduced a rejected 0.7.18 journal after its
+binary switch. Recovery now retains only that completed legacy switch
+description, with generic semantic and original-digest checks intact. Host and
+kernel race suites, focused recovery/approval regressions and vet pass. New
+approvals retain checksum binding through recovery. No production host has been
+contacted in this release preparation.
 
 There is no tag-triggered release workflow. The existing
 `scripts/build-release.sh` produces four static platform builds, identical legacy
