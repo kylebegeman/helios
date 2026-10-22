@@ -982,8 +982,13 @@ routes behind a sign-in) and `helios integration set loom_webhook` (a Loom
 task's webhook URL and signing secret, for
 [a thread per critical incident](#a-loom-thread-for-each-critical-incident)).
 Setting one again changes only what is answered; a blank answer keeps the
-current value. `helios integration list` shows which are set and when each
-was last used, never the values.
+current value. `helios integration list` shows nonsecret fields, which integrations
+are set and when each was last used. Credential values stay hidden.
+
+An email integration's `from` can include a display name, such as
+`Helios <helios@example.com>`. Alerts keep that name in the message header
+and use only the address for the SMTP envelope. Each mail server has its own
+sender setting; changing `email` leaves `email2` unchanged.
 
 <details>
 <summary><b>Moving a secret between machines</b></summary>

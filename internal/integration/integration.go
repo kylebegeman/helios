@@ -617,6 +617,7 @@ type Email struct {
 	User     string
 	Password string
 	From     string
+	FromName string
 	To       []string
 }
 
@@ -648,8 +649,12 @@ func loadEmail(store *secrets.Store, name string) (*Email, error) {
 	if err != nil {
 		return nil, err
 	}
+	from, err := mail.ParseAddress(v["from"])
+	if err != nil {
+		return nil, fmt.Errorf("%s.from: isn't an address", name)
+	}
 	port, _ := strconv.Atoi(v["smtp_port"])
-	e := &Email{Name: name, Host: v["smtp_host"], Port: port, User: v["smtp_user"], Password: v["smtp_password"], From: v["from"]}
+	e := &Email{Name: name, Host: v["smtp_host"], Port: port, User: v["smtp_user"], Password: v["smtp_password"], From: from.Address, FromName: from.Name}
 	for _, addr := range strings.Split(v["to"], ",") {
 		if a := strings.TrimSpace(addr); a != "" {
 			e.To = append(e.To, a)
