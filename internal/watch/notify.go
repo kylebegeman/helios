@@ -54,7 +54,7 @@ func (e EmailNotifier) Notify(ctx context.Context, n Notice) error {
 	for _, r := range e.Relays {
 		rctx, cancel := context.WithTimeout(ctx, RelayTimeout)
 		err := send(rctx, mail.Server{Host: r.Host, Port: r.Port, User: r.User, Password: r.Password},
-			mail.Message{From: r.From, To: r.To, Subject: "[helios] " + n.Subject, Body: n.Body})
+			mail.Message{From: r.From, FromName: r.FromName, To: r.To, Subject: "[helios] " + n.Subject, Body: n.Body})
 		cancel()
 		if err == nil {
 			if e.Store != nil {
