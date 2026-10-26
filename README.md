@@ -948,7 +948,8 @@ for restored data, which could make encrypted records unreadable.
 ## Machine recovery and release rehearsal
 
 A new machine backup contains a self-contained catalog, immutable workload
-images and embedded app data from each app's last successful backup. Keep the
+images and embedded app data from each app's last successful backup. An app
+whose backups are off comes back with empty data. Keep the
 source recovery identity, storage password and snapshot inventory separately.
 `helios recover <source-host> --snapshot <id> --identity-file <protected-file>`
 restores onto a clean target with its own identity and validates workloads

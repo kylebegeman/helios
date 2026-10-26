@@ -45,6 +45,10 @@ type machineRecoveryCatalog struct {
 	Images       []string                       `json:"images"`
 	Profile      bool                           `json:"profile"`
 	EmbeddedData bool                           `json:"embedded_data"`
+	// AppInit names the apps with backups off whose database first-run
+	// scripts are embedded without any data, for recovery to start their
+	// empty database the way a deploy does.
+	AppInit []string `json:"app_init,omitempty"`
 }
 
 var fullSnapshotID = regexp.MustCompile(`^[a-f0-9]{64}$`)
@@ -433,6 +437,16 @@ func (b Backup) prepareMachineRecoveryCatalog(ctx context.Context, hostname, sta
 		if !m.HasData() {
 			continue
 		}
+		// An app whose backups are off has no backup to pin, by design:
+		// recovery starts its data empty. An empty database still needs
+		// its first-run scripts, which aren't data, so they come along.
+		if !m.BackedUp() {
+			if keepsOwners(&m) && dirExists(InitDir(b.StateDir, rev.App)) {
+				c.AppInit = append(c.AppInit, rev.App)
+			}
+			fmt.Fprintf(out, "%s's backups are off; the machine backup keeps none of its data\n", rev.App)
+			continue
+		}
 		last, err := source.LastGoodBackupRun(ctx, rev.App, state.BackupRunBackup)
 		if err != nil {
 			return err
@@ -512,6 +526,15 @@ func (b Backup) prepareMachineRecoveryCatalog(ctx context.Context, hostname, sta
 		}
 		c.AppData[rev.App] = provenance
 		fmt.Fprintf(out, "%s's pinned app snapshot embedded in the machine backup\n", rev.App)
+	}
+	for _, app := range c.AppInit {
+		appData := filepath.Join(staging, machineAppDataDir, app)
+		if err := os.MkdirAll(appData, 0o700); err != nil {
+			return err
+		}
+		if out, err := exec.CommandContext(ctx, "cp", "-a", InitDir(b.StateDir, app), filepath.Join(appData, initSnapshotDir)).CombinedOutput(); err != nil {
+			return fmt.Errorf("copy %s's database first-run scripts: %s", app, strings.TrimSpace(string(out)))
+		}
 	}
 	// The archive lands after the copies, so it checks the room they left.
 	if archive > 0 {

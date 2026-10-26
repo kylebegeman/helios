@@ -13,6 +13,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -26,10 +27,12 @@ import (
 )
 
 // stagedApp is one active app in a machine backup's staged state. An app
-// with data has a good backup that pinned pinOf(name) and recorded size.
+// with data has a good backup that pinned pinOf(name) and recorded size,
+// unless its backups are off.
 type stagedApp struct {
 	name  string
 	data  bool
+	off   bool // backup.off: true, and never backed up
 	size  restic.Size
 	image string // what its web workload runs, if anything
 	// finished is when its backup finished; zero is after its revision.
@@ -65,6 +68,9 @@ func activateApps(t *testing.T, r RecoverMachine, apps ...stagedApp) {
 		if a.data {
 			m.Data = &manifest.Data{Volumes: map[string]manifest.Volume{"uploads": {}}}
 		}
+		if a.off {
+			m.Backup = &manifest.Backup{Off: true}
+		}
 		body, _ := json.Marshal(m)
 		rev := state.Revision{App: a.name, ID: "active-code", Manifest: body, CreatedAt: time.Now().UTC()}
 		if a.image != "" {
@@ -76,7 +82,7 @@ func activateApps(t *testing.T, r RecoverMachine, apps ...stagedApp) {
 		if err := r.Store.Activate(ctx, a.name, rev.ID, time.Now().UTC()); err != nil {
 			t.Fatal(err)
 		}
-		if !a.data {
+		if !a.data || a.off {
 			continue
 		}
 		finished := a.finished
@@ -272,6 +278,154 @@ func TestAMachineBackupPlansOnlyTheAppsWithData(t *testing.T) {
 		t.Fatalf("got %v, want %q", err, want)
 	}
 	nothingCopied(t, stage, *commands)
+}
+
+// backedUpRepository answers restic as app's repository would: its
+// snapshots list app's pin, and restoring it writes the manifest and
+// provenance app's backup of rev took. It fails the test for a look at
+// any other app's backups, and returns each restic command with its host.
+func backedUpRepository(t *testing.T, stage string, rev state.Revision, size restic.Size) *[]string {
+	t.Helper()
+	fake := dockertest.New(t)
+	var commands []string
+	fake.OnCreate = func(c dockertest.Container) {
+		switch c.Cmd[0] {
+		case "snapshots":
+			host := c.Cmd[slices.Index(c.Cmd, "--host")+1]
+			commands = append(commands, "snapshots "+host)
+			if host != rev.App {
+				t.Errorf("the machine backup looked for %s's backups", host)
+			}
+			fake.Update(c.Name, func(c *dockertest.Container) {
+				c.ExitAfter = 1
+				c.Logs = snapshotList(pinOf(rev.App), fmt.Sprintf(`{"total_files_processed":%d,"total_bytes_processed":%d}`, size.Files, size.Bytes))
+			})
+		case "restore":
+			commands = append(commands, "restore "+c.Cmd[1])
+			appData := filepath.Join(stage, machineAppDataDir, rev.App)
+			if err := os.WriteFile(filepath.Join(appData, "manifest.json"), rev.Manifest, 0o600); err != nil {
+				t.Error(err)
+			}
+			if err := writeRecoveryJSON(filepath.Join(appData, appBackupProvenanceFile), newAppBackupProvenance(rev, time.Now())); err != nil {
+				t.Error(err)
+			}
+			fake.Update(c.Name, func(c *dockertest.Container) {
+				c.ExitAfter = 1
+				c.Logs = `{"message_type":"summary","files_restored":2,"total_files":2}`
+			})
+		default:
+			commands = append(commands, c.Cmd[0])
+			fake.Update(c.Name, func(c *dockertest.Container) { c.ExitAfter = 1 })
+		}
+	}
+	return &commands
+}
+
+// Backups off is for an app whose data isn't worth keeping, so it has no
+// backup to pin: the machine backup keeps none of its data rather than
+// refusing until it has a backup it can never take.
+func TestAMachineBackupPinsNoDataForAnAppWhoseBackupsAreOff(t *testing.T) {
+	r, _ := recoveryFixture(t)
+	ctx := context.Background()
+	size := restic.Size{Bytes: 12, Files: 1}
+	stage := stageMachineBackup(t, r,
+		stagedApp{name: "hello", data: true, size: size, image: "nginx:alpine"},
+		stagedApp{name: "scratch", data: true, off: true, image: "nginx:alpine"})
+	hello, err := r.Store.GetRevision(ctx, "hello", "active-code")
+	if err != nil {
+		t.Fatal(err)
+	}
+	commands := backedUpRepository(t, stage, *hello, size)
+	dockerCLI(t, "if [ \"$2\" = save ]; then printf archive > \"$4\"; else echo sha256:"+strings.Repeat("c", 64)+"; fi")
+	saved := recoveryImageSizes
+	recoveryImageSizes = func(context.Context, func() (*docker.Engine, error), []string) (int64, error) { return 1 << 20, nil }
+	t.Cleanup(func() { recoveryImageSizes = saved })
+	roomToRestore(t)
+	var out strings.Builder
+	b := Backup{Store: r.Store, Secrets: r.Secrets, StateDir: r.StateDir}
+	if err := b.prepareMachineRecoveryCatalog(ctx, "old-host", stage, &out); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(filepath.Join(stage, machineCatalogFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var c machineRecoveryCatalog
+	if err := json.Unmarshal(data, &c); err != nil {
+		t.Fatal(err)
+	}
+	if want := map[string]string{"hello": pinOf("hello")}; !reflect.DeepEqual(c.AppSnapshots, want) {
+		t.Errorf("pinned %v, want only hello's backup", c.AppSnapshots)
+	}
+	if _, ok := c.AppData["scratch"]; ok || len(c.AppData) != 1 {
+		t.Errorf("recorded data provenance %v, want only hello's", c.AppData)
+	}
+	if want := []string{"snapshots hello", "restore " + pinOf("hello")}; !slices.Equal(*commands, want) {
+		t.Errorf("ran restic %v, want %v", *commands, want)
+	}
+	if _, err := os.Stat(filepath.Join(stage, machineAppDataDir, "scratch")); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("the machine backup staged data for scratch: %v", err)
+	}
+	if want := "scratch's backups are off; the machine backup keeps none of its data\n"; !strings.Contains(out.String(), want) {
+		t.Errorf("the machine backup said %q, not %q", out.String(), want)
+	}
+	if err := validateRecoveryCatalog(c); err != nil {
+		t.Errorf("recovery refuses the catalog: %v", err)
+	}
+}
+
+// An empty database still runs its first-run scripts, and the source's
+// copy of them is the only one, so they go into the machine backup
+// without any of the data.
+func TestAMachineBackupKeepsTheFirstRunScriptsOfADatabaseWhoseBackupsAreOff(t *testing.T) {
+	r, _ := recoveryFixture(t)
+	ctx := context.Background()
+	m := recoveryManifest()
+	m.App = "scratch"
+	m.Data = &manifest.Data{Postgres: &manifest.Postgres{Init: "db/init"}}
+	m.Backup = &manifest.Backup{Off: true}
+	body, _ := json.Marshal(m)
+	rev := state.Revision{App: m.App, ID: "active-code", Manifest: body, CreatedAt: time.Now().UTC()}
+	if err := r.Store.SaveRevision(ctx, rev); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.Store.Activate(ctx, m.App, rev.ID, time.Now().UTC()); err != nil {
+		t.Fatal(err)
+	}
+	init := InitDir(r.StateDir, m.App)
+	if err := os.MkdirAll(init, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(init, "roles.sql"), []byte("create role reader;\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	stage := t.TempDir()
+	if err := r.Store.BackupTo(ctx, filepath.Join(stage, "state.db")); err != nil {
+		t.Fatal(err)
+	}
+	fake := dockertest.New(t)
+	fake.OnCreate = func(c dockertest.Container) {
+		t.Errorf("the machine backup ran %v for an app whose backups are off", c.Cmd)
+	}
+	roomToRestore(t)
+	if err := prepareCatalog(r, stage); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(filepath.Join(stage, machineCatalogFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var c machineRecoveryCatalog
+	if err := json.Unmarshal(data, &c); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(c.AppInit, []string{"scratch"}) || len(c.AppSnapshots) != 0 {
+		t.Fatalf("catalog keeps first-run scripts for %v and pins %v, want scripts for scratch and no pin", c.AppInit, c.AppSnapshots)
+	}
+	kept, err := os.ReadFile(filepath.Join(stage, machineAppDataDir, "scratch", initSnapshotDir, "roles.sql"))
+	if err != nil || string(kept) != "create role reader;\n" {
+		t.Fatalf("the first-run script wasn't kept: %q, %v", kept, err)
+	}
 }
 
 func TestAMachineBackupTooBigToAddUpIsRefused(t *testing.T) {
