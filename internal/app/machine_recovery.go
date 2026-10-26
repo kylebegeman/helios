@@ -384,13 +384,16 @@ func validateRecoveryCatalog(c machineRecoveryCatalog) error {
 				return fmt.Errorf("machine snapshot records no image for %s/%s", m.App, name)
 			}
 		}
-		if m.HasData() && !fullSnapshotID.MatchString(c.AppSnapshots[rev.App]) {
+		// An app whose backups are off has no pin; recovery starts its
+		// data empty.
+		if !m.BackedUp() {
+			continue
+		}
+		if !fullSnapshotID.MatchString(c.AppSnapshots[rev.App]) {
 			return fmt.Errorf("%s has no pinned successful data backup in this machine snapshot; take its data backup before the machine backup", rev.App)
 		}
-		if m.HasData() {
-			if err := validateAppBackupProvenance(rev, c.AppData[rev.App]); err != nil {
-				return err
-			}
+		if err := validateAppBackupProvenance(rev, c.AppData[rev.App]); err != nil {
+			return err
 		}
 	}
 	return nil

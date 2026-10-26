@@ -5,10 +5,14 @@ SQLite state, sealed secret histories, host profile, active workload images and
 the exact last successful data backup for each active app. App data is embedded
 inside the machine snapshot, so later app retention cannot delete the recovery
 point. Run a fresh data backup for every app that keeps data after its current
-deployment and before making the machine backup. Each app snapshot records its
-exact revision, secret version, manifest digest and capture time. Machine backup
-refuses missing provenance, older revisions and changed secret versions, even
-when the volume layout and service versions are identical. The recorded app
+deployment and before making the machine backup. An app whose `helios.yaml`
+sets `backup.off: true`, such as a preview, needs none: the machine backup
+keeps none of its data, only its database's first-run scripts, and recovery
+creates its volumes and database empty, as its first deploy did. Each app
+snapshot records its exact revision, secret version, manifest digest and
+capture time. Machine backup refuses missing provenance, older revisions and
+changed secret versions, even when the volume layout and service versions are
+identical. The recorded app
 recovery points can be older than the machine snapshot;
 inspect the app backup history when choosing how much data loss is acceptable.
 Before losing the source, record its machine snapshot IDs with

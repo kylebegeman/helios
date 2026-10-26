@@ -130,6 +130,17 @@ func (x *machineRecovering) data(ctx context.Context, out io.Writer) error {
 		if err := requireRestoreSecrets(x.stagedSecrets(), &m); err != nil {
 			return err
 		}
+		if !m.BackedUp() {
+			if err := x.emptyData(ctx, rec, e, rev.App, n); err != nil {
+				return err
+			}
+			rec.DataReady[rev.App] = true
+			if err := x.save(rec); err != nil {
+				return err
+			}
+			fmt.Fprintf(out, "%s's backups are off; its data starts empty\n", rev.App)
+			continue
+		}
 		if err := e.EnsureInternalNetwork(ctx, n.network); err != nil {
 			return err
 		}
@@ -203,6 +214,33 @@ func (x *machineRecovering) data(ctx context.Context, out io.Writer) error {
 	return nil
 }
 
+// emptyData makes the volumes of an app whose backups are off with
+// nothing in them, as its first deploy did, and brings its database's
+// first-run scripts out of the machine snapshot when the backup kept them.
+func (x *machineRecovering) emptyData(ctx context.Context, rec *machineRecoveryRecord, e *docker.Engine, app string, n drillNames) error {
+	for _, v := range sortedKeys(n.volumes) {
+		// Only volumes claimed before creation reach here, so an
+		// unfinished attempt's are reset like a restore's.
+		if _, err := e.RemoveVolume(ctx, n.volumes[v]); err != nil {
+			return err
+		}
+		if err := e.EnsureVolume(ctx, n.volumes[v]); err != nil {
+			return err
+		}
+	}
+	if !slices.Contains(rec.Catalog.AppInit, app) {
+		return nil
+	}
+	target := MachineTarget(x.in.Source)
+	r, _, err := openRepo(x.r.Secrets, e, manifest.ReservedApp, target, nil)
+	if err != nil {
+		return err
+	}
+	_, err = r.Restore(ctx, rec.Snapshot.ID, target, []string{restic.DirMount(x.stage(), false)},
+		restic.DataRoot+"/"+machineAppDataDir+"/"+app+"/"+initSnapshotDir)
+	return err
+}
+
 func compatibleRecoveryData(current, backed *manifest.Manifest) error {
 	a, b := current.DataVolumes(), backed.DataVolumes()
 	slices.Sort(a)
@@ -262,10 +300,16 @@ func (x *machineRecovering) startPrivate(ctx context.Context, rec *machineRecove
 		if err != nil {
 			return err
 		}
-		if !keepsOwners(&m) {
+		switch {
+		case !keepsOwners(&m):
 			svc.InitDir = ""
-		} else if !dirExists(svc.InitDir) {
+		case dirExists(svc.InitDir):
+		case m.BackedUp():
 			return fmt.Errorf("%s's snapshot holds no database init scripts", rev.App)
+		default:
+			// The machine backup keeps the scripts of a database whose
+			// backups are off when the source had them, so it had none.
+			svc.InitDir = ""
 		}
 		svc.Container, svc.Volume, svc.Network = n.postgres, n.postgresVolume, n.network
 		svc.Aliases = []string{PostgresContainer(rev.App)}
@@ -282,21 +326,10 @@ func (x *machineRecovering) startPrivate(ctx context.Context, rec *machineRecove
 			return err
 		}
 		if !rec.DatabaseReady[rev.App] {
-			dump := filepath.Join(n.dir, "postgres.dump")
-			if err := recoveryPlainFile(dump); err != nil {
-				return fmt.Errorf("%s snapshot has no database dump", rev.App)
-			}
-			if _, err := restoreDump(ctx, e, svc, dump, keepsOwners(&m)); err != nil {
-				return err
-			}
-			if query, atLeast := m.VerifyQuery(); query != "" {
-				got, err := scalar(ctx, e, svc, query)
-				if err != nil {
-					return fmt.Errorf("%s verify query: %w", rev.App, err)
-				}
-				count, err := strconv.Atoi(got)
-				if err != nil || count < atLeast {
-					return fmt.Errorf("%s restored database did not meet the verify query minimum of %d", rev.App, atLeast)
+			// A database whose backups are off has no dump: it starts empty.
+			if m.BackedUp() {
+				if err := restoreRecoveryDatabase(ctx, e, svc, &m, filepath.Join(n.dir, "postgres.dump")); err != nil {
+					return err
 				}
 			}
 			rec.DatabaseReady[rev.App] = true
@@ -326,11 +359,12 @@ func (x *machineRecovering) startPrivate(ctx context.Context, rec *machineRecove
 		if err != nil {
 			return err
 		}
-		// Volumes excluded from backups are fresh, just as in a drill.
-		// Give only those empty volumes to the workload; restored file
-		// ownership must remain the ownership captured in the snapshot.
+		// Volumes excluded from backups are fresh, just as in a drill, and
+		// so is every volume of an app whose backups are off. Give only
+		// those empty volumes to the workload; restored file ownership
+		// must remain the ownership captured in the snapshot.
 		for _, mt := range m.Workloads[name].Mounts {
-			if slices.Contains(m.VolumesOutOfBackups(), mt.Volume) {
+			if !m.BackedUp() || slices.Contains(m.VolumesOutOfBackups(), mt.Volume) {
 				if _, err := e.EnsureVolumeOwner(ctx, n.volumes[mt.Volume], u); err != nil {
 					return err
 				}
@@ -349,6 +383,28 @@ func (x *machineRecovering) startPrivate(ctx context.Context, rec *machineRecove
 		}
 	}
 	fmt.Fprintf(out, "%s passed private recovery readiness\n", rev.App)
+	return nil
+}
+
+// restoreRecoveryDatabase loads an app's pinned dump into its started
+// database and checks it against the app's verify query.
+func restoreRecoveryDatabase(ctx context.Context, e *docker.Engine, svc pgService, m *manifest.Manifest, dump string) error {
+	if err := recoveryPlainFile(dump); err != nil {
+		return fmt.Errorf("%s snapshot has no database dump", m.App)
+	}
+	if _, err := restoreDump(ctx, e, svc, dump, keepsOwners(m)); err != nil {
+		return err
+	}
+	if query, atLeast := m.VerifyQuery(); query != "" {
+		got, err := scalar(ctx, e, svc, query)
+		if err != nil {
+			return fmt.Errorf("%s verify query: %w", m.App, err)
+		}
+		count, err := strconv.Atoi(got)
+		if err != nil || count < atLeast {
+			return fmt.Errorf("%s restored database did not meet the verify query minimum of %d", m.App, atLeast)
+		}
+	}
 	return nil
 }
 

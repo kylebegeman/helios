@@ -586,6 +586,77 @@ func TestRecoveryEmbeddedDataStillRequiresMatchingMetadataAndVerifiedSuccess(t *
 	}
 }
 
+// An app whose backups are off has no pin in its machine backup, so
+// recovery starts its data empty: its volumes are made with nothing in
+// them, and its database's first-run scripts come out of the machine
+// snapshot. An app whose backups are on still can't recover without one.
+func TestRecoveryStartsTheDataOfAnAppWhoseBackupsAreOffEmpty(t *testing.T) {
+	ctx := context.Background()
+	r, _ := recoveryFixture(t)
+	in := recoveryInput(true)
+	x := &machineRecovering{r: r, in: in, dir: RecoveryDirectory(r.StateDir, in.ID)}
+	scratch := recoveryManifest()
+	scratch.App = "scratch"
+	scratch.Data = &manifest.Data{Volumes: map[string]manifest.Volume{"uploads": {}}}
+	scratch.Backup = &manifest.Backup{Off: true}
+	notes := recoveryManifest()
+	notes.App = "notes"
+	notes.Data = &manifest.Data{Postgres: &manifest.Postgres{Init: "db/init"}}
+	notes.Backup = &manifest.Backup{Off: true}
+	images := map[string]string{"web": "sha256:" + strings.Repeat("b", 64)}
+	var revs []state.Revision
+	for _, m := range []manifest.Manifest{scratch, notes} {
+		body, _ := json.Marshal(m)
+		revs = append(revs, state.Revision{App: m.App, ID: "source-current", Manifest: body, Images: images, CreatedAt: time.Now().Add(-time.Hour)})
+	}
+	catalog := machineRecoveryCatalog{EmbeddedData: true, Revisions: revs, AppSnapshots: map[string]string{}, AppData: map[string]appBackupProvenance{}, AppInit: []string{"notes"}}
+	if err := validateRecoveryCatalog(catalog); err != nil {
+		t.Fatalf("recovery refuses a catalog with no pin for apps whose backups are off: %v", err)
+	}
+	backedUp := scratch
+	backedUp.Backup = nil
+	body, _ := json.Marshal(backedUp)
+	pinless := catalog
+	pinless.Revisions = []state.Revision{{App: backedUp.App, ID: "source-current", Manifest: body, Images: images}}
+	if err := validateRecoveryCatalog(pinless); err == nil || !strings.Contains(err.Error(), "no pinned successful data backup") {
+		t.Fatalf("an app whose backups are on recovered without its pin: %v", err)
+	}
+	if err := x.save(&machineRecoveryRecord{Input: in, Snapshot: restic.Snapshot{ID: in.Snapshot}, Catalog: catalog, DataReady: map[string]bool{}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := x.stagedSecrets().Set(notes.App, postgresPasswordName, "source-database-value"); err != nil {
+		t.Fatal(err)
+	}
+	fake := dockertest.New(t)
+	var restores [][]string
+	fake.OnCreate = func(c dockertest.Container) {
+		if len(c.Cmd) > 0 && c.Cmd[0] == "restore" {
+			restores = append(restores, c.Cmd)
+			fake.Update(c.Name, func(c *dockertest.Container) {
+				c.ExitAfter = 1
+				c.Logs = `{"message_type":"summary","files_restored":1,"total_files":1}`
+			})
+		}
+	}
+	var out strings.Builder
+	if err := x.data(ctx, &out); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := x.load()
+	if err != nil || !loaded.DataReady[scratch.App] || !loaded.DataReady[notes.App] {
+		t.Fatalf("apps whose backups are off weren't ready to start: %v, %v", loaded.DataReady, err)
+	}
+	if volume := x.names(&scratch).volumes["uploads"]; !slices.Contains(fake.VolumeNames(), volume) {
+		t.Errorf("scratch's volume %s wasn't made; volumes %v", volume, fake.VolumeNames())
+	}
+	if len(restores) != 1 || restores[0][1] != in.Snapshot || !slices.Contains(restores[0], restic.DataRoot+"/"+machineAppDataDir+"/notes/"+initSnapshotDir) {
+		t.Fatalf("restored %v, want only notes' first-run scripts from the machine snapshot", restores)
+	}
+	if want := "scratch's backups are off; its data starts empty\n"; !strings.Contains(out.String(), want) {
+		t.Errorf("recovery said %q, not %q", out.String(), want)
+	}
+}
+
 func TestRecoveryCleanupRefusesReplacedClaimedResources(t *testing.T) {
 	for _, resource := range []string{"container", "network"} {
 		t.Run(resource, func(t *testing.T) {

@@ -138,3 +138,36 @@ func TestMachineRecoveryGivesOnlyExcludedEmptyVolumesToTheirWorkloads(t *testing
 		})
 	}
 }
+
+// Every volume of an app whose backups are off starts empty, so each goes
+// to its workload's user as on the app's first deploy.
+func TestMachineRecoveryGivesEveryVolumeOfAnAppWhoseBackupsAreOffToItsWorkload(t *testing.T) {
+	r, _ := recoveryFixture(t)
+	in := recoveryInput(true)
+	x := &machineRecovering{r: r, in: in, dir: RecoveryDirectory(r.StateDir, in.ID)}
+	m := manifest.Manifest{App: "scratch", Data: &manifest.Data{Volumes: map[string]manifest.Volume{"saved": {}}}, Backup: &manifest.Backup{Off: true},
+		Workloads: map[string]manifest.Workload{"worker": {Kind: manifest.Worker, Image: "worker:1", Mounts: []manifest.Mount{{Volume: "saved", Path: "/saved"}}}}}
+	body, _ := json.Marshal(m)
+	rev := state.Revision{App: m.App, Manifest: body, Images: map[string]string{"worker": "worker:1"}}
+	fake := dockertest.New(t)
+	volume := x.names(&m).volumes["saved"]
+	fake.AddVolume(volume, nil)
+	if err := os.MkdirAll(fake.VolumeDir(volume), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	calls := filepath.Join(t.TempDir(), "ownership-calls")
+	t.Setenv("MACHINE_TEST_CALLS", calls)
+	t.Setenv("MACHINE_TEST_VOLUME", fake.VolumeDir(volume))
+	dockerCLI(t, "printf '%s\\n' \"$@\" >> \"$MACHINE_TEST_CALLS\"\nchmod 777 \"$MACHINE_TEST_VOLUME\"\necho changed")
+	e, err := docker.Connect(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer e.Close()
+	if err := x.startPrivate(context.Background(), &machineRecoveryRecord{}, e, rev, io.Discard); err != nil {
+		t.Fatal("an empty volume of an app whose backups are off prevented private readiness:", err)
+	}
+	if invoked, err := os.ReadFile(calls); err != nil || !strings.Contains(string(invoked), volume+":/v") {
+		t.Fatalf("the empty volume wasn't given to its workload: %s, %v", invoked, err)
+	}
+}
