@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"maps"
 	"path/filepath"
+	"slices"
 	"sort"
 	"time"
 
@@ -16,7 +18,8 @@ import (
 
 // GCKind removes what helios created and no longer needs: containers and
 // images of revisions that are neither active nor kept for rollback, and
-// the build cache. It never touches anything without helios's label.
+// the build cache. An image helios deployed but did not build goes when the
+// last revision that records it is forgotten and no container uses it.
 const GCKind = "app.gc"
 
 // DefaultBuildCacheMax is how much build cache a machine keeps.
@@ -182,7 +185,7 @@ const retiredKept = 5
 
 func (g GC) forgetStep() kernel.Step {
 	return kernel.Step{
-		Name: "forget", Change: "forget retired revisions older than the last five and discard source captures of finished deployments",
+		Name: "forget", Change: "forget retired revisions older than the last five, remove their images that no other revision or container uses, and discard source captures of finished deployments",
 		Apply: func(ctx context.Context, out io.Writer) error {
 			keep, err := gcResourcesToKeep(ctx, g.Store)
 			if err != nil {
@@ -193,22 +196,27 @@ func (g GC) forgetStep() kernel.Step {
 			if err != nil {
 				return err
 			}
+			var forget, stay []state.Revision
 			for _, app := range apps {
 				revs, err := g.Store.Revisions(ctx, app)
 				if err != nil {
 					return err
 				}
-				var old []state.Revision
+				old := 0
 				for _, r := range revs {
 					if (r.Status == state.RevisionRetired || r.Status == state.RevisionFailed) && !keep.revisions[r.App+"/"+r.ID] {
-						old = append(old, r)
+						old++
+						if old > retiredKept {
+							forget = append(forget, r)
+							continue
+						}
 					}
+					stay = append(stay, r)
 				}
-				for _, r := range old[min(retiredKept, len(old)):] {
-					if err := g.Store.ForgetRevision(ctx, r.App, r.ID); err != nil {
-						return err
-					}
-					fmt.Fprintf(out, "forgot %s %s\n", r.App, r.ID)
+			}
+			if len(forget) > 0 {
+				if err := forgetRevisions(ctx, g.Store, keep, forget, stay, out); err != nil {
+					return err
 				}
 			}
 			removed, err := collectDeploySources(ctx, g.Store, filepath.Dir(g.Store.Path()))
@@ -223,12 +231,99 @@ func (g GC) forgetStep() kernel.Step {
 	}
 }
 
+// forgetRevisions removes the images each revision records that nothing else
+// keeps before forgetting it, so a resumed run finds it again. Images compare
+// by local ID, since one image can be recorded by tag, repository digest or ID.
+func forgetRevisions(ctx context.Context, store *state.Store, keep *gcRetention, forget, stay []state.Revision, out io.Writer) error {
+	e, err := docker.Connect(ctx)
+	if err != nil {
+		return err
+	}
+	defer e.Close()
+	local := map[string]*docker.Image{}
+	lookup := func(ref string) (*docker.Image, error) {
+		if img, seen := local[ref]; seen {
+			return img, nil
+		}
+		img, err := e.LocalImage(ctx, ref)
+		if err == nil {
+			local[ref] = img
+		}
+		return img, err
+	}
+	present := false
+	for _, r := range forget {
+		for _, ref := range r.Images {
+			img, err := lookup(ref)
+			if err != nil {
+				return err
+			}
+			present = present || img != nil
+		}
+	}
+	kept := map[string]bool{}
+	if present {
+		if kept, err = e.ImagesInUse(ctx); err != nil {
+			return err
+		}
+		for _, r := range stay {
+			for _, ref := range r.Images {
+				img, err := lookup(ref)
+				if err != nil {
+					return err
+				}
+				if img != nil {
+					kept[img.ID] = true
+				}
+			}
+		}
+	}
+	gone := map[string]bool{}
+	var freed int64
+	for _, r := range forget {
+		for _, ref := range slices.Sorted(maps.Values(r.Images)) {
+			img := local[ref]
+			if img == nil || gone[img.ID] || kept[img.ID] || keep.protects(*img) {
+				continue
+			}
+			if err := e.UntagAndRemove(ctx, *img, ref); err != nil {
+				return err
+			}
+			gone[img.ID] = true
+			freed += img.Size
+			fmt.Fprintf(out, "removed %s\n", ref)
+		}
+		if err := store.ForgetRevision(ctx, r.App, r.ID); err != nil {
+			return err
+		}
+		fmt.Fprintf(out, "forgot %s %s\n", r.App, r.ID)
+	}
+	if freed > 0 {
+		fmt.Fprintf(out, "freed %s\n", megabytes(freed))
+	}
+	return nil
+}
+
 // gcRetention keeps both revision authority and image references. Restored
 // images can retain their original source labels while a new target revision
 // records their immutable image IDs.
 type gcRetention struct {
 	revisions map[string]bool
 	images    map[string]bool
+}
+
+// protects reports whether a kept revision built img or records it under
+// one of its names.
+func (k *gcRetention) protects(img docker.Image) bool {
+	if rev := img.Labels[docker.LabelRevision]; rev != "" && k.revisions[img.Labels[docker.LabelApp]+"/"+rev] {
+		return true
+	}
+	for _, ref := range slices.Concat([]string{img.ID}, img.Tags, img.Digests) {
+		if k.images[ref] {
+			return true
+		}
+	}
+	return false
 }
 
 // gcResourcesToKeep protects live rollback choices, unfinished target
@@ -314,18 +409,7 @@ func staleImages(ctx context.Context, e *docker.Engine, keep *gcRetention) ([]do
 	}
 	var stale []docker.Image
 	for _, img := range images {
-		rev := img.Labels[docker.LabelRevision]
-		if rev == "" || keep.revisions[img.Labels[docker.LabelApp]+"/"+rev] || keep.images[img.ID] {
-			continue
-		}
-		referenced := false
-		for _, ref := range append(img.Tags, img.Digests...) {
-			if keep.images[ref] {
-				referenced = true
-				break
-			}
-		}
-		if !referenced {
+		if img.Labels[docker.LabelRevision] != "" && !keep.protects(img) {
 			stale = append(stale, img)
 		}
 	}

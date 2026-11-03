@@ -6,6 +6,7 @@ import (
 	"math"
 	"os/exec"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -14,7 +15,7 @@ import (
 	"github.com/moby/moby/client/pkg/versions"
 )
 
-// Image is an image helios built.
+// Image is an image on this machine.
 type Image struct {
 	ID      string
 	Tags    []string
@@ -52,6 +53,75 @@ func (e *Engine) OwnedImages(ctx context.Context) ([]Image, error) {
 		out = append(out, Image{ID: img.ID, Tags: tags, Digests: img.RepoDigests, Labels: img.Labels, Size: img.Size})
 	}
 	return out, nil
+}
+
+// LocalImage describes the image ref names on this machine, or is nil when
+// there is none.
+func (e *Engine) LocalImage(ctx context.Context, ref string) (*Image, error) {
+	res, err := e.cli.ImageInspect(ctx, ref)
+	if IsNotFound(err) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("inspect image %s: %w", ref, err)
+	}
+	img := &Image{ID: res.ID, Size: res.Size}
+	if res.Config != nil {
+		img.Labels = res.Config.Labels
+	}
+	for _, name := range res.RepoTags {
+		if !strings.HasPrefix(name, "<none>") {
+			img.Tags = append(img.Tags, name)
+		}
+	}
+	for _, name := range res.RepoDigests {
+		if !strings.HasPrefix(name, "<none>") {
+			img.Digests = append(img.Digests, name)
+		}
+	}
+	return img, nil
+}
+
+// ImagesInUse is the set of IDs of the images containers were created from,
+// running or stopped, helios's or not.
+func (e *Engine) ImagesInUse(ctx context.Context) (map[string]bool, error) {
+	res, err := e.cli.ContainerList(ctx, client.ContainerListOptions{All: true})
+	if err != nil {
+		return nil, err
+	}
+	used := map[string]bool{}
+	for _, c := range res.Items {
+		used[c.ImageID] = true
+	}
+	return used, nil
+}
+
+// UntagAndRemove removes an image without force: each of its names, then
+// the image itself if it is still there. Names in ref's repository go last,
+// so ref finds the image until it is gone. Docker refuses an image a
+// container uses; whatever is already gone is fine.
+func (e *Engine) UntagAndRemove(ctx context.Context, img Image, ref string) error {
+	var names, last []string
+	for _, name := range slices.Concat(img.Tags, img.Digests) {
+		if repository(name) == repository(ref) {
+			last = append(last, name)
+		} else {
+			names = append(names, name)
+		}
+	}
+	for _, name := range append(names, last...) {
+		if err := e.RemoveImage(ctx, name); err != nil {
+			return fmt.Errorf("untag %s: %w", name, err)
+		}
+	}
+	left, err := e.LocalImage(ctx, img.ID)
+	if err != nil || left == nil {
+		return err
+	}
+	if err := e.RemoveImage(ctx, img.ID); err != nil {
+		return fmt.Errorf("remove image %s: %w", img.ID, err)
+	}
+	return nil
 }
 
 // manifestsAPIVersion is the first Engine API version that lists an

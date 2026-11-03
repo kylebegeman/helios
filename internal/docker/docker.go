@@ -674,7 +674,8 @@ func repository(ref string) string {
 	return ref
 }
 
-// RemoveImage deletes an image helios built. Missing is fine.
+// RemoveImage deletes an image, or untags it when ref is one of several
+// names it has, without force. Missing is fine.
 func (e *Engine) RemoveImage(ctx context.Context, ref string) error {
 	_, err := e.cli.ImageRemove(ctx, ref, client.ImageRemoveOptions{})
 	if err != nil && !IsNotFound(err) {

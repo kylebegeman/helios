@@ -31,6 +31,8 @@ type Container struct {
 	ID    string
 	Name  string
 	Image string
+	// ImageID is the ID of the image it was created from, as list reports it.
+	ImageID string
 	// Labels, Env, Entrypoint and Cmd are as created.
 	Labels     map[string]string
 	Env        []string
@@ -342,7 +344,7 @@ func (s *Server) list(w http.ResponseWriter) {
 		if c.Running {
 			state = "running"
 		}
-		items = append(items, map[string]any{"Id": c.ID, "Names": []string{"/" + c.Name}, "Image": c.Image, "Labels": c.Labels, "State": state, "Status": state})
+		items = append(items, map[string]any{"Id": c.ID, "Names": []string{"/" + c.Name}, "Image": c.Image, "ImageID": c.ImageID, "Labels": c.Labels, "State": state, "Status": state})
 	}
 	writeJSON(w, http.StatusOK, items)
 }
