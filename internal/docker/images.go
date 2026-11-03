@@ -121,10 +121,13 @@ func addBytes(a, b int64) int64 {
 // younger than any sensible age limit, so an age rule reclaims nothing
 // exactly when there is most to reclaim. The ceiling is what actually holds
 // the disk; the age pass just keeps stale entries from occupying it.
+//
+// Both passes take --all: without it BuildKit skips every record whose layers
+// an image also holds, which on the containerd image store is most of the cache.
 func PruneBuildCache(ctx context.Context, age time.Duration, keep int64) (int64, error) {
 	reclaimed := int64(0)
 	prune := func(args ...string) error {
-		cmd := exec.CommandContext(ctx, "docker", append([]string{"builder", "prune", "--force"}, args...)...)
+		cmd := exec.CommandContext(ctx, "docker", append([]string{"builder", "prune", "--force", "--all"}, args...)...)
 		result, err := cmd.CombinedOutput()
 		text := strings.TrimSpace(string(result))
 		if err != nil {
@@ -141,9 +144,9 @@ func PruneBuildCache(ctx context.Context, age time.Duration, keep int64) (int64,
 		return reclaimed, err
 	}
 	if keep > 0 {
-		// Docker renamed --keep-storage to --reserved-space; a daemon old
-		// enough to reject the new name still answers to the old one.
-		err := prune("--reserved-space", fmt.Sprintf("%d", keep))
+		// --reserved-space is a floor, not this ceiling; a daemon too old for
+		// --max-used-space still answers to --keep-storage.
+		err := prune("--max-used-space", fmt.Sprintf("%d", keep))
 		if err != nil && strings.Contains(err.Error(), "unknown flag") {
 			err = prune("--keep-storage", fmt.Sprintf("%d", keep))
 		}
