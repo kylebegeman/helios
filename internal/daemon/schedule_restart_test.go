@@ -28,6 +28,30 @@ func TestARestartDoesNotPostponeAnOverdueMachineBackup(t *testing.T) {
 	}
 }
 
+// The machine backup refuses an app whose newest backup predates its active
+// revision, so a deploy after the app's own backup hour would fail that
+// night's machine backup. The app is backed up first, once.
+func TestAnAppDeployedSinceItsLastBackupIsBackedUpBeforeTheMachine(t *testing.T) {
+	store := drillTestStore(t)
+	ctx := context.Background()
+	s := &Scheduler{Store: store, Log: func(string, ...any) {}}
+	m := manifest.Manifest{App: "hello", Backup: &manifest.Backup{Schedule: "0 4 * * *"}}
+	rev := state.Revision{App: "hello", ID: "r2", CreatedAt: time.Date(2026, 11, 2, 0, 44, 0, 0, time.UTC)}
+	recordBackupRun(t, store, state.BackupRunBackup, rev.CreatedAt.Add(-2*time.Minute), state.BackupRun{OK: true})
+	machine := time.Date(2026, 11, 2, 3, 30, 0, 0, time.UTC)
+
+	if s.backupDue(ctx, rev, m, false, machine) {
+		t.Fatal("the app's backup ran before its own hour with no machine backup due")
+	}
+	if !s.backupDue(ctx, rev, m, true, machine) {
+		t.Fatal("the machine backup ran without first backing up an app deployed since its last backup")
+	}
+	recordBackupRun(t, store, state.BackupRunBackup, machine, state.BackupRun{Error: "dump failed"})
+	if s.backupDue(ctx, rev, m, true, machine.Add(time.Minute)) {
+		t.Fatal("a failed catch-up backup ran again on the next tick")
+	}
+}
+
 func TestARestartDoesNotPostponeOverdueGarbageCollection(t *testing.T) {
 	store := drillTestStore(t)
 	ctx := context.Background()
