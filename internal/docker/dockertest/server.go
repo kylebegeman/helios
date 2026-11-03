@@ -231,6 +231,9 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case strings.HasPrefix(path, "/images/") && strings.HasSuffix(path, "/json"):
 		ref := strings.TrimSuffix(strings.TrimPrefix(path, "/images/"), "/json")
 		writeJSON(w, http.StatusOK, map[string]any{"Id": fmt.Sprintf("sha256:%x", sha256.Sum256([]byte(ref))), "Config": map[string]any{"User": ""}})
+	case strings.HasPrefix(path, "/images/") && r.Method == http.MethodDelete:
+		ref := strings.TrimPrefix(path, "/images/")
+		writeJSON(w, http.StatusOK, []map[string]string{{"Deleted": fmt.Sprintf("sha256:%x", sha256.Sum256([]byte(ref)))}})
 	case path == "/images/create":
 		writeJSON(w, http.StatusOK, map[string]any{"status": "pulled"})
 	case path == "/containers/json":
