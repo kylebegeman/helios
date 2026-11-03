@@ -138,7 +138,7 @@ func (p PublishedPort) Whose() string {
 }
 
 // RegistryContainer is the local image registry every build lands in.
-const RegistryContainer = "bedrock-registry"
+const RegistryContainer = docker.RegistryContainer
 
 // Gather looks at the machine. Every probe tolerates its command being
 // missing; the facts just stay zero.

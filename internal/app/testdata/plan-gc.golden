@@ -4,14 +4,17 @@ target this machine, resume
  2 images: remove images of revisions that are neither active nor kept for rollback (nothing to remove)
  3 build-cache: drop build cache older than a day, then keep at most 8.0 GB
  4 forget: forget retired revisions older than the last five, remove their images that no other revision or container uses, and discard source captures of finished deployments
+ 5 registry: delete local registry images of revisions helios no longer has on record, then reclaim their storage
 {"keep_build_cache":true}
 target this machine, resume
  1 containers: remove containers of revisions that are neither active nor kept for rollback (1 container)
  2 images: remove images of revisions that are neither active nor kept for rollback (nothing to remove)
  3 forget: forget retired revisions older than the last five, remove their images that no other revision or container uses, and discard source captures of finished deployments
+ 4 registry: delete local registry images of revisions helios no longer has on record, then reclaim their storage
 {"build_cache_max":-1}
 target this machine, resume
  1 containers: remove containers of revisions that are neither active nor kept for rollback (1 container)
  2 images: remove images of revisions that are neither active nor kept for rollback (nothing to remove)
  3 build-cache: drop build cache older than a day
  4 forget: forget retired revisions older than the last five, remove their images that no other revision or container uses, and discard source captures of finished deployments
+ 5 registry: delete local registry images of revisions helios no longer has on record, then reclaim their storage

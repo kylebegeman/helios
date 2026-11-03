@@ -19,7 +19,8 @@ import (
 // GCKind removes what helios created and no longer needs: containers and
 // images of revisions that are neither active nor kept for rollback, and
 // the build cache. An image helios deployed but did not build goes when the
-// last revision that records it is forgotten and no container uses it.
+// last revision that records it is forgotten and no container uses it, and
+// the local registry drops the images it pushed for forgotten revisions.
 const GCKind = "app.gc"
 
 // DefaultBuildCacheMax is how much build cache a machine keeps.
@@ -34,6 +35,8 @@ const DefaultBuildCacheMax = 8 << 30 // 8 GiB
 // GC is the Definition for GCKind.
 type GC struct {
 	Store *state.Store
+	// Registry is the local registry's address; empty means docker.Registry.
+	Registry string
 }
 
 // GCInput configures a collection.
@@ -81,6 +84,7 @@ func (g GC) Plan(ctx context.Context, raw json.RawMessage) (*kernel.Plan, error)
 		plan.Steps = append(plan.Steps, buildCacheStep(in.BuildCacheMax))
 	}
 	plan.Steps = append(plan.Steps, g.forgetStep())
+	plan.Steps = append(plan.Steps, g.registryStep())
 	return plan, nil
 }
 
