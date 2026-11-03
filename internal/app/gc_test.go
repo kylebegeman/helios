@@ -20,29 +20,52 @@ import (
 
 // Supply actual image metadata around the existing container stand-in so the
 // regression exercises collection, including images loaded from another host.
+// Image sha256:<name> has one name, test/<name>:latest, and answers to its ID
+// and test/<name>@sha256:<name> too; removing it by any of them removes it.
 func gcImageFixture(t *testing.T, fake *dockertest.Server, images map[string]map[string]string) func(string) bool {
 	t.Helper()
 	var mu sync.Mutex
+	repository := func(id string) string { return "test/" + strings.TrimPrefix(id, "sha256:") }
+	resolve := func(ref string) (string, bool) {
+		for id := range images {
+			if ref == id || ref == repository(id)+":latest" || ref == repository(id)+"@"+id {
+				return id, true
+			}
+		}
+		return "", false
+	}
+	describe := func(id string) map[string]any {
+		return map[string]any{"Id": id, "Labels": images[id], "Config": map[string]any{"Labels": images[id]}, "RepoTags": []string{repository(id) + ":latest"}, "RepoDigests": []string{repository(id) + "@" + id}}
+	}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		path := strings.TrimPrefix(r.URL.Path, "/v"+dockertest.APIVersion)
-		switch {
-		case path == "/images/json":
-			mu.Lock()
-			defer mu.Unlock()
-			var listed []any
-			for id, labels := range images {
-				listed = append(listed, map[string]any{"Id": id, "Labels": labels, "RepoTags": []string{"test/" + strings.TrimPrefix(id, "sha256:") + ":latest"}})
-			}
-			w.Header().Set("Content-Type", "application/json")
-			_ = json.NewEncoder(w).Encode(listed)
-		case r.Method == http.MethodDelete && strings.HasPrefix(path, "/images/"):
-			mu.Lock()
-			delete(images, strings.TrimPrefix(path, "/images/"))
-			mu.Unlock()
-			w.Header().Set("Content-Type", "application/json")
-			_ = json.NewEncoder(w).Encode([]any{})
-		default:
+		ref, image := strings.CutPrefix(path, "/images/")
+		inspect := r.Method == http.MethodGet && strings.HasSuffix(ref, "/json")
+		if !image || !(ref == "json" || inspect || r.Method == http.MethodDelete) {
 			fake.ServeHTTP(w, r)
+			return
+		}
+		mu.Lock()
+		defer mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		if ref == "json" {
+			listed := []any{}
+			for id := range images {
+				listed = append(listed, describe(id))
+			}
+			_ = json.NewEncoder(w).Encode(listed)
+			return
+		}
+		id, ok := resolve(strings.TrimSuffix(ref, "/json"))
+		switch {
+		case !ok:
+			w.WriteHeader(http.StatusNotFound)
+			_ = json.NewEncoder(w).Encode(map[string]string{"message": "No such image: " + ref})
+		case inspect:
+			_ = json.NewEncoder(w).Encode(describe(id))
+		default:
+			delete(images, id)
+			_ = json.NewEncoder(w).Encode([]any{})
 		}
 	}))
 	t.Cleanup(server.Close)
@@ -119,12 +142,23 @@ func TestGCPreservesCheckpointTargetsBeyondOrdinaryHistoryLimit(t *testing.T) {
 			m := releaseTestManifest()
 			at := time.Now().UTC()
 			target := releaseTestRevision(t, store, m, "checkpoint-target", state.RevisionRetired, at)
+			// Pulled images carry no helios label; only the revisions record them.
+			target.Images = map[string]string{"web": "test/checkpoint-pull@sha256:checkpoint-pull"}
+			if err := store.SaveRevision(ctx, *target); err != nil {
+				t.Fatal(err)
+			}
 			releaseTestRevision(t, store, m, "active-revision", state.RevisionActive, at.Add(20*time.Minute))
 			if err := store.Activate(ctx, m.App, "active-revision", at.Add(20*time.Minute)); err != nil {
 				t.Fatal(err)
 			}
 			for i := 1; i <= retiredKept+1; i++ {
-				releaseTestRevision(t, store, m, fmt.Sprintf("ordinary-old-%d", i), state.RevisionRetired, at.Add(time.Duration(i)*time.Minute))
+				rev := releaseTestRevision(t, store, m, fmt.Sprintf("ordinary-old-%d", i), state.RevisionRetired, at.Add(time.Duration(i)*time.Minute))
+				if i == 1 {
+					rev.Images = map[string]string{"web": "test/obsolete-pull@sha256:obsolete-pull"}
+					if err := store.SaveRevision(ctx, *rev); err != nil {
+						t.Fatal(err)
+					}
+				}
 			}
 			boundary := state.ReleaseBoundary{App: m.App, Revision: "data-release", PreviousRevision: target.ID, Compatibility: manifest.DataRestoreRequired, Snapshot: strings.Repeat("a", 64), StartedAt: at.Add(10 * time.Minute)}
 			if status == state.ReleasePrepared {
@@ -149,13 +183,18 @@ func TestGCPreservesCheckpointTargetsBeyondOrdinaryHistoryLimit(t *testing.T) {
 			imageExists := gcImageFixture(t, fake, map[string]map[string]string{
 				"sha256:checkpoint-image": imageLabels(m.App, "web", target.ID),
 				"sha256:obsolete-image":   imageLabels(m.App, "web", "ordinary-old-1"),
+				"sha256:checkpoint-pull":  nil,
+				"sha256:obsolete-pull":    nil,
 			})
 			runCollection(t, store)
-			if _, err := store.GetRevision(ctx, m.App, target.ID); err != nil || !imageExists("sha256:checkpoint-image") {
+			if _, err := store.GetRevision(ctx, m.App, target.ID); err != nil || !imageExists("sha256:checkpoint-image") || !imageExists("sha256:checkpoint-pull") {
 				t.Fatal("retained data checkpoint lost its required revision or image", err)
 			}
 			if _, err := store.GetRevision(ctx, m.App, "ordinary-old-1"); err == nil || imageExists("sha256:obsolete-image") {
 				t.Fatal("unreferenced history stopped being collected")
+			}
+			if imageExists("sha256:obsolete-pull") {
+				t.Fatal("forgetting the only revision that recorded a pulled image left the image behind")
 			}
 			if err := store.FinishReleaseBoundary(ctx, m.App, boundary.Revision, state.ReleaseRestored, "", at.Add(21*time.Minute)); err != nil {
 				t.Fatal(err)
@@ -163,7 +202,7 @@ func TestGCPreservesCheckpointTargetsBeyondOrdinaryHistoryLimit(t *testing.T) {
 			// The checkpoint no longer protects a target once restoration has
 			// completed and that revision is no longer active or previous.
 			runCollection(t, store)
-			if _, err := store.GetRevision(ctx, m.App, target.ID); err == nil || imageExists("sha256:checkpoint-image") {
+			if _, err := store.GetRevision(ctx, m.App, target.ID); err == nil || imageExists("sha256:checkpoint-image") || imageExists("sha256:checkpoint-pull") {
 				t.Fatal("completed checkpoint restore prevented ordinary collection")
 			}
 		})
@@ -254,11 +293,33 @@ func TestGCTrimsFailedDeploymentsBeforeAnAppEverBecomesActive(t *testing.T) {
 	store := releaseTestStore(t)
 	m := releaseTestManifest()
 	at := time.Now().UTC()
-	for i := range retiredKept + 2 {
-		releaseTestRevision(t, store, m, fmt.Sprintf("failed-revision-%d", i), state.RevisionFailed, at.Add(time.Duration(i)*time.Minute))
+	// The two oldest are forgotten. One image stays recorded by a kept
+	// revision under its ID, and one stays in use by a stopped container.
+	pulled := map[int]map[string]string{
+		0:               {"web": "test/kept-pull@sha256:kept-pull", "migrate": "test/failed-pull@sha256:failed-pull"},
+		1:               {"web": "test/stopped-pull:latest"},
+		retiredKept + 1: {"web": "sha256:kept-pull"},
 	}
+	for i := range retiredKept + 2 {
+		rev := releaseTestRevision(t, store, m, fmt.Sprintf("failed-revision-%d", i), state.RevisionFailed, at.Add(time.Duration(i)*time.Minute))
+		if images, ok := pulled[i]; ok {
+			rev.Images = images
+			if err := store.SaveRevision(ctx, *rev); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	fake := dockertest.New(t)
+	fake.Add(dockertest.Container{Name: "stopped-example", Image: "test/stopped-pull:latest", ImageID: "sha256:stopped-pull"})
+	imageExists := gcImageFixture(t, fake, map[string]map[string]string{"sha256:kept-pull": nil, "sha256:failed-pull": nil, "sha256:stopped-pull": nil})
 	if err := (GC{Store: store}).forgetStep().Apply(ctx, io.Discard); err != nil {
 		t.Fatal(err)
+	}
+	if imageExists("sha256:failed-pull") {
+		t.Fatal("GC kept an image only forgotten deployments recorded")
+	}
+	if !imageExists("sha256:kept-pull") || !imageExists("sha256:stopped-pull") {
+		t.Fatal("GC removed an image a remaining revision records or a stopped container uses")
 	}
 	revisions, err := store.Revisions(ctx, m.App)
 	if err != nil || len(revisions) != retiredKept {
