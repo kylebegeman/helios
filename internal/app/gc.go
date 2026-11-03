@@ -31,6 +31,8 @@ const DefaultBuildCacheMax = 8 << 30 // 8 GiB
 // GC is the Definition for GCKind.
 type GC struct {
 	Store *state.Store
+	// Registry is the local registry's address; empty means docker.Registry.
+	Registry string
 }
 
 // GCInput configures a collection.
@@ -78,6 +80,7 @@ func (g GC) Plan(ctx context.Context, raw json.RawMessage) (*kernel.Plan, error)
 		plan.Steps = append(plan.Steps, buildCacheStep(in.BuildCacheMax))
 	}
 	plan.Steps = append(plan.Steps, g.forgetStep())
+	plan.Steps = append(plan.Steps, g.registryStep())
 	return plan, nil
 }
 

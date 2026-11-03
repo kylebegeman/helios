@@ -58,7 +58,7 @@ func gcImageFixture(t *testing.T, fake *dockertest.Server, images map[string]map
 func runCollection(t *testing.T, store *state.Store) {
 	t.Helper()
 	ctx := context.Background()
-	plan, err := (GC{Store: store}).Plan(ctx, json.RawMessage(`{"keep_build_cache":true}`))
+	plan, err := (GC{Store: store, Registry: newRegistryStandIn(t).addr()}).Plan(ctx, json.RawMessage(`{"keep_build_cache":true}`))
 	if err != nil {
 		t.Fatal(err)
 	}
