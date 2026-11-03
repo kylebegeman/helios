@@ -88,21 +88,37 @@ func (s *Scheduler) Tick(ctx context.Context, now time.Time) {
 		}
 		return
 	}
+	machineDue := s.due(ctx, manifest.ReservedApp, state.BackupRunBackup, MachineBackupSchedule, s.Started, now)
 	for _, rev := range active {
 		var m manifest.Manifest
 		if err := json.Unmarshal(rev.Manifest, &m); err != nil || !m.BackedUp() {
 			continue
 		}
-		if s.due(ctx, rev.App, state.BackupRunBackup, m.BackupSchedule(), s.firstDeploy(ctx, rev.App), now) {
+		if s.backupDue(ctx, rev, m, machineDue, now) {
 			s.run(ctx, app.BackupKind, app.BackupInput{App: rev.App}, "backup "+rev.App)
 		}
 		if s.drillDue(ctx, rev.App, m.DrillSchedule(), now) {
 			s.run(ctx, app.DrillKind, app.DrillInput{App: rev.App}, "drill "+rev.App)
 		}
 	}
-	if s.due(ctx, manifest.ReservedApp, state.BackupRunBackup, MachineBackupSchedule, s.Started, now) {
+	if machineDue {
 		s.run(ctx, app.BackupKind, app.BackupInput{App: manifest.ReservedApp}, "backup of the machine")
 	}
+}
+
+// backupDue says whether an app's backup runs now: on its own schedule, or
+// ahead of a due machine backup when no backup has started since the active
+// revision, which the machine backup would refuse. A catch-up that fails
+// counts as the attempt, so it waits for the app's own schedule.
+func (s *Scheduler) backupDue(ctx context.Context, rev state.Revision, m manifest.Manifest, machineDue bool, now time.Time) bool {
+	if s.due(ctx, rev.App, state.BackupRunBackup, m.BackupSchedule(), s.firstDeploy(ctx, rev.App), now) {
+		return true
+	}
+	if !machineDue {
+		return false
+	}
+	last, err := s.Store.LastBackupRun(ctx, rev.App, state.BackupRunBackup)
+	return err == nil && (last == nil || last.StartedAt.Before(rev.CreatedAt))
 }
 
 // testAlerts sends the weekly test through every leg. The prober turns a
