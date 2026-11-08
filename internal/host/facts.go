@@ -302,9 +302,9 @@ func (f *Facts) gatherUpkeep(ctx context.Context, env Env, socket string) {
 const publishedFormat = "{{.Names}}\t{{.Label \"bedrock.app\"}}\t{{.Label \"bedrock.workload\"}}\t{{.Ports}}"
 
 // parsePublished reads the ports app containers publish, once each however
-// many addresses they are bound to. A port bound only to the loopback
-// address is not reachable from outside and is left out, as is one the
-// image exposes without publishing.
+// many addresses they are bound to. A port bound only to addresses the
+// internet can't reach, such as loopback, a private range or a tailnet's,
+// is left out, as is one the image exposes without publishing.
 func parsePublished(text string) []PublishedPort {
 	var out []PublishedPort
 	seen := map[string]bool{}
@@ -323,21 +323,38 @@ func parsePublished(text string) []PublishedPort {
 			if i < 0 {
 				continue
 			}
-			address := strings.Trim(host[:i], "[]")
-			if ip := net.ParseIP(address); ip != nil && ip.IsLoopback() {
+			if addr, err := netip.ParseAddr(strings.Trim(host[:i], "[]")); err == nil && !public(addr) {
 				continue
 			}
 			_, proto, _ := strings.Cut(container, "/")
-			port := host[i+1:] + "/" + proto
-			key := name + " " + port
-			if seen[key] {
-				continue
+			for _, number := range portNumbers(host[i+1:]) {
+				port := number + "/" + proto
+				key := name + " " + port
+				if seen[key] {
+					continue
+				}
+				seen[key] = true
+				out = append(out, PublishedPort{Port: port, Container: name, App: app, Workload: workload})
 			}
-			seen[key] = true
-			out = append(out, PublishedPort{Port: port, Container: name, App: app, Workload: workload})
 		}
 	}
 	return out
+}
+
+// portNumbers spells out a range Docker prints as one, such as 3478-3479,
+// port by port; a single port is itself.
+func portNumbers(ports string) []string {
+	lo, hi, isRange := strings.Cut(ports, "-")
+	first, errFirst := strconv.Atoi(lo)
+	last, errLast := strconv.Atoi(hi)
+	if !isRange || errFirst != nil || errLast != nil || last < first {
+		return []string{ports}
+	}
+	var numbers []string
+	for n := first; n <= last; n++ {
+		numbers = append(numbers, strconv.Itoa(n))
+	}
+	return numbers
 }
 
 // dataFormat is what docker inspect says about each app container: its
@@ -446,8 +463,7 @@ func (f Facts) journalCap() string {
 }
 
 // Addresses returns the machine's public addresses, the ones DNS should
-// point at: what has global scope and isn't private, carrier-grade NAT
-// (100.64/10) or the machine's own.
+// point at: what has global scope and is public.
 func Addresses(ctx context.Context, env Env) []string {
 	out, err := env.Run(ctx, "ip", "-o", "addr", "show", "scope", "global")
 	if err != nil {
@@ -460,7 +476,7 @@ func Addresses(ctx context.Context, env Env) []string {
 			continue
 		}
 		addr, err := netip.ParseAddr(strings.SplitN(fields[3], "/", 2)[0])
-		if err != nil || addr.IsPrivate() || addr.IsLoopback() || addr.IsLinkLocalUnicast() || carrierNAT.Contains(addr) {
+		if err != nil || !public(addr) {
 			continue
 		}
 		addrs = append(addrs, addr.String())
@@ -468,6 +484,13 @@ func Addresses(ctx context.Context, env Env) []string {
 	return addrs
 }
 
-// carrierNAT is the range a provider's NAT hands out: reachable by no one
-// outside, however global its scope.
+// public reports whether the internet can reach an address: it isn't
+// private, carrier-grade NAT (100.64/10), link-local or the machine's own.
+// The unspecified address, 0.0.0.0 or ::, is every address, so it is public.
+func public(addr netip.Addr) bool {
+	return !addr.IsPrivate() && !addr.IsLoopback() && !addr.IsLinkLocalUnicast() && !carrierNAT.Contains(addr)
+}
+
+// carrierNAT is the range a provider's NAT hands out, and a tailnet's
+// addresses: reachable by no one outside, however global its scope.
 var carrierNAT = netip.MustParsePrefix("100.64.0.0/10")

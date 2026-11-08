@@ -2,6 +2,7 @@ package host
 
 import (
 	"context"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -85,5 +86,48 @@ func TestAddressesKeepOnlyThePublicOnes(t *testing.T) {
 	got := Addresses(context.Background(), m.env())
 	if want := []string{"172.64.1.1", "2001:db8::1"}; strings.Join(got, " ") != strings.Join(want, " ") {
 		t.Fatalf("addresses %v, want %v", got, want)
+	}
+}
+
+// Docker opens a port only on the address it is published on, so one on an
+// address the internet can't reach, such as loopback, a private range or a
+// tailnet's, is left out. Docker 27 and older print IPv6 without brackets.
+func TestOnlyPortsPublishedOnAPublicAddressAreListed(t *testing.T) {
+	for ports, listed := range map[string]bool{
+		"127.0.0.1:9090->9090/tcp":       false,
+		"[::1]:9090->9090/tcp":           false,
+		"::1:9090->9090/tcp":             false,
+		"10.0.0.5:9090->9090/tcp":        false,
+		"100.101.102.103:9090->9090/tcp": false,
+		"[fd00::5]:9090->9090/tcp":       false,
+		"[fe80::5]:9090->9090/tcp":       false,
+		"0.0.0.0:9090->9090/tcp":         true,
+		"[::]:9090->9090/tcp":            true,
+		":::9090->9090/tcp":              true,
+		"203.0.113.4:9090->9090/tcp":     true,
+		"[2001:db8::4]:9090->9090/tcp":   true,
+
+		"100.101.102.103:9090->9090/tcp, 203.0.113.4:9090->9090/tcp": true,
+	} {
+		var want []PublishedPort
+		if listed {
+			want = []PublishedPort{{Port: "9090/tcp", Container: "admin-web-3f2a", App: "admin", Workload: "web"}}
+		}
+		if got := parsePublished("admin-web-3f2a\tadmin\tweb\t" + ports); !slices.Equal(got, want) {
+			t.Errorf("%s: published %+v, want %+v", ports, got, want)
+		}
+	}
+}
+
+// Docker prints consecutive ports published alike as one range, but each is
+// its own port to ufw and to the doctor.
+func TestARangeOfPublishedPortsIsListedPortByPort(t *testing.T) {
+	got := parsePublished("turn-relay-5e1b\tturn\trelay\t0.0.0.0:3478-3479->3478-3479/udp, [::]:3478-3479->3478-3479/udp")
+	want := []PublishedPort{
+		{Port: "3478/udp", Container: "turn-relay-5e1b", App: "turn", Workload: "relay"},
+		{Port: "3479/udp", Container: "turn-relay-5e1b", App: "turn", Workload: "relay"},
+	}
+	if !slices.Equal(got, want) {
+		t.Fatalf("published %+v, want %+v", got, want)
 	}
 }

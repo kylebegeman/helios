@@ -288,7 +288,8 @@ That rule changes nothing about what is reachable; it makes `ufw status` say
 what is open. `helios doctor` lists every port an app publishes on a public
 address, and warns about one ufw has no rule for, or allows only from some
 sources, since Docker publishes it to everyone either way. To keep a port off
-the internet, give it a private `address`; ufw can't narrow it.
+the internet, give it a private `address`, such as the machine's address on a
+private network or tailnet (100.64.0.0/10); ufw can't narrow it.
 
 `helios host setup --web-from cloudflare` does not cover published ports.
 Its guard holds 80 and 443 alone, so a published port still answers anyone
@@ -362,8 +363,8 @@ then be `dns: proxied`: setup refuses while an app routes a host any other
 way, and `deploy`, `rollback` and `dns point` refuse to add one. SSH stays
 reachable, keys only. Running setup again keeps the setting unless
 `--web-from` is given, and `--web-from anyone` opens the web again. The guard
-covers 80 and 443 only: a port an app publishes on the machine with `ports:`
-stays open to anyone, and `helios doctor` says so.
+covers 80 and 443 only: a port an app publishes on a public address with
+`ports:` stays open to anyone, and `helios doctor` says so.
 
 `helios git allow <app> <public key>` lets a key push that app and nothing
 else. Then, from the app's checkout:
