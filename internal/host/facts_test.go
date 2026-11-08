@@ -118,3 +118,16 @@ func TestOnlyPortsPublishedOnAPublicAddressAreListed(t *testing.T) {
 		}
 	}
 }
+
+// Docker prints consecutive ports published alike as one range, but each is
+// its own port to ufw and to the doctor.
+func TestARangeOfPublishedPortsIsListedPortByPort(t *testing.T) {
+	got := parsePublished("turn-relay-5e1b\tturn\trelay\t0.0.0.0:3478-3479->3478-3479/udp, [::]:3478-3479->3478-3479/udp")
+	want := []PublishedPort{
+		{Port: "3478/udp", Container: "turn-relay-5e1b", App: "turn", Workload: "relay"},
+		{Port: "3479/udp", Container: "turn-relay-5e1b", App: "turn", Workload: "relay"},
+	}
+	if !slices.Equal(got, want) {
+		t.Fatalf("published %+v, want %+v", got, want)
+	}
+}

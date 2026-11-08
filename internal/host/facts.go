@@ -327,16 +327,34 @@ func parsePublished(text string) []PublishedPort {
 				continue
 			}
 			_, proto, _ := strings.Cut(container, "/")
-			port := host[i+1:] + "/" + proto
-			key := name + " " + port
-			if seen[key] {
-				continue
+			for _, number := range portNumbers(host[i+1:]) {
+				port := number + "/" + proto
+				key := name + " " + port
+				if seen[key] {
+					continue
+				}
+				seen[key] = true
+				out = append(out, PublishedPort{Port: port, Container: name, App: app, Workload: workload})
 			}
-			seen[key] = true
-			out = append(out, PublishedPort{Port: port, Container: name, App: app, Workload: workload})
 		}
 	}
 	return out
+}
+
+// portNumbers spells out a range Docker prints as one, such as 3478-3479,
+// port by port; a single port is itself.
+func portNumbers(ports string) []string {
+	lo, hi, isRange := strings.Cut(ports, "-")
+	first, errFirst := strconv.Atoi(lo)
+	last, errLast := strconv.Atoi(hi)
+	if !isRange || errFirst != nil || errLast != nil || last < first {
+		return []string{ports}
+	}
+	var numbers []string
+	for n := first; n <= last; n++ {
+		numbers = append(numbers, strconv.Itoa(n))
+	}
+	return numbers
 }
 
 // dataFormat is what docker inspect says about each app container: its
