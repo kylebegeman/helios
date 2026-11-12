@@ -45,10 +45,24 @@ var dockerPackages = []string{"docker-ce", "docker-ce-cli", "containerd.io", "do
 
 // Files helios writes. Each is complete: helios owns them.
 const (
+	// Docker's own address pools come first, unchanged, so networks keep
+	// the subnets they have. They hold 31 networks, and every app takes
+	// two, so 10.200.0.0/16 adds 256 more /24s for apps, drills, recovery
+	// and rehearsals. It overlaps none of Docker's pools.
 	dockerDaemonJSON = `{
   "log-driver": "json-file",
   "log-opts": {"max-size": "20m", "max-file": "5"},
-  "live-restore": true
+  "live-restore": true,
+  "default-address-pools": [
+    {"base": "172.17.0.0/16", "size": 16},
+    {"base": "172.18.0.0/16", "size": 16},
+    {"base": "172.19.0.0/16", "size": 16},
+    {"base": "172.20.0.0/14", "size": 16},
+    {"base": "172.24.0.0/14", "size": 16},
+    {"base": "172.28.0.0/14", "size": 16},
+    {"base": "192.168.0.0/16", "size": 20},
+    {"base": "10.200.0.0/16", "size": 24}
+  ]
 }
 `
 	autoUpgrades = `APT::Periodic::Update-Package-Lists "1";
@@ -108,6 +122,9 @@ func (s Setup) Plan(ctx context.Context, raw json.RawMessage) (*kernel.Plan, err
 	installed := installedPackages(ctx, env, append(append([]string{}, basePackages...), dockerPackages...))
 	x := &setting{s: s, env: env, p: p, f: f, codename: osCodename(env), debArch: debianArch(ctx, env),
 		missingBase: missing(installed, basePackages), missingDocker: missing(installed, dockerPackages)}
+	if daemon, err := env.ReadFile("/etc/docker/daemon.json"); err == nil && daemon == dockerDaemonJSON {
+		x.dockerConfigured = true
+	}
 	if p.CloudflareOnly() {
 		if err := s.checkRoutes(ctx); err != nil {
 			return nil, err
@@ -154,6 +171,9 @@ type setting struct {
 	f                          Facts
 	codename, debArch          string
 	missingBase, missingDocker []string
+	// dockerConfigured is whether /etc/docker/daemon.json is already
+	// helios's; when it isn't, Docker restarts to read it.
+	dockerConfigured bool
 	// ranges are Cloudflare's, when the profile takes the web only from
 	// Cloudflare; nil otherwise.
 	ranges *cloudflareRanges
@@ -224,11 +244,21 @@ func (x *setting) swapStep() kernel.Step {
 func (x *setting) dockerStep() kernel.Step {
 	return kernel.Step{
 		Name: "docker", Change: "install Docker from Docker's repository, with compose and buildx",
-		Note: doneIf(len(x.missingDocker) == 0 && x.f.Docker.Running, "already "+orUnknown(x.f.Docker.Version), "not installed"),
+		Note: x.dockerNote(),
 		Apply: func(ctx context.Context, out io.Writer) error {
 			return ensureDocker(ctx, x.env, x.f.OSID, x.codename, x.debArch, len(x.missingDocker) > 0, out)
 		},
 	}
+}
+
+func (x *setting) dockerNote() string {
+	switch {
+	case len(x.missingDocker) > 0 || !x.f.Docker.Running:
+		return "not installed"
+	case !x.dockerConfigured:
+		return "Docker " + orUnknown(x.f.Docker.Version) + " restarts to take new daemon settings; live restore keeps containers running"
+	}
+	return "already " + orUnknown(x.f.Docker.Version)
 }
 
 func (x *setting) registryStep() kernel.Step {
@@ -584,7 +614,7 @@ func ensureDocker(ctx context.Context, env Env, osID, codename, debArch string, 
 		if _, err := env.Run(ctx, "systemctl", "restart", "docker"); err != nil {
 			return err
 		}
-		fmt.Fprintln(out, "docker configured: bounded logs, live restore")
+		fmt.Fprintln(out, "docker configured: bounded logs, live restore, address pools")
 	}
 	return nil
 }
