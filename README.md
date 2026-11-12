@@ -1044,6 +1044,12 @@ logged to the journal keeps its old log driver until it is replaced. The
 database, object store, backups and edge keep Docker's own logs, five files
 of 20m.
 
+Every app takes two Docker networks, and Docker's own address pools hold 31.
+Host setup keeps those pools, so a network keeps its subnet, and adds
+10.200.0.0/16 as 256 more /24s for apps, drills, recoveries and rehearsals.
+A machine set up before 0.7.24 gets them at its next `helios host reconcile`,
+which restarts Docker once; live restore keeps containers running.
+
 `helios logs <app> [workload] --revision <id>` shows a revision's output,
 from Docker while its containers exist and from the journal once they are
 removed, even after `helios gc` has forgotten the revision. `--follow` takes

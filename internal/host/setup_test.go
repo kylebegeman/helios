@@ -3,7 +3,9 @@ package host
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
+	"net/netip"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -206,6 +208,75 @@ func TestSetupMovesAnOlderJournalCapAndRestartsJournaldOnce(t *testing.T) {
 		}
 		if restarts() != 1 {
 			t.Fatalf("setup %d: journald restarted %d times in all, want once", i+1, restarts())
+		}
+	}
+}
+
+// Docker's default pools hold 31 networks and every app takes two, so a
+// machine with sixteen apps had no subnet left for a drill, a recovery or
+// another app. The daemon keeps those pools first and in order, so existing
+// networks keep their subnets, and adds 256 /24s past them.
+func TestTheDockerDaemonKeepsItsDefaultPoolsAndAddsRoomForMoreNetworks(t *testing.T) {
+	var daemon struct {
+		LiveRestore bool `json:"live-restore"`
+		Pools       []struct {
+			Base string `json:"base"`
+			Size int    `json:"size"`
+		} `json:"default-address-pools"`
+	}
+	if err := json.Unmarshal([]byte(dockerDaemonJSON), &daemon); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"172.17.0.0/16:16", "172.18.0.0/16:16", "172.19.0.0/16:16", "172.20.0.0/14:16", "172.24.0.0/14:16", "172.28.0.0/14:16", "192.168.0.0/16:20", "10.200.0.0/16:24"}
+	if len(daemon.Pools) != len(want) {
+		t.Fatalf("pools %+v, want %v", daemon.Pools, want)
+	}
+	networks := 0
+	for i, pool := range daemon.Pools {
+		if got := fmt.Sprintf("%s:%d", pool.Base, pool.Size); got != want[i] {
+			t.Fatalf("pool %d is %s, want %s", i, got, want[i])
+		}
+		prefix, err := netip.ParsePrefix(pool.Base)
+		if err != nil || prefix.Masked() != prefix {
+			t.Fatalf("pool %s: %v", pool.Base, err)
+		}
+		networks += 1 << (pool.Size - prefix.Bits())
+	}
+	if !daemon.LiveRestore || networks != 31+256 {
+		t.Fatalf("live restore %v, %d networks", daemon.LiveRestore, networks)
+	}
+}
+
+// A machine set up with the older daemon settings says in its plan that
+// Docker restarts, restarts it once, and then leaves it alone.
+func TestSetupGivesAnOlderDockerDaemonTheAddressPoolsAndRestartsDockerOnce(t *testing.T) {
+	m := setUpBox(t)
+	allowEverything(m)
+	m.answers["dpkg-query *"] = "ca-certificates install ok installed\ncurl install ok installed\ngnupg install ok installed\nufw install ok installed\nfail2ban install ok installed\nunattended-upgrades install ok installed\njq install ok installed\ngit install ok installed\ndocker-ce install ok installed\ndocker-ce-cli install ok installed\ncontainerd.io install ok installed\ndocker-buildx-plugin install ok installed\ndocker-compose-plugin install ok installed\n"
+	m.write("/etc/docker/daemon.json", "{\n  \"log-driver\": \"json-file\",\n  \"log-opts\": {\"max-size\": \"20m\", \"max-file\": \"5\"},\n  \"live-restore\": true\n}\n")
+	restarts := func() int {
+		n := 0
+		for _, c := range m.commands() {
+			if c == "systemctl restart docker" {
+				n++
+			}
+		}
+		return n
+	}
+	engine := kernel.New(openStore(t), registryWith(m), "test")
+	for i, note := range []string{"Docker 29.5.2 restarts to take new daemon settings; live restore keeps containers running", "already 29.5.2"} {
+		if _, notes := planSteps(t, m, Profile{Hostname: "personal-vps", SwapGiB: 4}); notes["docker"] != note {
+			t.Fatalf("setup %d: docker note %q, want %q", i+1, notes["docker"], note)
+		}
+		receipt, err := engine.Run(context.Background(), SetupKind, profileJSON(t, Profile{Hostname: "personal-vps", SwapGiB: 4}), func(kernel.Event) {})
+		if err != nil || receipt.Status != state.Succeeded {
+			t.Fatalf("setup %d: %v %+v", i+1, err, receipt)
+		}
+		if got := m.read("/etc/docker/daemon.json"); got != dockerDaemonJSON {
+			t.Fatalf("setup %d left daemon.json as %q", i+1, got)
+		}
+		if restarts() != 1 {
+			t.Fatalf("setup %d: docker restarted %d times in all, want once", i+1, restarts())
 		}
 	}
 }
