@@ -292,15 +292,24 @@ func Build(ctx context.Context, d Deps, name string) (Summary, error) {
 }
 
 // legs are each of a machine's alert legs, and how long ago it last
-// delivered.
+// delivered. A passing weekly alert test counts: a quiet machine sends no
+// alerts, and its legs still work.
 func legs(ctx context.Context, store *state.Store, sec *secrets.Store, now time.Time) ([]SummaryLeg, error) {
 	uses, err := store.IntegrationUses(ctx)
 	if err != nil {
 		return nil, err
 	}
+	// An unreadable test record proves nothing, so the uses alone stand.
+	tests, _ := watch.ReadAlertTest(store)
 	out := []SummaryLeg{}
 	for _, leg := range watch.LegNames(sec) {
-		out = append(out, SummaryLeg{Name: leg, LastOKAgeS: ageIf(now, uses[leg].UsedAt)})
+		last := uses[leg].UsedAt
+		if tests != nil {
+			if t, ok := tests.Legs[leg]; ok && t.Error == "" && t.At.After(last) {
+				last = t.At
+			}
+		}
+		out = append(out, SummaryLeg{Name: leg, LastOKAgeS: ageIf(now, last)})
 	}
 	return out, nil
 }
@@ -321,6 +330,11 @@ func backups(ctx context.Context, store *state.Store, now time.Time) ([]SummaryB
 	for _, rev := range active {
 		var m manifest.Manifest
 		if err := json.Unmarshal(rev.Manifest, &m); err != nil || !m.BackedUp() {
+			continue
+		}
+		// A move's frozen source backs up nothing more; its data lives on at
+		// the target. Its own watch reports a fence it can't read.
+		if fenced, err := app.MigrationSourceFenced(store.Path(), rev.App); err == nil && fenced {
 			continue
 		}
 		b, err := backup(ctx, store, rev.App, now)

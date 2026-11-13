@@ -3,7 +3,9 @@ package peer
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
+	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -81,6 +83,20 @@ func TestSummaryReports(t *testing.T) {
 	ran(t, store, "shop", state.BackupRunBackup, sunday)
 	ran(t, store, "shop", state.BackupRunDrill, sunday.Add(-7*24*time.Hour+190*time.Minute))
 	ran(t, store, manifest.ReservedApp, state.BackupRunBackup, now.Add(-time.Hour))
+	// moved went to another machine 10 days ago: its frozen source backs
+	// up no more and isn't owed one.
+	deployed(t, store, manifest.Manifest{App: "moved", Data: files}, now.Add(-30*24*time.Hour))
+	ran(t, store, "moved", state.BackupRunBackup, now.Add(-10*24*time.Hour))
+	fence := fmt.Sprintf(`{"role":"source","phase":"captured","handoff":{"phase":"final","migration":"move-%s","to":"web2","manifest_digest":"%s",
+		"app":"moved","from":"web1","bucket":"helios-moved","snapshot":"%s","has_data":true,"revision":"20261020-120000"}}`,
+		strings.Repeat("a", 16), strings.Repeat("b", 64), strings.Repeat("c", 64))
+	locks := filepath.Join(filepath.Dir(store.Path()), "locks")
+	if err := os.MkdirAll(locks, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(locks, "moved.migration.json"), []byte(fence), 0o600); err != nil {
+		t.Fatal(err)
+	}
 
 	const failure = "dial tcp smtp.example.test:587: connection refused"
 	opened(t, store, state.Incident{Key: "app:shop", Subject: "shop", Severity: state.SeverityWarning, OpenedAt: now.Add(-90 * time.Minute),
@@ -119,6 +135,13 @@ func TestSummaryReports(t *testing.T) {
 	if err := store.RecordIntegrationUse(ctx, integration.EmailName, "alert: web1: shop has a problem", now.Add(-time.Hour)); err != nil {
 		t.Fatal(err)
 	}
+	// The weekly alert test reached Pushover two hours ago, after its last
+	// alert; a later failed test of email doesn't count as working.
+	tested := fmt.Sprintf(`{"at":%q,"legs":{%q:{"at":%q},%q:{"at":%q,"error":"refused"}}}`, now.Add(-2*time.Hour).Format(time.RFC3339),
+		integration.PushoverName, now.Add(-2*time.Hour).Format(time.RFC3339), integration.EmailName, now.Add(-30*time.Minute).Format(time.RFC3339))
+	if err := os.WriteFile(filepath.Join(filepath.Dir(store.Path()), watch.AlertTestFile), []byte(tested), 0o600); err != nil {
+		t.Fatal(err)
+	}
 
 	s := w.server(t)
 	s.Deps.Last = func() Last {
@@ -155,7 +178,7 @@ func TestSummaryReports(t *testing.T) {
 			{App: "shop", LastGoodBackupAgeS: seconds(54 * 3600), DeployedAgeS: seconds(10 * 86400),
 				LastGoodDrillAgeS: seconds(9*86400 + 170*60), DrillOverdueS: seconds(2*86400 + 170*60)},
 			{App: manifest.ReservedApp, LastGoodBackupAgeS: seconds(3600)}},
-		Legs:      []SummaryLeg{{Name: integration.EmailName, LastOKAgeS: seconds(3600)}, {Name: integration.PushoverName}},
+		Legs:      []SummaryLeg{{Name: integration.EmailName, LastOKAgeS: seconds(3600)}, {Name: integration.PushoverName, LastOKAgeS: seconds(7200)}},
 		Findings:  []Finding{{Key: "peer:web2", Severity: state.SeverityWarning}},
 		Views:     []SummaryView{{Subject: "web2", AgeS: 41, Paths: Paths{WordOK, WordOK, "timeout"}}},
 		Recovered: []SummaryRecovery{{Key: "peer:edge-provider", AgeS: 2700}, {Key: "peer:web3", AgeS: 1800}},
@@ -165,7 +188,7 @@ func TestSummaryReports(t *testing.T) {
 		wantJSON, _ := json.Marshal(want)
 		t.Fatalf("the summary reads\n%s\nwant\n%s", gotJSON, wantJSON)
 	}
-	if strings.Contains(raw, `"told_age_s":null`) || strings.Count(raw, `"told_age_s"`) != 2 || strings.Count(raw, `"last_ok_age_s"`) != 1 {
+	if strings.Contains(raw, `"told_age_s":null`) || strings.Count(raw, `"told_age_s"`) != 2 || strings.Count(raw, `"last_ok_age_s"`) != 2 {
 		t.Fatalf("an age with nothing to measure from is not left out: %s", raw)
 	}
 	mesh, _, _ := strings.Cut(at(in("100.64.0.0/10"), 7700), ":")
