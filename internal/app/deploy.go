@@ -377,11 +377,12 @@ func (f *lineFilter) Write(p []byte) (int, error) {
 
 func containerSpec(m *manifest.Manifest, name string, w manifest.Workload, revision, image string, values map[string]string) (docker.Spec, error) {
 	spec := docker.Spec{
-		Name:     docker.ContainerName(m.App, name, revision),
-		Image:    image,
-		Cmd:      w.Command,
-		Labels:   imageLabels(m.App, name, revision),
-		Networks: []string{docker.AppNetwork(m.App)},
+		Name:       docker.ContainerName(m.App, name, revision),
+		Image:      image,
+		Cmd:        w.Command,
+		Labels:     imageLabels(m.App, name, revision),
+		Networks:   []string{docker.AppNetwork(m.App)},
+		DNSServers: w.DNSServers,
 		// The app's other workloads reach it by its name and its aliases.
 		Aliases:   append([]string{name}, w.Aliases...),
 		Restart:   true,

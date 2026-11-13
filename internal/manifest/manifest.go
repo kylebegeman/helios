@@ -284,6 +284,8 @@ type Workload struct {
 	// Aliases are more names the workload answers to on the app's own
 	// network; its workload name always is one.
 	Aliases []string `yaml:"aliases,omitempty" json:"aliases,omitempty"`
+	// DNSServers overrides Docker's default resolvers for this workload.
+	DNSServers []string `yaml:"dns_servers,omitempty" json:"dns_servers,omitempty"`
 	// Order sorts release workloads; lower runs first, then by name.
 	Order int `yaml:"order,omitempty" json:"order,omitempty"`
 	// Grace is how long the workload gets to stop before it is killed.
@@ -902,6 +904,11 @@ func validateRoutes(at, name string, w Workload, claimed map[string]string, fail
 // its user, capabilities, writable paths, environment, secrets and
 // resources, and that what it builds or serves is inside the source.
 func validateIsolation(at string, w Workload, fail func(format string, args ...any)) {
+	for _, server := range w.DNSServers {
+		if address, err := netip.ParseAddr(server); err != nil || address.Zone() != "" {
+			fail("%s.dns_servers: use literal IPv4 or IPv6 addresses without a zone", at)
+		}
+	}
 	if w.User != "" && !userPattern.MatchString(w.User) {
 		fail("%s.user: %q must be a user, uid, or user:group", at, w.User)
 	}

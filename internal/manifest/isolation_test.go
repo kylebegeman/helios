@@ -1,6 +1,7 @@
 package manifest
 
 import (
+	"slices"
 	"strings"
 	"testing"
 )
@@ -12,6 +13,7 @@ workloads:
     image: local/loom:1
     port: 3773
     user: "1000:1000"
+    dns_servers: [192.0.2.53, "2001:db8::53"]
     tmpfs: [/app/.cache]
     routes:
       - host: core.example.com
@@ -41,6 +43,12 @@ func TestIsolationAndDNSFieldsParse(t *testing.T) {
 	if !m.Workloads["runner"].Privileged {
 		t.Fatal("runner should be privileged")
 	}
+	if got := m.Workloads["web"].DNSServers; !slices.Equal(got, []string{"192.0.2.53", "2001:db8::53"}) {
+		t.Fatalf("DNS servers: %v", got)
+	}
+	if len(m.Workloads["runner"].DNSServers) != 0 {
+		t.Fatal("a workload without DNS servers must keep Docker's defaults")
+	}
 	if caps := m.Workloads["mail"].CapabilityNames(); strings.Join(caps, ",") != "NET_BIND_SERVICE,CHOWN" {
 		t.Fatalf("capabilities: %v", caps)
 	}
@@ -60,6 +68,12 @@ func TestIsolationAndDNSAreValidated(t *testing.T) {
 		{strings.Replace(isolated, "app: loom", "app: edge", 1), "a name helios uses for itself"},
 		{strings.Replace(isolated, "app: loom", "app: registry", 1), "a name helios uses for itself"},
 		{isolated + "data:\n  volumes:\n    postgres: {}\n", "helios's own volume for the database"},
+	}
+	for _, server := range []string{"", "resolver.example.com", "192.0.2.53:53", "192.0.2.0/24", "[2001:db8::53]", "fe80::1%eth0", "999.0.0.1"} {
+		cases = append(cases, struct{ yaml, want string }{
+			strings.Replace(isolated, `dns_servers: [192.0.2.53, "2001:db8::53"]`, `dns_servers: ["`+server+`"]`, 1),
+			"workloads.web.dns_servers: use literal IPv4 or IPv6 addresses without a zone",
+		})
 	}
 	for _, c := range cases {
 		_, err := Parse([]byte(c.yaml))

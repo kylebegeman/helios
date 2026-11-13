@@ -66,6 +66,7 @@ type Mount struct {
 // HostConfig is the part of a container's host configuration tests look at.
 type HostConfig struct {
 	Binds          []string
+	DNS            []string
 	CapAdd         []string
 	CapDrop        []string
 	Privileged     bool

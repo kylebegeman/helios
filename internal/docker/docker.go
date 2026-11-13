@@ -161,7 +161,8 @@ type Spec struct {
 	Env        []string
 	Labels     map[string]string
 	// Networks the container joins; the first is its primary.
-	Networks []string
+	Networks   []string
+	DNSServers []string
 	// Publish maps host ports, as "127.0.0.1:2019:2019/tcp", "443:443/udp"
 	// or "[::1]:8443:8443/tcp".
 	Publish []string
@@ -280,6 +281,13 @@ func hostConfigFor(spec Spec) (*container.HostConfig, network.PortSet, error) {
 		Resources:      container.Resources{Memory: spec.MemoryBytes, NanoCPUs: spec.NanoCPUs},
 		ReadonlyRootfs: spec.ReadOnly,
 		Privileged:     spec.Privileged,
+	}
+	for _, server := range spec.DNSServers {
+		address, err := netip.ParseAddr(server)
+		if err != nil || address.Zone() != "" {
+			return nil, nil, fmt.Errorf("DNS servers must be literal IPv4 or IPv6 addresses without a zone")
+		}
+		hostConfig.DNS = append(hostConfig.DNS, address)
 	}
 	// An app's workloads and jobs, the containers labeled with a
 	// revision, log to the journal, so what they wrote outlives them.

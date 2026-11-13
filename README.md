@@ -127,6 +127,7 @@ workloads:
     health: {path: /healthz}
     resources: {memory: 256m, cpus: 0.5}   # memory defaults to 2g
     tmpfs: [/app/.cache]   # writable in memory; the root filesystem is read-only
+    # dns_servers: [192.0.2.53, "2001:db8::53"] # optional resolvers for this workload
     # user: "1000:1000"    # default: the image's user, or nobody for a root image
     # capabilities: [NET_BIND_SERVICE]     # default: none at all
     # writable_root: true  # the explicit way out of a read-only root

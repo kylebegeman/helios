@@ -156,6 +156,8 @@ func (g *schemaGenerator) constrain() {
 	g.describe("Workload", "grace", "Graceful stop duration, from 1s to 10m. Default 10s.")
 	g.prop("Workload", "dir")["pattern"] = `^(?!/)(?!.*\.\.).*$`
 	g.prop("Workload", "aliases")["items"] = stringsSchema(namePattern.String())
+	g.prop("Workload", "dns_servers")["items"] = schemaObject{"type": "string", "anyOf": []any{schemaObject{"format": "ipv4"}, schemaObject{"format": "ipv6"}}}
+	g.describe("Workload", "dns_servers", "Literal IPv4 or IPv6 resolvers for this workload; omitted keeps Docker's defaults.")
 	g.prop("Workload", "tmpfs")["items"] = stringsSchema(`^/`)
 	g.prop("Workload", "capabilities")["items"] = stringsSchema(`^(?:[Cc][Aa][Pp]_)?[A-Za-z][A-Za-z0-9_]*$`)
 	g.prop("Workload", "user")["anyOf"] = []any{stringsSchema(userPattern.String()), schemaObject{"const": ""}}

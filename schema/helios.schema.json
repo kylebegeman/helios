@@ -1231,6 +1231,21 @@
           "pattern": "^(?!/)(?!.*\\.\\.).*$",
           "type": "string"
         },
+        "dns_servers": {
+          "description": "Literal IPv4 or IPv6 resolvers for this workload; omitted keeps Docker's defaults.",
+          "items": {
+            "anyOf": [
+              {
+                "format": "ipv4"
+              },
+              {
+                "format": "ipv6"
+              }
+            ],
+            "type": "string"
+          },
+          "type": "array"
+        },
         "env": {
           "additionalProperties": {
             "type": [

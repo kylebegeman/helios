@@ -22,6 +22,7 @@ workloads:
     image: headscale/headscale:0.26
     port: 8080
     singleton: true
+    dns_servers: [192.0.2.53, "2001:db8::53"]
     routes: [{host: hs.example.com}]
     ports:
       - port: 3478
@@ -54,6 +55,9 @@ func TestAWorkloadsContainerPublishesItsPorts(t *testing.T) {
 	if !slices.Equal(spec.Publish, want) {
 		t.Fatalf("publish %v, want %v", spec.Publish, want)
 	}
+	if !slices.Equal(spec.DNSServers, m.Workloads["server"].DNSServers) {
+		t.Fatalf("DNS servers %v", spec.DNSServers)
+	}
 }
 
 // A job or a drill runs beside the workload's own container, which already
@@ -70,6 +74,9 @@ func TestJobsAndDrillsPublishNothing(t *testing.T) {
 	if !slices.Equal(job.Networks, []string{docker.AppNetwork("headscale")}) {
 		t.Fatalf("a job's networks: %v", job.Networks)
 	}
+	if !slices.Equal(job.DNSServers, m.Workloads["server"].DNSServers) {
+		t.Fatalf("a job's DNS servers: %v", job.DNSServers)
+	}
 	names := newDrillNames(t.TempDir(), m)
 	drill, err := drillSpec(m, "r1", "server", "img", nil, names)
 	if err != nil {
@@ -80,6 +87,9 @@ func TestJobsAndDrillsPublishNothing(t *testing.T) {
 	}
 	if drill.Name != names.containers["server"] || !slices.Equal(drill.Networks, []string{names.network}) {
 		t.Fatalf("a drill's container %s on %v", drill.Name, drill.Networks)
+	}
+	if !slices.Equal(drill.DNSServers, m.Workloads["server"].DNSServers) {
+		t.Fatalf("a drill's DNS servers: %v", drill.DNSServers)
 	}
 	if len(drill.Mounts) != 1 || !strings.HasPrefix(drill.Mounts[0], names.volumes["state"]+":") {
 		t.Fatalf("a drill mounts %v, want its own copy of state", drill.Mounts)

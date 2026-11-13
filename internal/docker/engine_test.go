@@ -24,7 +24,8 @@ func connect(t *testing.T) (*Engine, *dockertest.Server) {
 func TestAnIsolatedContainerKeepsNothingItDidntAskFor(t *testing.T) {
 	e, fake := connect(t)
 	spec := Spec{Name: "bedrock-a-web-r1", Image: "img", Labels: map[string]string{LabelApp: "a"}, Isolated: true,
-		Capabilities: []string{"NET_BIND_SERVICE"}, ReadOnly: true, Tmpfs: []string{"/app/.cache"}, Restart: true}
+		Capabilities: []string{"NET_BIND_SERVICE"}, ReadOnly: true, Tmpfs: []string{"/app/.cache"}, Restart: true,
+		DNSServers: []string{"192.0.2.53", "2001:db8::53"}}
 	if err := e.Run(context.Background(), spec); err != nil {
 		t.Fatal(err)
 	}
@@ -34,6 +35,8 @@ func TestAnIsolatedContainerKeepsNothingItDidntAskFor(t *testing.T) {
 	}
 	h := c.HostConfig
 	switch {
+	case !slices.Equal(h.DNS, spec.DNSServers):
+		t.Fatalf("DNS servers %v, want %v", h.DNS, spec.DNSServers)
 	// Docker's client sends capabilities in their CAP_ form.
 	case !slices.Equal(h.CapDrop, []string{"ALL"}), !slices.Equal(h.CapAdd, []string{"CAP_NET_BIND_SERVICE"}):
 		t.Fatalf("capabilities: drop %v, add %v", h.CapDrop, h.CapAdd)
@@ -87,7 +90,7 @@ func TestAPrivilegedContainerIsNotIsolated(t *testing.T) {
 		t.Fatal(err)
 	}
 	c, _ := fake.Container("bedrock-a-runner-r1")
-	if !c.HostConfig.Privileged || len(c.HostConfig.CapDrop) != 0 || len(c.HostConfig.SecurityOpt) != 0 {
+	if !c.HostConfig.Privileged || len(c.HostConfig.CapDrop) != 0 || len(c.HostConfig.SecurityOpt) != 0 || len(c.HostConfig.DNS) != 0 {
 		t.Fatalf("host config %+v", c.HostConfig)
 	}
 }
