@@ -14,16 +14,34 @@ import (
 // PublicResolver asks a public resolver directly, so a stale negative
 // answer cached on the machine (from looking a name up before its record
 // existed) doesn't hide a record the rest of the world already sees.
-var PublicResolver = &net.Resolver{
-	PreferGo: true,
-	Dial: func(ctx context.Context, _, _ string) (net.Conn, error) {
-		d := net.Dialer{Timeout: 5 * time.Second}
-		conn, err := d.DialContext(ctx, "udp", "1.1.1.1:53")
-		if err != nil {
-			return d.DialContext(ctx, "udp", "8.8.8.8:53")
+var PublicResolver = &net.Resolver{PreferGo: true, Dial: dialPublicResolver([]string{"1.1.1.1:53", "8.8.8.8:53"})}
+
+// resolverDialTimeout leaves room for one resent SYN per resolver.
+const resolverDialTimeout = 2 * time.Second
+
+// dialPublicResolver reaches the first of servers that accepts a TCP
+// connection. Over UDP every dial succeeds, so a resolver behind a lossy
+// or broken path cost each query its whole timeout and the next one was
+// never asked; TCP fails the dial instead and resends what the path drops.
+// Each server gets an equal share of the query's time left, at most
+// resolverDialTimeout, so a short resolv.conf timeout still reaches the last.
+func dialPublicResolver(servers []string) func(context.Context, string, string) (net.Conn, error) {
+	return func(ctx context.Context, _, _ string) (net.Conn, error) {
+		var err error
+		for i, server := range servers {
+			d := net.Dialer{Timeout: resolverDialTimeout}
+			if deadline, ok := ctx.Deadline(); ok {
+				d.Timeout = min(d.Timeout, time.Until(deadline)/time.Duration(len(servers)-i))
+			}
+			var conn net.Conn
+			if conn, err = d.DialContext(ctx, "tcp", server); err == nil {
+				return conn, nil
+			}
 		}
-		return conn, nil
-	},
+		// The last server's error, like the old fallback's: one line, and
+		// still a net.Error the resolver reports as a timeout.
+		return nil, err
+	}
 }
 
 // Resolves says whether host's DNS points at one of this machine's

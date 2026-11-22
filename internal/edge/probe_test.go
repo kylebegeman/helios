@@ -8,7 +8,10 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"encoding/binary"
+	"io"
 	"math/big"
+	"net"
 	"slices"
 	"testing"
 	"time"
@@ -136,4 +139,76 @@ func TestTheProbeReadsTheCertificateOfAHostThatRequiresOne(t *testing.T) {
 	if err := <-refused; err == nil {
 		t.Fatal("the server took a connection without a client certificate")
 	}
+}
+
+// The production path to 1.1.1.1 dropped about one packet in eight on
+// 2026-11-21, and 1.0.0.1 answered nothing at all. A resolver that can't
+// be reached has to hand over to the next one within a query's timeout.
+func TestPublicResolverMovesOnFromAnUnreachableResolver(t *testing.T) {
+	gone, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	unreachable := gone.Addr().String()
+	gone.Close()
+	want := net.IPv4(192, 0, 2, 10)
+	r := &net.Resolver{PreferGo: true, Dial: dialPublicResolver([]string{unreachable, serveDNS(t, want)})}
+	ips, err := r.LookupIPAddr(t.Context(), "site.example.com")
+	if err != nil {
+		t.Fatalf("lookup through the second resolver failed: %v", err)
+	}
+	if len(ips) != 1 || !ips[0].IP.Equal(want) {
+		t.Fatalf("lookup = %v, want %v", ips, want)
+	}
+}
+
+// serveDNS answers DNS over TCP on loopback: every A question with addr,
+// any other question with no records.
+func serveDNS(t *testing.T, addr net.IP) string {
+	t.Helper()
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { l.Close() })
+	go func() {
+		for {
+			conn, err := l.Accept()
+			if err != nil {
+				return
+			}
+			go func() {
+				defer conn.Close()
+				var size [2]byte
+				if _, err := io.ReadFull(conn, size[:]); err != nil {
+					return
+				}
+				query := make([]byte, binary.BigEndian.Uint16(size[:]))
+				if _, err := io.ReadFull(conn, query); err != nil {
+					return
+				}
+				conn.Write(dnsAnswer(query, addr))
+			}()
+		}
+	}()
+	return l.Addr().String()
+}
+
+// dnsAnswer builds a length-prefixed reply that repeats query's header and
+// question, dropping its EDNS record.
+func dnsAnswer(query []byte, addr net.IP) []byte {
+	end := 12
+	for query[end] != 0 {
+		end += int(query[end]) + 1
+	}
+	end += 5 // the root label, then the question's type and class
+	msg := slices.Clone(query[:end])
+	msg[2], msg[3] = 0x81, 0x80 // a response, recursion desired and available, no error
+	clear(msg[6:12])            // no answer, authority or additional records yet
+	if binary.BigEndian.Uint16(query[end-4:]) == 1 {
+		msg[7] = 1
+		msg = append(msg, 0xc0, 12, 0, 1, 0, 1, 0, 0, 0, 60, 0, 4)
+		msg = append(msg, addr.To4()...)
+	}
+	return append(binary.BigEndian.AppendUint16(nil, uint16(len(msg))), msg...)
 }
