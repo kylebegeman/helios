@@ -5,6 +5,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"fmt"
+	"io"
 	"net"
 	"sort"
 	"strings"
@@ -141,24 +142,105 @@ func certificateReadiness(host string, certs []*x509.Certificate, now time.Time,
 	return true, "issued by " + leaf.Issuer.CommonName, expiry, true
 }
 
-// WaitCertificate polls until the edge serves a real certificate for
-// host, or the wait runs out.
-func WaitCertificate(ctx context.Context, host, addr string, limit time.Duration) (string, error) {
-	deadline := time.Now().Add(limit)
-	var last string
+// How a deploy waits for a host's first certificate. Caddy tries a failed
+// issuance again after a minute, the issuer's staging service first, and
+// when that try passes staging and then fails at the real issuer it stops
+// for good: one slow answer from the issuer can leave a new host with
+// nothing on the way. So a host that has gone certificateQuiet without a
+// certificate, long enough for Caddy's own second try to finish, has the
+// edge asked to start over, at most certificateRestarts times, and
+// CertificateWait leaves the last start the room the first one had.
+const (
+	CertificateWait     = 5 * time.Minute
+	certificateQuiet    = 90 * time.Second
+	certificateRestarts = 2
+	certificatePoll     = 3 * time.Second
+)
+
+// WaitCertificate polls until the edge at addr serves a real certificate
+// for host, or CertificateWait runs out. restart asks the edge to begin
+// managing certificates again; each time it is used, out hears why. A nil
+// restart only waits.
+func WaitCertificate(ctx context.Context, host, addr string, restart func(context.Context) error, out io.Writer) (string, error) {
+	return certificateWait{
+		limit: CertificateWait, quiet: certificateQuiet, poll: certificatePoll, restarts: certificateRestarts,
+		ready:   func(ctx context.Context) (bool, string) { return CertificateReady(ctx, host, addr) },
+		restart: restart,
+		now:     time.Now,
+		sleep: func(ctx context.Context, d time.Duration) error {
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(d):
+				return nil
+			}
+		},
+	}.run(ctx, host, out)
+}
+
+// certificateWait is one host's wait, with the edge and the clock as
+// values so a test needs neither.
+type certificateWait struct {
+	limit, quiet, poll time.Duration
+	restarts           int
+	ready              func(context.Context) (bool, string)
+	restart            func(context.Context) error
+	now                func() time.Time
+	sleep              func(context.Context, time.Duration) error
+}
+
+func (w certificateWait) run(ctx context.Context, host string, out io.Writer) (string, error) {
+	if out == nil {
+		out = io.Discard
+	}
+	start := w.now()
+	// quietSince is when the edge last began on the certificate: the
+	// switch that came before this wait, then each restart.
+	quietSince, tried, asked := start, 0, 0
+	var restartErr error
 	for {
-		ok, why := CertificateReady(ctx, host, addr)
+		ok, why := w.ready(ctx)
 		if ok {
 			return why, nil
 		}
-		last = why
-		if time.Now().After(deadline) {
-			return "", fmt.Errorf("no certificate for %s after %s: %s", host, limit, last)
+		if err := ctx.Err(); err != nil {
+			return "", err
 		}
-		select {
-		case <-ctx.Done():
-			return "", ctx.Err()
-		case <-time.After(3 * time.Second):
+		now := w.now()
+		if now.Sub(start) >= w.limit {
+			err := fmt.Errorf("no certificate for %s after %s%s: %s", host, w.limit, startedOver(asked), why)
+			if restartErr != nil {
+				err = fmt.Errorf("%w; asking the edge to start over failed: %v", err, restartErr)
+			}
+			return "", err
+		}
+		if w.restart != nil && tried < w.restarts && now.Sub(quietSince) >= w.quiet {
+			tried++
+			quietSince = now
+			waited := now.Sub(start).Round(time.Second)
+			if restartErr = w.restart(ctx); restartErr != nil {
+				fmt.Fprintf(out, "%s: no certificate after %s (%s); asking the edge to start over failed: %v\n", host, waited, why, restartErr)
+			} else {
+				asked++
+				fmt.Fprintf(out, "%s: no certificate after %s (%s); asked the edge to start over (%d of %d)\n", host, waited, why, tried, w.restarts)
+			}
+		}
+		if err := w.sleep(ctx, w.poll); err != nil {
+			return "", err
 		}
 	}
+}
+
+// startedOver says, for the error of a wait that ran out, how often the
+// edge began again on the way.
+func startedOver(asked int) string {
+	switch asked {
+	case 0:
+		return ""
+	case 1:
+		return ", though the edge was asked to start over once"
+	case 2:
+		return ", though the edge was asked to start over twice"
+	}
+	return fmt.Sprintf(", though the edge was asked to start over %d times", asked)
 }
