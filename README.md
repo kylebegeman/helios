@@ -65,6 +65,12 @@ flowchart LR
   RET -.->|"helios rollback"| START
 ```
 
+After the switch, the deploy waits up to 5 minutes for each host to serve a
+real certificate. The edge can stop trying when an early attempt fails at the
+certificate authority, so a host still without one after 90 seconds has the
+edge asked to start over, at most twice, and the step says so each time. A
+host that still has none fails the deploy, which switches the edge back.
+
 The old revision is retained. `helios rollback` brings it back when the data
 compatibility contract permits it; unsafe data transitions require an explicit
 checkpoint restore. Every container receives `HELIOS_APP`, `HELIOS_WORKLOAD` and
@@ -463,6 +469,12 @@ the app behind it never sees a request from someone who is not signed in,
 and needs no auth code of its own. `helios integration set loom` names the
 Core's verify endpoint. A machine without that integration refuses to
 deploy a guarded route rather than serve it open, and previews rely on it.
+
+A sign-in kept at Cloudflare instead, a Cloudflare Access application on a
+`dns: proxied` host, stands in front of the certificate authority too. Give
+it a bypass policy for `/.well-known/acme-challenge/*`, or the host's first
+certificate can't be issued and its first deploy fails at the certificates
+step.
 
 ## Authenticated origin pulls
 

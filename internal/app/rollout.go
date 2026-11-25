@@ -586,7 +586,7 @@ func (r *rollout) certificatesStep() kernel.Step {
 		Name: "certificates", Change: "wait for certificates for " + strings.Join(r.hosts, ", "),
 		Apply: func(ctx context.Context, out io.Writer) error {
 			for _, host := range r.hosts {
-				why, err := edge.WaitCertificate(ctx, host, "127.0.0.1:443", 3*time.Minute)
+				why, err := edge.WaitCertificate(ctx, host, "127.0.0.1:443", r.restartCertificates, out)
 				if err != nil {
 					return err
 				}
@@ -595,6 +595,19 @@ func (r *rollout) certificatesStep() kernel.Step {
 			return nil
 		},
 	}
+}
+
+// restartCertificates gives the edge the configuration it already runs
+// and has it start over, which begins each host's certificate again. An
+// edge whose first tries at a new host's certificate failed can stop
+// trying, and then only a load like this one, or the next deploy's, gets
+// it going.
+func (r *rollout) restartCertificates(ctx context.Context) error {
+	cfg, err := edgeConfig(ctx, r.store, r.d.Secrets)
+	if err != nil {
+		return err
+	}
+	return edge.NewAdmin().LoadAgain(ctx, cfg)
 }
 
 // recoverOnFailure wraps a step that runs once the edge may be pointed at

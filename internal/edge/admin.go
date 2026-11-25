@@ -36,11 +36,30 @@ func NewAdmin() *Admin {
 }
 
 // Load replaces the whole configuration atomically, then keeps it as the
-// configuration the edge starts with.
+// configuration the edge starts with. Caddy takes one identical to what it
+// runs as nothing to do.
 func (a *Admin) Load(ctx context.Context, config []byte) error {
+	return a.load(ctx, config, false)
+}
+
+// LoadAgain is Load for a configuration the edge may already run, when
+// having it start over is the point: Caddy provisions every app afresh,
+// which begins certificate management again for each host, as a deploy's
+// load of a changed configuration does. Without the Cache-Control header
+// Caddy skips a configuration that changes nothing.
+func (a *Admin) LoadAgain(ctx context.Context, config []byte) error {
+	return a.load(ctx, config, true)
+}
+
+func (a *Admin) load(ctx context.Context, config []byte, again bool) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, a.Base+"/load", bytes.NewReader(config))
 	if err != nil {
 		return err
+	}
+	if again {
+		// Exactly this value: some Caddy releases compare the whole header
+		// with it rather than look for the token.
+		req.Header.Set("Cache-Control", "must-revalidate")
 	}
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := a.http.Do(req)
