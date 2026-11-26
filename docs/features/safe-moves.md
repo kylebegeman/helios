@@ -205,7 +205,10 @@ After a successful cutover and the chosen source retention window, remove the
 frozen source explicitly. Review its plan: removal takes down its containers
 and edge routes, attempts removal of DNS records it owns, and clears its move
 records and fence. App data and secrets remain unless requested otherwise;
-`--data` removes them too. Backups in shared storage remain.
+`--data` removes them too. Backups in shared storage remain: the bucket is
+the one the destination now backs up to, so removing a moved app starts no
+30 day expiry on the source, and `helios storage` there lists the bucket
+among those it does not own. See [storage watch](storage-watch.md).
 
 The older `move out` and `move in` commands remain manual copy workflows.
 Their source can keep accepting writes after capture. Use the staged workflow

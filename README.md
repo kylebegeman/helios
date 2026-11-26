@@ -438,8 +438,17 @@ removes those too, and `--secrets` forgets only the secrets. An app removed
 without its data can be cleared later: `helios remove <app> --data` for an
 app that is no longer on the machine finds what it left behind (its sealed
 secrets, volumes, database and networks), names each one in the plan and
-removes them. Its backups in the storage bucket are never touched, and are
-the only way back.
+removes them.
+
+An app's backups outlive it by 30 days. `helios remove` records the app's
+bucket, the plan says so, and the nightly storage sweep deletes the bucket
+with every backup in it once the 30 days are over. Until then the backups are
+the only way back after `--data`. `helios storage` shows the date,
+`helios storage keep <app>` cancels it, `helios storage purge <app>` deletes
+the bucket now, and deploying the app again clears it. A bucket is only ever
+deleted for an app this machine removed itself, never because nothing here
+uses it, and never for an app that left through a move. See
+[storage watch](docs/features/storage-watch.md).
 
 ## Named machines and portable setup
 
@@ -716,8 +725,10 @@ valid and renewing, disk and memory, backups fresh (the machine's own too) and
 drills passing, each workload able to write the volumes it mounts (checked
 hourly), an operation holding the machine's operation lock for over 4 hours
 (backups, drills and deploys wait behind it), backup retention deferred for
-over 3 days, and any URL added with `helios watch add` (the other machine's
-sites, say). A problem has to hold for three rounds before it becomes an
+over 3 days, a backup bucket that grows unusually or holds mostly data no
+snapshot uses, a removed app's bucket that could not be deleted, a nightly
+storage sweep that failed or stopped, and any URL added with
+`helios watch add` (the other machine's sites, say). A problem has to hold for three rounds before it becomes an
 alert, one alert per app, and you hear once when it starts, once a day while
 it lasts, and once when it recovers. An alert that grows graver, a warning
 that becomes an outage, is told as soon as the graver state has held three
@@ -861,9 +872,12 @@ taken, the snapshot is kept and the backup still counts as good:
 `helios backups` shows "retention deferred" with the reason (so does
 `helios status <app>` for an app's last good backup), and the next backup
 applies retention again. Every backup prunes, even when it forgot nothing, and
-one prune rewrites at most 2 GB, so a repository with a lot to reclaim catches
-up over several backups. Retention deferred on every backup for over 3 days
-raises an alert. No successful machine backup for 36 hours raises a warning.
+that prune rewrites at most 2 GB to keep the backup short. Once a week per
+repository the prune after a backup runs without that cap, within the same
+1 hour limit, so a repository with a lot to reclaim is caught up in one run; a
+week with no backup catches up at the next one. Retention deferred on every
+backup for over 3 days raises an alert, and so do three weekly full prunes in
+a row that start and never finish. No successful machine backup for 36 hours raises a warning.
 Before each backup Helios runs `restic unlock`, which removes only locks restic
 considers stale (not refreshed for 30 minutes). It never removes a live lock,
 so if a stopped call couldn't release its lock, a backup started within the
@@ -877,6 +891,26 @@ scheduled run goes through.
 | `helios drill <app>` | restore the latest snapshot beside the app, start it, verify, clean up |
 | `helios restore <app>` | bring data onto a machine that doesn't run the app yet |
 | `helios backups` | list what happened |
+| `helios storage` | what each bucket holds, how it grew in 7 days and how much of it is dead data |
+| `helios storage sweep` | measure every bucket now and expire the buckets of apps removed over 30 days ago |
+| `helios storage keep <app>` | cancel the expiry of a removed app's bucket |
+| `helios storage purge <app>` | delete a removed app's bucket now |
+
+What is stored is what is billed, so Helios watches it. Every night at 05:00
+UTC, after the backups, a sweep records each bucket's size, snapshot count and
+used bytes, keeping 35 days of samples. `helios storage` prints one row per
+bucket this machine owns, and lists apart the buckets under its prefix that it
+does not own; those are reported and never touched. A bucket half as large
+again as a week before (and over 1 GB larger), one over 5 GB that is more than
+20 times its newest snapshot, or one over 5 GB that is more than half dead
+data raises a warning. A new repository's first week raises nothing. See
+[storage watch](docs/features/storage-watch.md) for the thresholds, the expiry
+rules and what the storage key must be allowed to do.
+
+A release checkpoint is exempt from retention only while a rollback could
+still restore it. Once it was restored, or its app was removed, ordinary
+retention decides. See
+[release safety](docs/features/release-safety.md#when-a-checkpoint-expires).
 
 `helios drill` uses an internal network with no outbound access, starts all
 long-running workloads before probing readiness, and never runs release or cron
@@ -977,7 +1011,8 @@ checks on isolated restored data, retaining a proof of the exact source,
 manifest, images and snapshot. A manifest can declare
 `release.data_compatibility: backward-compatible` or `restore-required`.
 Unknown and restore-required releases retain a quiesced checkpoint before
-changing existing data and block unsafe code-only rollback.
+changing existing data, for as long as a rollback could restore it, and block
+unsafe code-only rollback.
 `rollback --restore-data <exact-checkpoint>` deliberately replaces live data
 and discards writes since that checkpoint. See
 [release safety](docs/features/release-safety.md) for the full contract.
@@ -1081,7 +1116,7 @@ on an older Helios says to upgrade it before `--revision`, `--job`,
 |---|---|
 | **Machine** | `target` · `capabilities` · `host` · `daemon` · `doctor` · `upgrade` · `version` · `status` · `alerts` · `watch` · `peer` |
 | **Apps** | `init` · `check` · `launch` · `deploy` · `preview` · `rollback` · `remove` · `move` · `ls` · `ps` · `logs` · `history` · `gc` |
-| **Data** | `backup` · `backups` · `restore` · `recover` · `rehearse` · `drill` · `psql` |
+| **Data** | `backup` · `backups` · `storage` · `restore` · `recover` · `rehearse` · `drill` · `psql` |
 | **Access** | `secret` · `integration` · `git` · `exec` · `run` · `jobs` · `cron` |
 | **Network** | `dns` · `edge` · `exposure` |
 
@@ -1209,7 +1244,8 @@ remains available for initial binary installation.
 | [docs/features/compatibility.md](docs/features/compatibility.md) | API/state contracts and upgrade checkpoints |
 | [docs/features/machine-recovery.md](docs/features/machine-recovery.md) | self-contained recovery and rehearsals |
 | [docs/features/safe-moves.md](docs/features/safe-moves.md) | source fencing and deliberate target cutover |
-| [docs/features/release-safety.md](docs/features/release-safety.md) | release rehearsal and data-aware rollback |
+| [docs/features/release-safety.md](docs/features/release-safety.md) | release rehearsal, data-aware rollback and when a checkpoint expires |
+| [docs/features/storage-watch.md](docs/features/storage-watch.md) | the storage report, the growth alert, expiring buckets and the weekly full prune |
 | [docs/features/deployment-sources.md](docs/features/deployment-sources.md) | approved source captures, safe retries and cleanup |
 | [docs/features/peer-watch.md](docs/features/peer-watch.md) | machines that watch each other, and which one pages |
 | [docs/operations/incident-review.md](docs/operations/incident-review.md) | the blank review `helios alerts review` fills in |
