@@ -74,6 +74,10 @@ func Open(path string) (*Store, error) {
 		db.Close()
 		return nil, err
 	}
+	if err := s.ensureStorage(context.Background()); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("storage watch tables: %w", err)
+	}
 	return s, nil
 }
 

@@ -301,6 +301,10 @@ func (s *Store) ActiveRevisions(ctx context.Context) ([]Revision, error) {
 // signals, incident and webhook. Release fences cannot survive their removed
 // revision history. Backup runs stay, because they say where its data went.
 func (s *Store) RemoveApp(ctx context.Context, app string) error {
+	return s.removeApp(ctx, app, nil)
+}
+
+func (s *Store) removeApp(ctx context.Context, app string, tombstone *StorageTombstone) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -316,6 +320,11 @@ func (s *Store) RemoveApp(ctx context.Context, app string) error {
 		{`DELETE FROM git_hooks WHERE app = ?`, app},
 	} {
 		if _, err := tx.ExecContext(ctx, q.query, q.arg); err != nil {
+			return err
+		}
+	}
+	if tombstone != nil {
+		if err := recordTombstone(ctx, tx, *tombstone); err != nil {
 			return err
 		}
 	}
