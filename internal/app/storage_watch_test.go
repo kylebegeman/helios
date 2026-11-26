@@ -520,23 +520,23 @@ func TestAnyDoubtHoldsTheBucket(t *testing.T) {
 		// was removed here and none since, so the upload check sees nothing.
 		{"another machine's snapshot beside this machine's", func(f *storageFixture) {
 			f.holds("helios-blog", snapshotOf("vps", "blog"), snapshotOf("other", "blog"))
-		}, "1 of its 2 snapshot(s) were not made by this machine (the first is " + snapshotOf("other", "blog")[:8] + ")"},
+		}, "1 of its 2 snapshot(s) are not on record as made by this machine (the first is " + snapshotOf("other", "blog")[:8] + ")"},
 		{"only another machine's snapshots", func(f *storageFixture) {
 			f.holds("helios-blog", snapshotOf("other", "blog"))
-		}, "1 of its 1 snapshot(s) were not made by this machine"},
+		}, "1 of its 1 snapshot(s) are not on record as made by this machine"},
 		{"a snapshot this machine drilled and restored but did not make", func(f *storageFixture) {
 			theirs := snapshotOf("other", "blog")
 			f.holds("helios-blog", snapshotOf("vps", "blog"), theirs)
 			f.ran("blog", state.BackupRunDrill, theirs)
 			f.ran("blog", state.BackupRunRestore, theirs)
-		}, "1 of its 2 snapshot(s) were not made by this machine"},
+		}, "1 of its 2 snapshot(s) are not on record as made by this machine"},
 		{"another app's snapshot", func(f *storageFixture) {
 			f.ran("shop", state.BackupRunBackup, snapshotOf("vps", "shop"))
 			f.holds("helios-blog", snapshotOf("vps", "shop"))
-		}, "1 of its 1 snapshot(s) were not made by this machine"},
+		}, "1 of its 1 snapshot(s) are not on record as made by this machine"},
 		{"a snapshot file that is not a snapshot id", func(f *storageFixture) {
 			f.account.buckets["helios-blog"].keys = append(repository(snapshotOf("vps", "blog")), "snapshots/tmp-upload")
-		}, "1 of its 2 snapshot(s) were not made by this machine"},
+		}, "1 of its 2 snapshot(s) are not on record as made by this machine"},
 		// Not a repository this machine could have made a snapshot in and
 		// then deleted from: files, and no snapshot at all.
 		{"files and no snapshot", func(f *storageFixture) {
@@ -603,7 +603,7 @@ func TestPurgeRightAfterARemovalLeavesAnotherMachinesBackups(t *testing.T) {
 	f.holds("helios-blog", snapshotOf("vps", "blog"), snapshotOf("other", "blog"))
 	f.account.buckets["helios-blog"].lastWrite = storageDay.Add(20 * time.Minute)
 	f.now = storageDay.Add(30 * time.Minute)
-	if _, err := f.run(StoragePurgeKind, StorageAppInput{App: "blog"}); err == nil || !strings.Contains(err.Error(), "were not made by this machine") {
+	if _, err := f.run(StoragePurgeKind, StorageAppInput{App: "blog"}); err == nil || !strings.Contains(err.Error(), "are not on record as made by this machine") {
 		t.Fatalf("purge: %v", err)
 	}
 	if len(f.account.deleted) != 0 || f.account.buckets["helios-blog"] == nil {
@@ -636,7 +636,7 @@ func TestAnInterruptedDeletionCarriesOn(t *testing.T) {
 	f.account.buckets["helios-blog"].keys = append(f.account.buckets["helios-blog"].keys, theirs)
 	f.account.deleteErr = nil
 	f.now = f.now.Add(24 * time.Hour)
-	if out, err := f.sweep(); err != nil || !strings.Contains(f.tombstone("blog").Problem, "were not made by this machine") {
+	if out, err := f.sweep(); err != nil || !strings.Contains(f.tombstone("blog").Problem, "are not on record as made by this machine") {
 		t.Fatal(err, out)
 	}
 	// Without it, the next night finishes.
@@ -675,7 +675,7 @@ func TestASnapshotRecordedByItsShortIDIsThisMachines(t *testing.T) {
 	f.tombstoned("blog", storageDay)
 	f.holds("helios-blog", snapshotOf("vps", "blog"), snapshotOf("other", "blog"))
 	f.now = storageDay.Add(BucketExpiry)
-	if out, err := f.sweep(); err != nil || !strings.Contains(f.tombstone("blog").Problem, "1 of its 2 snapshot(s) were not made by this machine") {
+	if out, err := f.sweep(); err != nil || !strings.Contains(f.tombstone("blog").Problem, "1 of its 2 snapshot(s) are not on record as made by this machine") {
 		t.Fatal(err, out)
 	}
 	f.holds("helios-blog", snapshotOf("vps", "blog"))
@@ -692,7 +692,7 @@ func TestABucketThatWillNotExpireSaysSoBeforeItsDay(t *testing.T) {
 	f.removed("blog", storageDay)
 	f.holds("helios-blog", snapshotOf("vps", "blog"), snapshotOf("other", "blog"))
 	f.now = storageDay.Add(24 * time.Hour)
-	if out, err := f.sweep(); err != nil || !strings.Contains(f.tombstone("blog").Problem, "were not made by this machine") {
+	if out, err := f.sweep(); err != nil || !strings.Contains(f.tombstone("blog").Problem, "are not on record as made by this machine") {
 		t.Fatal(err, out)
 	}
 	f.account.usageErr = map[string]error{"helios-blog": errors.New("storage answered HTTP 503")}
@@ -969,5 +969,121 @@ func TestTheSweepRecordsEveryBucketUnderThePrefix(t *testing.T) {
 		if c[0] != "site" && c[0] != "bedrock" {
 			t.Fatalf("a restic helper is labeled for %q: %v", c[0], c)
 		}
+	}
+}
+
+// A machine recovery copies the source machine's backup runs into this
+// machine's state. If the source is still alive, its bucket is not this
+// machine's to delete, however the copied history reads.
+func TestARecoveredMachinesBackupsAreNotThisMachinesToDelete(t *testing.T) {
+	ctx := context.Background()
+	f := newStorageFixture(t)
+	source, err := state.Open(filepath.Join(t.TempDir(), "source.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer source.Close()
+	theirs, at := snapshotOf("other", "blog"), storageDay.Add(-24*time.Hour)
+	id, err := source.StartBackupRun(ctx, "blog", state.BackupRunBackup, at)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := source.FinishBackupRun(ctx, id, state.BackupRun{OK: true, FinishedAt: at, Snapshot: theirs}); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.store.ImportMachineRecovery(ctx, source.Path(), "recovery-1", nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	f.tombstoned("blog", storageDay)
+	f.holds("helios-blog", theirs)
+	f.now = storageDay.Add(2 * time.Hour)
+	out, err := f.run(StoragePurgeKind, StorageAppInput{App: "blog"})
+	if _, gone := f.account.deleted["helios-blog"]; gone || err == nil || !strings.Contains(err.Error(), "no record of a backup") {
+		t.Fatalf("purge: %v\n%s", err, out)
+	}
+	// Once this machine backs the app up itself, the bucket holds both
+	// machines' snapshots, and stays for as long as it does.
+	f.ran("blog", state.BackupRunBackup, snapshotOf("vps", "blog"))
+	f.holds("helios-blog", theirs, snapshotOf("vps", "blog"))
+	out, err = f.run(StoragePurgeKind, StorageAppInput{App: "blog"})
+	if _, gone := f.account.deleted["helios-blog"]; gone || err == nil || !strings.Contains(err.Error(), "1 of its 2 snapshot(s) are not on record as made by this machine") {
+		t.Fatalf("purge: %v\n%s", err, out)
+	}
+}
+
+// A purge ahead of the 30 days that stops part way has already deleted the
+// repository's config. The sweep is not due to finish it, and must not take
+// what is left for healthy backups with a date.
+func TestAPurgeThatStoppedIsNotForgotten(t *testing.T) {
+	for _, kept := range []bool{false, true} {
+		f := newStorageFixture(t)
+		f.removed("blog", storageDay)
+		if kept {
+			if out, err := f.run(StorageKeepKind, StorageAppInput{App: "blog"}); err != nil {
+				t.Fatal(err, out)
+			}
+		}
+		f.account.deleteErr = map[string]error{"helios-blog": errors.New("storage answered HTTP 503")}
+		f.now = storageDay.Add(2 * time.Hour)
+		if out, err := f.run(StoragePurgeKind, StorageAppInput{App: "blog"}); err == nil || !strings.Contains(f.tombstone("blog").Problem, "run helios storage purge blog again to finish") {
+			t.Fatalf("kept %t: purge: %v, problem %q\n%s", kept, err, f.tombstone("blog").Problem, out)
+		}
+		f.account.deleteErr = nil
+		for night := 1; night <= 2; night++ {
+			f.now = f.now.Add(24 * time.Hour)
+			out, err := f.sweep()
+			problem := f.tombstone("blog").Problem
+			if err != nil || !strings.Contains(problem, "its deletion was started and did not finish") || strings.Contains(problem, "or the sweep does on 2026-12-25") == kept {
+				t.Fatalf("kept %t, night %d: %v, problem %q\n%s", kept, night, err, problem, out)
+			}
+		}
+		// Running it again finishes.
+		if out, err := f.run(StoragePurgeKind, StorageAppInput{App: "blog"}); err != nil || f.tombstone("blog") != nil || f.account.buckets["helios-blog"] != nil {
+			t.Fatalf("kept %t: the second purge did not finish: %v\n%s", kept, err, out)
+		}
+	}
+}
+
+// outOfTime is a store whose deletion uses up the sweep's time: the context
+// it was given ends while it deletes.
+type outOfTime struct {
+	*fakeAccount
+	cancel context.CancelFunc
+}
+
+func (o outOfTime) DeleteBucket(ctx context.Context, _ objectstore.Bucket, _ objectstore.Check) (objectstore.Deleted, error) {
+	o.cancel()
+	return objectstore.Deleted{Files: 2}, ctx.Err()
+}
+
+// A deletion that runs out of the sweep's time is recorded as unfinished,
+// which needs this machine's state and not the time that just ran out.
+func TestADeletionThatRunsOutOfTimeIsRecordedAndCarriedOn(t *testing.T) {
+	f := newStorageFixture(t)
+	f.removed("blog", storageDay)
+	f.now = storageDay.Add(BucketExpiry)
+	s, err := f.watch.open(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	budget, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	s.obj = outOfTime{f.account, cancel}
+	var out strings.Builder
+	why, err := s.settle(context.Background(), budget, *f.tombstone("blog"), true, false, &out)
+	if err != nil || !strings.Contains(why, "did not finish after 2 file(s)") || !strings.Contains(f.tombstone("blog").Problem, "the next sweep carries on") {
+		t.Fatalf("why %q, err %v, problem %q\n%s", why, err, f.tombstone("blog").Problem, out.String())
+	}
+}
+
+// A store that keeps versions holds a snapshot's file more than once. It is
+// still one snapshot.
+func TestASnapshotIsCountedOnceHoweverManyVersionsOfItThereAre(t *testing.T) {
+	f := newStorageFixture(t)
+	f.removed("blog", storageDay)
+	f.holds("helios-blog", snapshotOf("vps", "blog"), snapshotOf("other", "blog"), snapshotOf("other", "blog"), snapshotOf("vps", "blog"))
+	f.now = storageDay.Add(BucketExpiry)
+	if out, err := f.sweep(); err != nil || !strings.Contains(f.tombstone("blog").Problem, "1 of its 2 snapshot(s)") {
+		t.Fatalf("%v, problem %q\n%s", err, f.tombstone("blog").Problem, out)
 	}
 }

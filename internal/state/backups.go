@@ -90,10 +90,12 @@ func (s *Store) SkipDrill(ctx context.Context, app string, occurrence time.Time,
 }
 
 // SnapshotsMade returns the id of every snapshot that a successful run of
-// one of the given kinds recorded for an app. Pass the kinds that write a
-// snapshot: a drill or a restore records the snapshot it read, which may be
-// one another machine made. The runs of a removed app are kept, so this
-// still answers after the app is gone.
+// one of the given kinds recorded for an app on this machine. Pass the kinds
+// that write a snapshot: a drill or a restore records the snapshot it read,
+// which may be one another machine made. A run that a machine recovery
+// copied from another machine's state does not count either: it is that
+// machine's record. The runs of a removed app are kept, so this still
+// answers after the app is gone.
 func (s *Store) SnapshotsMade(ctx context.Context, app string, kinds ...string) (map[string]bool, error) {
 	out := map[string]bool{}
 	if len(kinds) == 0 {
@@ -103,7 +105,7 @@ func (s *Store) SnapshotsMade(ctx context.Context, app string, kinds ...string) 
 	for _, kind := range kinds {
 		args = append(args, kind)
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT DISTINCT snapshot FROM backup_runs WHERE app = ? AND ok = 1 AND snapshot != '' AND kind IN (?`+strings.Repeat(", ?", len(kinds)-1)+`)`, args...)
+	rows, err := s.db.QueryContext(ctx, `SELECT DISTINCT snapshot FROM backup_runs WHERE app = ? AND ok = 1 AND imported = 0 AND snapshot != '' AND kind IN (?`+strings.Repeat(", ?", len(kinds)-1)+`)`, args...)
 	if err != nil {
 		return nil, err
 	}

@@ -2316,9 +2316,11 @@ Delete a removed app's bucket now, without waiting for its 30 days: every
 version of every file, then the bucket. Nothing brings the backups back.
 
 Only an app helios remove took off this machine can be purged. A bucket is
-refused when it holds a snapshot this machine did not make, when it holds
-files but no snapshot, or when it was written to after the app was removed:
-another machine backs up to it.
+refused when it holds a snapshot this machine has no record of making, when
+it holds files but no snapshot, or when it was written to after the app was
+removed: another machine backs up to it. Backups a machine recovery brought
+with it count as the other machine's. A purge that stops part way is run
+again to finish.
 Usage:
   helios storage purge <app> [flags]
 

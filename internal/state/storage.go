@@ -63,8 +63,49 @@ END;`
 // in use, so the tombstone that would delete that bucket goes in the same
 // write. No code path has to remember to clear it.
 func (s *Store) ensureStorage(ctx context.Context) error {
-	_, err := s.db.ExecContext(ctx, storageSchema)
-	return err
+	if _, err := s.db.ExecContext(ctx, storageSchema); err != nil {
+		return err
+	}
+	return s.ensureImportedRuns(ctx)
+}
+
+// ensureImportedRuns adds backup_runs.imported, which marks a run that a
+// machine recovery copied from another machine's state. Such a run says
+// what that machine backed up, and its snapshot is not one this machine
+// made.
+//
+// A store that imported a recovery before the column existed cannot say
+// which of its runs came with it. Every run that started before its last
+// import is marked, which takes this machine's own earlier runs with it: a
+// bucket is then held that could have gone, never the other way round.
+func (s *Store) ensureImportedRuns(ctx context.Context) error {
+	has := func() (bool, error) {
+		var n int
+		err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM pragma_table_info('backup_runs') WHERE name = 'imported'`).Scan(&n)
+		return n > 0, err
+	}
+	if ok, err := has(); err != nil || ok {
+		return err
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := tx.ExecContext(ctx, `ALTER TABLE backup_runs ADD COLUMN imported INTEGER NOT NULL DEFAULT 0`); err != nil {
+		// Another process opening the same store got there first.
+		if ok, hasErr := has(); hasErr == nil && ok {
+			return nil
+		}
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, recoveryImportSchema); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE backup_runs SET imported = 1 WHERE started_at <= (SELECT MAX(imported_at) FROM machine_recoveries)`); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 // Storage sample kinds: whose bucket a sample describes.

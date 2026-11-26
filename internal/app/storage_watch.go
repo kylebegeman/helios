@@ -463,8 +463,10 @@ func tombstoneVerdict(t state.StorageTombstone, f tombstoneFacts) (int, string) 
 // settle reaches one tombstone's verdict and acts on it. mayDelete is
 // false for a bucket the reviewed plan did not name. It returns why a
 // bucket was held, and an error only when state could not be read or
-// written, which stops the whole pass.
-func (s *storageSession) settle(ctx context.Context, t state.StorageTombstone, mayDelete, byHand bool, out io.Writer) (string, error) {
+// written, which stops the whole pass. budget bounds what is asked of the
+// storage; this machine's own state is read and written under ctx, so a
+// pass that runs out of time still records where it stopped.
+func (s *storageSession) settle(ctx, budget context.Context, t state.StorageTombstone, mayDelete, byHand bool, out io.Writer) (string, error) {
 	store := s.w.Store
 	revs, err := store.Revisions(ctx, t.App)
 	if err != nil {
@@ -492,9 +494,13 @@ func (s *storageSession) settle(ctx context.Context, t state.StorageTombstone, m
 			return "", err
 		}
 	}
-	check, why, err := s.ownership(ctx, t)
+	o, why, err := s.ownership(ctx, t)
 	if err != nil {
 		return "", err
+	}
+	var check objectstore.Check
+	if o != nil {
+		check = objectstore.Check{NotWrittenSince: t.RemovedAt.Add(bucketWriteSlack), Key: o.key, Whole: o.whole}
 	}
 	// refused turns what the bucket's contents said into a reason to hold.
 	refused := func(err error) (string, bool) {
@@ -518,19 +524,32 @@ func (s *storageSession) settle(ctx context.Context, t state.StorageTombstone, m
 		}
 	default:
 		// Not due yet, or kept. A bucket that will not pass on its day says
-		// so now, while the report still shows a date for it. A listing that
-		// fails tonight is not news: the next night reads it again.
-		if !t.Kept() {
-			if why != "" {
-				return hold(why)
+		// so now, while the report still shows a date for it. A kept bucket
+		// with nothing recorded against it is not read: it is not going
+		// anywhere.
+		if t.Kept() && t.Problem == "" {
+			return "", nil
+		}
+		if why != "" {
+			return hold(why)
+		}
+		err := s.obj.Examine(budget, s.listed[t.Bucket], check)
+		if why, held := refused(err); held {
+			return hold(why)
+		}
+		if err != nil {
+			// A listing that fails tonight is not news: the next night
+			// reads it again, and what is recorded stands until then.
+			return "", nil
+		}
+		if o.unfinished() {
+			// A purge stopped part way. What is left passes as this
+			// machine's, and is no longer a backup of anything.
+			why := fmt.Sprintf("its deletion was started and did not finish: the repository's config is gone, so the backups left in it can no longer be restored; run helios storage purge %s to delete the rest", t.App)
+			if !t.Kept() {
+				why += fmt.Sprintf(", or the sweep does on %s", t.RemovedAt.Add(BucketExpiry).UTC().Format("2006-01-02"))
 			}
-			err := s.obj.Examine(ctx, s.listed[t.Bucket], check)
-			if why, held := refused(err); held {
-				return hold(why)
-			}
-			if err != nil {
-				return "", nil // not read tonight; what is recorded stands
-			}
+			return hold(why)
 		}
 		if t.Problem != "" {
 			return "", store.SetStorageTombstoneProblem(ctx, t.App, "")
@@ -541,12 +560,18 @@ func (s *storageSession) settle(ctx context.Context, t state.StorageTombstone, m
 		return hold(why)
 	}
 	fmt.Fprintf(out, "deleting bucket %s, the backups of %s removed on %s\n", t.Bucket, t.App, t.RemovedAt.UTC().Format("2006-01-02"))
-	done, err := s.obj.DeleteBucket(ctx, s.listed[t.Bucket], check)
+	done, err := s.obj.DeleteBucket(budget, s.listed[t.Bucket], check)
 	if why, held := refused(err); held {
 		return hold(why)
 	}
 	if err != nil {
-		return hold(fmt.Sprintf("deleting it did not finish after %d file(s): %s; the next sweep carries on", done.Files, firstLine(err.Error())))
+		// Only a bucket whose 30 days are up is the sweep's to carry on
+		// with. A purge ahead of them is the operator's to repeat.
+		next := "the next sweep carries on"
+		if !bucketDue(t, s.w.now()) {
+			next = fmt.Sprintf("run helios storage purge %s again to finish", t.App)
+		}
+		return hold(fmt.Sprintf("deleting it did not finish after %d file(s): %s; %s", done.Files, firstLine(err.Error()), next))
 	}
 	fmt.Fprintf(out, "deleted bucket %s: %d file(s), %s\n", t.Bucket, done.Files, HumanBytes(done.Bytes))
 	return "", s.forget(ctx, t)
@@ -559,6 +584,10 @@ func (s *storageSession) settle(ctx context.Context, t state.StorageTombstone, m
 // leave out a snapshot that fails to load, and it still reads a bucket
 // whose deletion was interrupted after the repository's config was gone.
 const snapshotKeys = "snapshots/"
+
+// repositoryConfig is the file a restic repository cannot be opened
+// without. It is the first to go when a bucket is deleted.
+const repositoryConfig = "config"
 
 // notThisMachines is why a bucket's contents are not this machine's to
 // delete.
@@ -577,10 +606,24 @@ type owned struct {
 	short []string
 	// read is set once the whole bucket was read.
 	read bool
-	// snapshots, strangers and others count what the bucket holds.
-	snapshots, strangers, others int
-	// first is the first snapshot this machine did not make.
-	first string
+	// seen is every snapshot the bucket holds, true for one this machine
+	// has no record of making. A snapshot is counted once however many
+	// versions or delete markers of its file the bucket keeps.
+	seen map[string]bool
+	// strangers counts the true ones, and first is the first of them.
+	strangers int
+	first     string
+	// others counts the files that are not snapshots, and config says the
+	// repository's config was one of them.
+	others int
+	config bool
+}
+
+// unfinished reports whether the bucket that was read is what an
+// interrupted deletion leaves: snapshots of a repository whose config is
+// already gone.
+func (o *owned) unfinished() bool {
+	return o.read && !o.config && len(o.seen) > 0
 }
 
 func (o *owned) mine(id string) bool {
@@ -601,17 +644,18 @@ func (o *owned) key(key string) error {
 	case !snapshot:
 		if !o.read {
 			o.others++
+			o.config = o.config || key == repositoryConfig
 		}
 	case o.mine(id):
 		if !o.read {
-			o.snapshots++
+			o.seen[id] = false
 		}
 	case o.read:
 		// It was not there when the bucket was read: someone backed up into
 		// it while it was being deleted.
 		return &notThisMachines{fmt.Sprintf("a snapshot this machine did not make (%s) appeared in it while it was being deleted, so another machine backs up to it; what was already deleted is gone", shortID(id))}
-	default:
-		o.snapshots++
+	case !o.seen[id]:
+		o.seen[id] = true
 		o.strangers++
 		if o.first == "" {
 			o.first = id
@@ -624,10 +668,11 @@ func (o *owned) whole() error {
 	o.read = true
 	switch {
 	case o.strangers > 0:
-		return &notThisMachines{fmt.Sprintf("%d of its %d snapshot(s) were not made by this machine (the first is %s), so another machine backs up to it or did; it is left for that machine, or for whoever deletes it at the storage provider", o.strangers, o.snapshots, shortID(o.first))}
-	case o.snapshots == 0 && o.others > 0:
-		// A deletion that was interrupted cannot look like this: files go
-		// in the order of their names, and the snapshots are the last.
+		return &notThisMachines{fmt.Sprintf("%d of its %d snapshot(s) are not on record as made by this machine (the first is %s): another machine backs up to it or did, or a backup here failed after it wrote one; it is left for that machine, or for whoever deletes it at the storage provider", o.strangers, len(o.seen), shortID(o.first))}
+	case len(o.seen) == 0 && o.others > 0:
+		// A deletion that was interrupted cannot look like this: unfinished
+		// uploads go first, then the files in the order of their names, of
+		// which the snapshots are the last.
 		return &notThisMachines{"it holds files but no snapshot, so nothing in it can be told to be this machine's"}
 	}
 	return nil
@@ -640,29 +685,30 @@ func shortID(id string) string {
 	return id
 }
 
-// ownership returns the check a bucket's contents must pass before this
-// machine deletes it: every snapshot in it is one a backup, a move's capture
-// or a release checkpoint on this machine recorded making. The runs of a
+// ownership returns what decides whether a bucket's contents are this
+// machine's to delete: every snapshot in it must be one a backup, a move's
+// capture or a release checkpoint on this machine recorded making. A run a
+// machine recovery copied from another machine's state is not such a record. The runs of a
 // removed app are kept, so the record outlives the app. With no such record
 // at all it returns why the bucket is held instead: the proof has to be
 // there, not merely not contradicted. An error means this machine's own
 // state could not be read.
-func (s *storageSession) ownership(ctx context.Context, t state.StorageTombstone) (objectstore.Check, string, error) {
+func (s *storageSession) ownership(ctx context.Context, t state.StorageTombstone) (*owned, string, error) {
 	made, err := s.w.Store.SnapshotsMade(ctx, t.App, snapshotRunKinds...)
 	if err != nil {
-		return objectstore.Check{}, "", err
+		return nil, "", err
 	}
 	if len(made) == 0 {
-		return objectstore.Check{}, fmt.Sprintf("this machine has no record of a backup of %s, so the backups in it are not this machine's to delete", t.App), nil
+		return nil, fmt.Sprintf("this machine has no record of a backup of %s, so the backups in it are not this machine's to delete", t.App), nil
 	}
-	o := &owned{made: made}
+	o := &owned{made: made, seen: map[string]bool{}}
 	for id := range made {
 		// restic's short id is eight characters; nothing shorter is an id.
 		if len(id) >= 8 && len(id) < 64 {
 			o.short = append(o.short, id)
 		}
 	}
-	return objectstore.Check{NotWrittenSince: t.RemovedAt.Add(bucketWriteSlack), Key: o.key, Whole: o.whole}, "", nil
+	return o, "", nil
 }
 
 // forget drops what was recorded about a bucket that is gone.
@@ -697,7 +743,7 @@ func (w StorageWatch) expire(ctx context.Context, due []string, out io.Writer) e
 	budget, cancel := context.WithTimeout(ctx, sweepExpireBudget)
 	defer cancel()
 	for _, t := range pending {
-		if _, err := s.settle(budget, t, slices.Contains(due, t.App), false, out); err != nil {
+		if _, err := s.settle(ctx, budget, t, slices.Contains(due, t.App), false, out); err != nil {
 			return err
 		}
 	}
@@ -799,7 +845,7 @@ func (w StoragePurge) Plan(ctx context.Context, raw json.RawMessage) (*kernel.Pl
 			if err != nil {
 				return err
 			}
-			held, err := s.settle(ctx, *current, true, true, out)
+			held, err := s.settle(ctx, ctx, *current, true, true, out)
 			if err != nil {
 				return err
 			}

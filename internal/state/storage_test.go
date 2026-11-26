@@ -368,3 +368,105 @@ func TestSnapshotsMadeCountsOnlySuccessfulRunsOfTheKindsAsked(t *testing.T) {
 		}
 	}
 }
+
+// A machine recovery copies the source machine's backup runs. They stay
+// that machine's record: a snapshot they name was not made here.
+func TestRunsAMachineRecoveryImportedAreNotThisMachines(t *testing.T) {
+	ctx := context.Background()
+	at := storageDay.Add(-24 * time.Hour)
+	ran := func(s *Store, snapshot string, at time.Time) {
+		t.Helper()
+		id, err := s.StartBackupRun(ctx, "blog", BackupRunBackup, at)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := s.FinishBackupRun(ctx, id, BackupRun{OK: true, FinishedAt: at, Snapshot: snapshot}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	made := func(s *Store) string {
+		t.Helper()
+		got, err := s.SnapshotsMade(ctx, "blog", BackupRunBackup)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var ids []string
+		for id := range got {
+			ids = append(ids, id)
+		}
+		sort.Strings(ids)
+		return strings.Join(ids, " ")
+	}
+	source := open(t)
+	ran(source, "theirs", at)
+	target := open(t)
+	ran(target, "mine", at)
+	if err := target.ImportMachineRecovery(ctx, source.Path(), "recovery-1", nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	if runs, err := target.BackupRuns(ctx, "blog", "", 10); err != nil || len(runs) != 2 {
+		t.Fatalf("the imported run is not in the history: %v %v", runs, err)
+	}
+	if got := made(target); got != "mine" {
+		t.Fatalf("snapshots made here after the import: %q, want only this machine's own", got)
+	}
+	ran(target, "mine-later", storageDay)
+	if got := made(target); got != "mine mine-later" {
+		t.Fatalf("snapshots made here: %q", got)
+	}
+}
+
+// A store that imported a recovery before runs were marked cannot say which
+// came with it, so every run from before its last import stops counting.
+func TestAStoreThatImportedBeforeRunsWereMarkedCountsOnlyLaterRuns(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "state.db")
+	s, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	imported := time.Now().UTC()
+	for snapshot, at := range map[string]time.Time{"before": imported.Add(-time.Hour), "after": imported.Add(time.Hour)} {
+		id, err := s.StartBackupRun(ctx, "blog", BackupRunBackup, at)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := s.FinishBackupRun(ctx, id, BackupRun{OK: true, FinishedAt: at, Snapshot: snapshot}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	s.Close()
+
+	// What an older binary left behind after a recovery.
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`ALTER TABLE backup_runs DROP COLUMN imported; INSERT INTO machine_recoveries(id,digest,imported_at) VALUES('r1','d',?)`, unix(imported)); err != nil {
+		t.Fatal(err)
+	}
+	db.Close()
+
+	for range 2 { // the second opening finds the column and changes nothing
+		s, err = Open(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		got, err := s.SnapshotsMade(ctx, "blog", BackupRunBackup)
+		if err != nil || len(got) != 1 || !got["after"] {
+			t.Fatalf("snapshots made here: %v %v", got, err)
+		}
+		// A run recorded from now on counts, whatever its start time.
+		id, err := s.StartBackupRun(ctx, "shop", BackupRunBackup, imported.Add(-2*time.Hour))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := s.FinishBackupRun(ctx, id, BackupRun{OK: true, FinishedAt: imported, Snapshot: "shop-1"}); err != nil {
+			t.Fatal(err)
+		}
+		if got, err := s.SnapshotsMade(ctx, "shop", BackupRunBackup); err != nil || !got["shop-1"] {
+			t.Fatalf("a run recorded after the column was added does not count: %v %v", got, err)
+		}
+		s.Close()
+	}
+}

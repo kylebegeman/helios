@@ -60,7 +60,8 @@ place in `helios history`. It has two steps.
 
 The sample has 20 minutes and the deletions 40, because the sweep holds the
 machine's operation lock. A bucket not read in time is recorded as not read,
-and a deletion that does not finish continues the next night.
+and a deletion that does not finish in time is recorded as unfinished and
+continues the next night.
 
 ## The growth alert
 
@@ -125,35 +126,56 @@ checkpoint. The record of an app's backup runs is kept after the app is
 removed. A drill or a restore does not count, because it reads a snapshot
 that anyone may have made.
 
+Nor does the history a machine recovery brings with it. `helios recover`
+copies the source machine's backup runs into this machine's state, and they
+stay that machine's record. Until the source's snapshots have aged
+out of a repository, the bucket of an app removed on the recovered machine is
+held, and deleting it is done at the storage provider. A machine that
+imported a recovery before this rule existed cannot tell which of its runs
+came with the import, so it counts none from before its last import.
+
 The snapshots are read from the bucket's own listing, not through restic. A
 repository sits at the root of its bucket and keeps one file for each
 snapshot under `snapshots/`, named by the snapshot's id, so the listing
 cannot leave one out. It also still answers for a bucket whose deletion
-stopped part way: files are deleted in the order of their names, which takes
-the repository's `config` first and its snapshots last, so the next sweep
-finds the same snapshots and carries on. Every file is checked a second time
-as it is deleted, and a snapshot that turns up in between stops the deletion
-there. A backup that recorded its snapshot by a short id, as some releases
-did, owns the snapshot that id begins.
+stopped part way: unfinished uploads are cancelled first and the files are
+then deleted in the order of their names, which takes the repository's
+`config` first and its snapshots last, so the next attempt finds the same
+snapshots and carries on. Every file is checked a second time as it is
+deleted, and a snapshot that turns up in between stops the deletion there. A
+backup that recorded its snapshot by a short id, as some releases did, owns
+the snapshot that id begins.
 
 The sweep makes the same check every night while a bucket waits, so one that
 will not pass says so on the first night and not on the thirtieth.
 
+A deletion that stops part way is carried on by the next sweep when the
+bucket's 30 days are up. A `purge` ahead of them that stops is not: the sweep
+has no say over a bucket that is not due, so it reports that the repository's
+`config` is gone and what is left can no longer be restored, every night,
+until `helios storage purge <app>` is run again or the 30 days end.
+
 Neither the sweep nor `purge` deletes anything, and the sweep raises
 `host:storage-expiry`, when any of these holds:
 
-- the bucket holds a snapshot this machine did not make, it holds files but
-  no snapshot at all, or this machine has no record of a backup of the app;
+- the bucket holds a snapshot this machine has no record of making, it holds
+  files but no snapshot at all, or this machine has no record of a backup of
+  the app. A backup here that failed after it wrote its snapshot leaves such
+  a snapshot too, until retention forgets it;
 - something was uploaded to the bucket more than an hour after the app was
   removed, so another machine or tool is using it;
 - the app is deployed on this machine again;
 - the storage integration now reaches a different account, or a different
   bucket prefix, than the one the app was removed from;
 - the storage answered a deletion with an error, such as a key that may not
-  delete buckets.
+  delete buckets, or the deletion ran out of time.
 
-A listing that fails, or a state store that cannot be read, fails the sweep
-before anything is deleted, and that raises `host:storage-sweep`.
+When the account's buckets cannot be listed, or the state store cannot be
+read, the sweep fails before anything is deleted, and that raises
+`host:storage-sweep`. When the files of a bucket that is still waiting cannot
+be listed, the bucket is left as it was recorded and read again the next
+night. A bucket that is due and cannot be listed is held like any other
+deletion that failed.
 
 No tombstone is recorded when:
 

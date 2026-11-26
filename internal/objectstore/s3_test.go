@@ -69,6 +69,8 @@ type fakeS3 struct {
 	page     int
 	deletes  []string
 	busy     int
+	// noCancel refuses to cancel an unfinished upload.
+	noCancel bool
 }
 
 func (f *fakeS3) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -134,6 +136,9 @@ func (f *fakeS3) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		delete(f.buckets, bucket)
 		f.deletes = append(f.deletes, "bucket "+bucket)
 		w.WriteHeader(http.StatusNoContent)
+	case r.Method == http.MethodDelete && q.Has("uploadId") && f.noCancel:
+		w.WriteHeader(http.StatusForbidden)
+		fmt.Fprint(w, `<Error><Code>AccessDenied</Code><Message>not allowed</Message></Error>`)
 	case r.Method == http.MethodDelete && q.Has("uploadId"):
 		var rest []s3Upload
 		for _, u := range f.uploads[bucket] {
@@ -406,5 +411,34 @@ func TestS3DeletesNothingFromABucketItsCheckRefuses(t *testing.T) {
 	}
 	if seen["config"] != 3 {
 		t.Fatalf("config was asked about %d times, want once to examine, once to read and once to delete: %v", seen["config"], seen)
+	}
+}
+
+// What a deletion that stops leaves behind must be the end of the order of
+// names, where a repository keeps its snapshots: that is what lets the next
+// attempt tell whose bucket it is. A page lists delete markers after its
+// versions, and unfinished uploads are listed apart.
+func TestS3DeletesInTheOrderOfNamesAndCancelsUploadsFirst(t *testing.T) {
+	ctx := context.Background()
+	fake, store := s3Fixture(t)
+	fake.page = 10 // one page: four versions, then the marker for index/1
+	if _, err := store.DeleteBucket(ctx, Bucket{Name: "helios-site"}, Check{NotWrittenSince: removedAt}); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"helios-site/config@v1", "helios-site/data/aa/pack one@v2", "helios-site/data/bb/pack2@v3", "helios-site/index/1@v4", "helios-site/snapshots/1@v5", "bucket helios-site"}
+	if strings.Join(fake.deletes, "\n") != strings.Join(want, "\n") {
+		t.Fatalf("deleted in this order:\n%s", strings.Join(fake.deletes, "\n"))
+	}
+
+	// An upload that cannot be cancelled stops the deletion before any file
+	// is gone, so the bucket is still whole for the next attempt.
+	fake, store = s3Fixture(t)
+	fake.noCancel = true
+	fake.uploads["helios-site"] = []s3Upload{{Key: "data/cc/half", UploadID: "u1", Initiated: removedAt.Add(-time.Hour)}}
+	if _, err := store.DeleteBucket(ctx, Bucket{Name: "helios-site"}, Check{NotWrittenSince: removedAt}); err == nil || !strings.Contains(err.Error(), "cancel unfinished upload") {
+		t.Fatalf("error %v", err)
+	}
+	if len(fake.deletes) != 0 || len(fake.buckets["helios-site"]) != 5 {
+		t.Fatalf("files were deleted before the unfinished upload was cancelled: %v", fake.deletes)
 	}
 }

@@ -50,8 +50,8 @@ type Check struct {
 	NotWrittenSince time.Time
 	// Key is called with the name of every file version and unfinished
 	// upload in the bucket while the whole bucket is read, and again with
-	// each page's names before that page is deleted. An error refuses the
-	// bucket and is returned as it is.
+	// the names of each page of file versions before that page is deleted.
+	// An error refuses the bucket and is returned as it is.
 	Key func(key string) error
 	// Whole is called once, after the whole bucket was read and before
 	// anything is deleted. An error refuses the bucket and is returned as
@@ -104,7 +104,9 @@ type Store interface {
 	// bucket, then the bucket. It reads the whole bucket first and deletes
 	// nothing when the contents do not pass the check. It can be run again
 	// after any failure: what is gone stays gone and the rest is deleted.
-	// Files are deleted in the order of their names.
+	// Unfinished uploads that are listed apart from the files are cancelled
+	// first; then the files are deleted in the order of their names, so
+	// what a deletion that stopped leaves behind is the end of that order.
 	DeleteBucket(ctx context.Context, b Bucket, check Check) (Deleted, error)
 }
 

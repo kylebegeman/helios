@@ -265,8 +265,9 @@ type s3Object struct {
 	LastModified time.Time `xml:"LastModified"`
 }
 
-// objects walks everything a bucket holds: every version and delete marker
-// where the store keeps versions, every object where it does not.
+// objects walks everything a bucket holds, in the order of its names: every
+// version and delete marker where the store keeps versions, every object
+// where it does not.
 func (c *s3) objects(ctx context.Context, bucket string, each func([]s3Object) error) error {
 	if bucket == "" || strings.Contains(bucket, "/") {
 		return errors.New("not a bucket name")
@@ -289,7 +290,12 @@ func (c *s3) objects(ctx context.Context, bucket string, each func([]s3Object) e
 			if err != nil {
 				return fmt.Errorf("list file versions: %w", err)
 			}
-			if err := each(append(out.Versions, out.DeleteMarkers...)); err != nil {
+			// A page lists its versions and its delete markers apart. They
+			// are put back in the order of their names, which is the order
+			// the pages themselves come in.
+			page := append(out.Versions, out.DeleteMarkers...)
+			sort.SliceStable(page, func(i, j int) bool { return page[i].Key < page[j].Key })
+			if err := each(page); err != nil {
 				return err
 			}
 			if !out.IsTruncated {
@@ -419,6 +425,15 @@ func (c *s3) DeleteBucket(ctx context.Context, b Bucket, check Check) (Deleted, 
 	if err != nil {
 		return d, err
 	}
+	// The unfinished uploads go before any file does. Were they left for
+	// last, a deletion that stopped there would leave a bucket with uploads
+	// and nothing to say whose they are.
+	for _, u := range pending {
+		err := c.do(ctx, http.MethodDelete, "/"+b.Name+"/"+u.Key, url.Values{"uploadId": {u.UploadID}}, nil)
+		if err != nil && !refusedAs(err, "NoSuchUpload") {
+			return d, fmt.Errorf("cancel unfinished upload %s: %w", u.Key, err)
+		}
+	}
 	err = c.objects(ctx, b.Name, func(objects []s3Object) error {
 		// The whole page is checked before any of it is deleted.
 		for _, o := range objects {
@@ -442,12 +457,6 @@ func (c *s3) DeleteBucket(ctx context.Context, b Bucket, check Check) (Deleted, 
 	})
 	if err != nil {
 		return d, err
-	}
-	for _, u := range pending {
-		err := c.do(ctx, http.MethodDelete, "/"+b.Name+"/"+u.Key, url.Values{"uploadId": {u.UploadID}}, nil)
-		if err != nil && !refusedAs(err, "NoSuchUpload") {
-			return d, fmt.Errorf("cancel unfinished upload %s: %w", u.Key, err)
-		}
 	}
 	if err := c.do(ctx, http.MethodDelete, "/"+b.Name, nil, nil); err != nil {
 		return d, fmt.Errorf("delete bucket: %w", err)
