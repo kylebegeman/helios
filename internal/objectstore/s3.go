@@ -29,11 +29,19 @@ type s3 struct {
 	region string
 	http   *http.Client
 	wait   func(context.Context, int) error
+	// settle waits before a bucket is listed again because the store still
+	// lists a file it has just deleted.
+	settle func(context.Context, time.Duration) error
 	now    func() time.Time
 
-	// plain is set once the store has refused to list versions: it keeps
-	// none, so its objects are everything a bucket holds.
+	// plain is set once the store has shown that it has no listing of
+	// versions: it refused one, or answered one with a plain listing. It
+	// keeps none, so its objects are everything a bucket holds.
 	plain bool
+	// versioned is set once the store has listed versions. Such a store is
+	// never read through the plain listing afterwards: that shows only the
+	// newest version of each file, and deleting by it would leave the rest.
+	versioned bool
 }
 
 func newS3(c Config) (*s3, error) {
@@ -41,7 +49,7 @@ func newS3(c Config) (*s3, error) {
 	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" || u.RawQuery != "" {
 		return nil, errors.New("the s3 endpoint must be an http or https address")
 	}
-	return &s3{keyID: c.KeyID, key: c.Key, base: u, region: regionOf(u.Hostname()), http: newHTTP(), wait: backoff, now: time.Now}, nil
+	return &s3{keyID: c.KeyID, key: c.Key, base: u, region: regionOf(u.Hostname()), http: newHTTP(), wait: backoff, settle: pause, now: time.Now}, nil
 }
 
 var regionInHost = regexp.MustCompile(`^s3[.-]([a-z0-9-]+)\.(amazonaws\.com|backblazeb2\.com|wasabisys\.com)$`)
@@ -265,6 +273,28 @@ type s3Object struct {
 	LastModified time.Time `xml:"LastModified"`
 }
 
+// The root element of a store's answer says which listing it is: of a
+// bucket's versions, or the plain one of its objects, in either version of
+// that call.
+const (
+	s3VersionListing = "ListVersionsResult"
+	s3PlainListing   = "ListBucketResult"
+)
+
+// s3EmptyPages is how many pages in a row a plain listing may hold nothing
+// and still say there is more.
+const s3EmptyPages = 16
+
+// noListing is the error for an answer that is not the listing asked for.
+// Read as one it would hold nothing, and a full bucket would pass for an
+// empty one.
+func noListing(root string) error {
+	if root == "" {
+		return errors.New("the store answered with nothing")
+	}
+	return fmt.Errorf("the store answered with %s, which is not a listing of the bucket", root)
+}
+
 // objects walks everything a bucket holds, in the order of its names: every
 // version and delete marker where the store keeps versions, every object
 // where it does not.
@@ -273,53 +303,116 @@ func (c *s3) objects(ctx context.Context, bucket string, each func([]s3Object) e
 		return errors.New("not a bucket name")
 	}
 	if !c.plain {
-		q := url.Values{"versions": {""}, "max-keys": {"1000"}}
-		for {
-			var out struct {
-				IsTruncated         bool       `xml:"IsTruncated"`
-				NextKeyMarker       string     `xml:"NextKeyMarker"`
-				NextVersionIDMarker string     `xml:"NextVersionIdMarker"`
-				Versions            []s3Object `xml:"Version"`
-				DeleteMarkers       []s3Object `xml:"DeleteMarker"`
-			}
-			err := c.do(ctx, http.MethodGet, "/"+bucket, q, &out)
-			if unsupported(err) {
-				c.plain = true
-				break
-			}
-			if err != nil {
-				return fmt.Errorf("list file versions: %w", err)
-			}
-			// A page lists its versions and its delete markers apart. They
-			// are put back in the order of their names, which is the order
-			// the pages themselves come in.
-			page := append(out.Versions, out.DeleteMarkers...)
-			sort.SliceStable(page, func(i, j int) bool { return page[i].Key < page[j].Key })
-			if err := each(page); err != nil {
-				return err
-			}
-			if !out.IsTruncated {
-				return nil
-			}
-			if out.NextKeyMarker == "" {
-				return errors.New("list file versions: a truncated page without a marker")
-			}
-			q.Set("key-marker", out.NextKeyMarker)
-			q.Del("version-id-marker")
-			if out.NextVersionIDMarker != "" {
-				q.Set("version-id-marker", out.NextVersionIDMarker)
-			}
+		if listed, err := c.versions(ctx, bucket, each); listed || err != nil {
+			return err
 		}
 	}
+	return c.plainObjects(ctx, bucket, each)
+}
+
+// versions walks every version and delete marker in a bucket. It reports
+// false, with each not called, for a store that has no such listing and is
+// read through its plain one from then on.
+//
+// A store says so in one of two ways. It refuses the call as not
+// implemented, or it ignores what was asked and answers with the plain
+// listing of the bucket, which is told by the answer's root element. Read
+// as a listing of versions, that answer holds none, and a full bucket would
+// pass for an empty one.
+//
+// Either is taken only as the first thing the store ever says about
+// versions. A store that has listed versions and then will not is not one
+// without versions, and its plain listing would leave versions out.
+func (c *s3) versions(ctx context.Context, bucket string, each func([]s3Object) error) (bool, error) {
+	q := url.Values{"versions": {""}, "max-keys": {"1000"}}
+	for first := true; ; first = false {
+		var out struct {
+			XMLName             xml.Name
+			IsTruncated         bool       `xml:"IsTruncated"`
+			NextKeyMarker       string     `xml:"NextKeyMarker"`
+			NextVersionIDMarker string     `xml:"NextVersionIdMarker"`
+			Versions            []s3Object `xml:"Version"`
+			DeleteMarkers       []s3Object `xml:"DeleteMarker"`
+		}
+		err := c.do(ctx, http.MethodGet, "/"+bucket, q, &out)
+		switch {
+		case unsupported(err) && (c.versioned || !first):
+			return false, fmt.Errorf("list file versions: the store listed versions and now refuses to: %w", err)
+		case unsupported(err):
+			c.plain = true
+			return false, nil
+		case err != nil:
+			return false, fmt.Errorf("list file versions: %w", err)
+		case out.XMLName.Local == s3PlainListing && (c.versioned || !first):
+			return false, errors.New("list file versions: the store listed versions and now answers with a plain listing")
+		case out.XMLName.Local == s3PlainListing:
+			c.plain = true
+			return false, nil
+		case out.XMLName.Local != s3VersionListing:
+			return false, fmt.Errorf("list file versions: %w", noListing(out.XMLName.Local))
+		}
+		c.versioned = true
+		// A page lists its versions and its delete markers apart. They
+		// are put back in the order of their names, which is the order
+		// the pages themselves come in.
+		page := append(out.Versions, out.DeleteMarkers...)
+		sort.SliceStable(page, func(i, j int) bool { return page[i].Key < page[j].Key })
+		if err := each(page); err != nil {
+			return true, err
+		}
+		if !out.IsTruncated {
+			return true, nil
+		}
+		if out.NextKeyMarker == "" {
+			return true, errors.New("list file versions: a truncated page without a marker")
+		}
+		q.Set("key-marker", out.NextKeyMarker)
+		q.Del("version-id-marker")
+		if out.NextVersionIDMarker != "" {
+			q.Set("version-id-marker", out.NextVersionIDMarker)
+		}
+	}
+}
+
+// plainObjects walks a bucket's objects through the plain listing, for a
+// store that keeps no versions.
+//
+// The listing is asked for in its second version, which carries on from a
+// token. A store that knows only the first version answers in that one,
+// with no token, and is carried on as that version is: after the marker it
+// names, or after the last name of the page.
+//
+// Either way a plain listing names each object once, in the order of the
+// names, so each page must start after the last one ended. That, and a
+// bound on pages that hold nothing, is what ends a listing whose store does
+// not carry on from where it was told to: it would otherwise hand out the
+// same page for ever.
+func (c *s3) plainObjects(ctx context.Context, bucket string, each func([]s3Object) error) error {
 	q := url.Values{"list-type": {"2"}, "max-keys": {"1000"}}
+	// last is the last name listed so far; empty counts the pages in a row
+	// that held nothing.
+	last, listed, empty := "", false, 0
 	for {
 		var out struct {
+			XMLName     xml.Name
 			IsTruncated bool       `xml:"IsTruncated"`
 			Next        string     `xml:"NextContinuationToken"`
+			NextMarker  string     `xml:"NextMarker"`
 			Contents    []s3Object `xml:"Contents"`
 		}
 		if err := c.do(ctx, http.MethodGet, "/"+bucket, q, &out); err != nil {
 			return fmt.Errorf("list files: %w", err)
+		}
+		if out.XMLName.Local != s3PlainListing {
+			return fmt.Errorf("list files: %w", noListing(out.XMLName.Local))
+		}
+		if n := len(out.Contents); n > 0 {
+			if listed && out.Contents[0].Key <= last {
+				return fmt.Errorf("list files: the listing does not carry on after %s: the store gave a page it had already given", last)
+			}
+			last, listed, empty = out.Contents[n-1].Key, true, 0
+		} else if empty++; out.IsTruncated && empty > s3EmptyPages {
+			return fmt.Errorf("list files: the listing does not end: %d pages in a row held nothing and said there was more", empty)
 		}
 		if err := each(out.Contents); err != nil {
 			return err
@@ -327,10 +420,18 @@ func (c *s3) objects(ctx context.Context, bucket string, each func([]s3Object) e
 		if !out.IsTruncated {
 			return nil
 		}
-		if out.Next == "" {
-			return errors.New("list files: a truncated page without a token")
+		if out.Next != "" {
+			q.Set("continuation-token", out.Next)
+			continue
 		}
-		q.Set("continuation-token", out.Next)
+		marker := out.NextMarker
+		if marker == "" && len(out.Contents) > 0 {
+			marker = last
+		}
+		if marker == "" {
+			return errors.New("list files: a truncated page without a token or a name to carry on after")
+		}
+		q.Set("marker", marker)
 	}
 }
 
@@ -419,6 +520,31 @@ func (c *s3) Examine(ctx context.Context, b Bucket, check Check) error {
 // errNextPage ends a listing after the one page that was deleted.
 var errNextPage = errors.New("next page")
 
+// stillListed is a listing that starts with the file that was just deleted.
+type stillListed struct{ key string }
+
+func (e *stillListed) Error() string {
+	return fmt.Sprintf("delete %s: the store still lists it after deleting it", e.key)
+}
+
+// pause waits for d, or returns early with ctx's error.
+func pause(ctx context.Context, d time.Duration) error {
+	t := time.NewTimer(d)
+	defer t.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-t.C:
+		return nil
+	}
+}
+
+// relistAfter is how long to wait before each new listing of a bucket whose
+// store still lists a file it has just deleted, and so how many are asked
+// for before the deletion gives up. A listing that trails its deletions
+// catches up within a moment; one still wrong after these is not trailing.
+var relistAfter = []time.Duration{250 * time.Millisecond, time.Second, 4 * time.Second}
+
 func (c *s3) DeleteBucket(ctx context.Context, b Bucket, check Check) (Deleted, error) {
 	var d Deleted
 	// Read the whole bucket before deleting any of it, so a bucket that
@@ -441,15 +567,21 @@ func (c *s3) DeleteBucket(ctx context.Context, b Bucket, check Check) (Deleted, 
 	// from the top. A listing carried on past a page that was just deleted
 	// would be told to continue after a file version that is gone, and what
 	// a store does with that is not ours to rely on.
-	for last := ""; ; {
+	//
+	// A store's listing may be a moment behind its deletions and start with
+	// the file that just went. It is then asked again, a few times and a
+	// little later each time, before the deletion gives up: stopping at the
+	// first such answer would delete one page a night.
+	for last, behind := "", 0; ; {
 		first, emptied := "", true
+		var listedStill *stillListed
 		err = c.objects(ctx, b.Name, func(objects []s3Object) error {
 			if len(objects) == 0 {
 				return nil
 			}
 			emptied, first = false, objects[0].Key+"@"+objects[0].VersionID
 			if first == last {
-				return fmt.Errorf("delete %s: the store still lists it after deleting it", objects[0].Key)
+				return &stillListed{objects[0].Key}
 			}
 			// The whole page is checked before any of it is deleted.
 			for _, o := range objects {
@@ -471,13 +603,23 @@ func (c *s3) DeleteBucket(ctx context.Context, b Bucket, check Check) (Deleted, 
 			}
 			return errNextPage
 		})
+		if errors.As(err, &listedStill) {
+			if behind == len(relistAfter) {
+				return d, err
+			}
+			if err := c.settle(ctx, relistAfter[behind]); err != nil {
+				return d, err
+			}
+			behind++
+			continue
+		}
 		if err != nil && !errors.Is(err, errNextPage) {
 			return d, err
 		}
 		if emptied {
 			break
 		}
-		last = first
+		last, behind = first, 0
 	}
 	if err := c.do(ctx, http.MethodDelete, "/"+b.Name, nil, nil); err != nil {
 		return d, fmt.Errorf("delete bucket: %w", err)

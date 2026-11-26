@@ -157,6 +157,17 @@ deleted, and a snapshot that turns up in between stops the deletion there. A
 backup that recorded its snapshot by a short id, as some releases did, owns
 the snapshot that id begins.
 
+On an S3 store the listing is of every file version. A store that keeps no
+versions is read through its plain listing of files instead, whether it
+refuses a listing of versions or answers one with the plain listing. That is
+decided by the first answer a store gives: one that has listed versions is
+never read through the plain listing, which would leave old versions out. An
+answer that is neither listing, or a plain listing that says there is more
+and does not carry on, is an error and never an empty bucket, so it counts as
+a listing that failed. A store whose listing is a moment behind its deletions
+and still shows a file that was just deleted is asked again a few times
+before the deletion stops there for the next sweep.
+
 The sweep makes the same check every night while a bucket waits, so one that
 will not pass says so on the first night and not on the thirtieth.
 
@@ -243,7 +254,7 @@ them than backups do.
 | Store | Needed |
 |---|---|
 | Backblaze B2 | `listBuckets`, `listFiles`, `deleteFiles`, `deleteBuckets`, on a key not restricted to one bucket |
-| S3 | list all buckets, list object versions and multipart uploads, delete object versions, abort multipart uploads, delete bucket |
+| S3 | list all buckets, list object versions and multipart uploads, delete object versions, abort multipart uploads, delete bucket; on a store without versions, list and delete objects |
 
 A key that may list but not delete still gives the report and the growth
 alert. The sweep then holds each expired bucket and says so in
