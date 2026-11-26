@@ -323,8 +323,18 @@ func (c *s3) objects(ctx context.Context, bucket string, each func([]s3Object) e
 // Either is taken only as the first thing the store ever says about
 // versions. A store that has listed versions and then will not is not one
 // without versions, and its plain listing would leave versions out.
+//
+// A page says where the next one carries on: after a name and, among the
+// versions of that name, after a version. The names come in order, so each
+// marker must lie after the one before it. That, and the bound on pages that
+// hold nothing, is what ends a listing whose store hands out the same
+// marker for ever.
 func (c *s3) versions(ctx context.Context, bucket string, each func([]s3Object) error) (bool, error) {
 	q := url.Values{"versions": {""}, "max-keys": {"1000"}}
+	// key is the name the listing last carried on after, and seen the
+	// versions of that name it has carried on after; empty counts the pages
+	// in a row that held nothing.
+	key, seen, empty := "", map[string]bool{}, 0
 	for first := true; ; first = false {
 		var out struct {
 			XMLName             xml.Name
@@ -366,6 +376,18 @@ func (c *s3) versions(ctx context.Context, bucket string, each func([]s3Object) 
 		if out.NextKeyMarker == "" {
 			return true, errors.New("list file versions: a truncated page without a marker")
 		}
+		if len(page) > 0 {
+			empty = 0
+		} else if empty++; empty > s3EmptyPages {
+			return true, fmt.Errorf("list file versions: the listing does not end: %d pages in a row held nothing and said there was more", empty)
+		}
+		switch {
+		case out.NextKeyMarker > key:
+			key, seen = out.NextKeyMarker, map[string]bool{}
+		case out.NextKeyMarker < key || seen[out.NextVersionIDMarker]:
+			return true, fmt.Errorf("list file versions: the listing does not carry on after %s: the store named a marker it had already passed", key)
+		}
+		seen[out.NextVersionIDMarker] = true
 		q.Set("key-marker", out.NextKeyMarker)
 		q.Del("version-id-marker")
 		if out.NextVersionIDMarker != "" {

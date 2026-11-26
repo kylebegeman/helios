@@ -89,8 +89,8 @@ type fakeS3 struct {
 	// name the marker to carry on after.
 	firstPlainOnly bool
 	namesNext      bool
-	// deaf ignores where a plain listing is told to carry on, and hollow
-	// answers one with pages that hold nothing and say there is more.
+	// deaf ignores where a listing is told to carry on, and hollow answers
+	// one with pages that hold nothing and say there is more.
 	deaf   bool
 	hollow bool
 	// answer, when set, is what any listing of a bucket's files gets.
@@ -157,7 +157,11 @@ func (f *fakeS3) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		if q.Get("key-marker") != "" && len(f.deletes) > 0 {
 			f.resumed++
 		}
-		f.listPage(w, bucket, q.Get("key-marker"), true)
+		marker := q.Get("key-marker")
+		if f.deaf {
+			marker = ""
+		}
+		f.listPage(w, bucket, marker, true)
 	case key == "" && r.Method == http.MethodGet && (q.Get("list-type") == "2" || q.Has("versions")):
 		f.lists++
 		// Only a listing asked for in its second version carries on from a
@@ -251,6 +255,11 @@ func (f *fakeS3) listPage(w http.ResponseWriter, bucket, marker string, versions
 	last := ""
 	if len(page) > 0 {
 		last = page[len(page)-1].key
+	}
+	if versions && f.hollow {
+		// Nothing, more to come, and a marker no page before had.
+		fmt.Fprintf(w, `<ListVersionsResult><IsTruncated>true</IsTruncated><NextKeyMarker>k%04d</NextKeyMarker></ListVersionsResult>`, f.lists)
+		return
 	}
 	if versions {
 		fmt.Fprintf(w, `<ListVersionsResult><IsTruncated>%t</IsTruncated><NextKeyMarker>%s</NextKeyMarker>`, truncated, last)
@@ -763,6 +772,68 @@ func TestS3PlainListingThatDoesNotCarryOnEndsInAnError(t *testing.T) {
 			t.Fatalf("%s: the bucket was listed %d times", name, fake.lists)
 		}
 		cancel()
+	}
+}
+
+// A listing of versions is held to the same: one that says there is more and
+// names a marker it has already passed, or goes on with pages that hold
+// nothing, ends in an error and deletes nothing.
+func TestS3VersionListingThatDoesNotCarryOnEndsInAnError(t *testing.T) {
+	for name, broken := range map[string]struct {
+		set  func(*fakeS3)
+		want string
+	}{
+		"the same marker again": {func(f *fakeS3) { f.deaf = true }, "the store named a marker it had already passed"},
+		"pages of nothing":      {func(f *fakeS3) { f.hollow = true }, "pages in a row held nothing and said there was more"},
+	} {
+		// A listing that goes round is stopped by the clock, and fails here.
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		fake, store := s3Fixture(t)
+		broken.set(fake)
+		_, err := store.Usage(ctx, Bucket{Name: "helios-site"})
+		if err == nil || !strings.Contains(err.Error(), broken.want) {
+			t.Fatalf("%s: usage error %v", name, err)
+		}
+		_, err = store.DeleteBucket(ctx, Bucket{Name: "helios-site"}, Check{NotWrittenSince: removedAt})
+		if err == nil || !strings.Contains(err.Error(), broken.want) || len(fake.deletes) != 0 {
+			t.Fatalf("%s: delete error %v, deletes %v", name, err, fake.deletes)
+		}
+		if fake.lists > 4*s3EmptyPages {
+			t.Fatalf("%s: the bucket was listed %d times", name, fake.lists)
+		}
+		cancel()
+	}
+}
+
+// One name may have more versions than a page holds. The listing then
+// carries on after the same name and a new version each time, which is not
+// a marker it has passed.
+func TestS3VersionListingCarriesOnThroughOneNamesVersions(t *testing.T) {
+	var asked []string
+	pages := map[string]string{
+		"":   `<ListVersionsResult><IsTruncated>true</IsTruncated><NextKeyMarker>a</NextKeyMarker><NextVersionIdMarker>v1</NextVersionIdMarker><Version><Key>a</Key><VersionId>v1</VersionId><Size>1</Size></Version></ListVersionsResult>`,
+		"v1": `<ListVersionsResult><IsTruncated>true</IsTruncated><NextKeyMarker>a</NextKeyMarker><NextVersionIdMarker>v2</NextVersionIdMarker><Version><Key>a</Key><VersionId>v2</VersionId><Size>2</Size></Version></ListVersionsResult>`,
+		"v2": `<ListVersionsResult><IsTruncated>false</IsTruncated><Version><Key>b</Key><VersionId>v3</VersionId><Size>4</Size></Version></ListVersionsResult>`,
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		at := r.URL.Query().Get("version-id-marker")
+		asked = append(asked, r.URL.Query().Get("key-marker")+"@"+at)
+		fmt.Fprint(w, pages[at])
+	}))
+	t.Cleanup(server.Close)
+	store, err := New(Config{Kind: "s3", Endpoint: server.URL + "/", KeyID: "id", Key: "secret"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	usage, err := store.Usage(context.Background(), Bucket{Name: "helios-site"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if usage.Files != 3 || usage.Bytes != 7 {
+		t.Fatalf("usage: %+v", usage)
+	}
+	if strings.Join(asked, " ") != "@ a@v1 a@v2" {
+		t.Fatalf("asked %v", asked)
 	}
 }
 
