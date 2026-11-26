@@ -123,7 +123,11 @@ revive the app. Retrying the same rollback restores the same checkpoint and
 clears any partially restored data before retrying. A completed restoration is
 idempotent while no later unsafe data release has occurred. If a later release
 changes data incompatibly, the previously restored checkpoint cannot be reused
-to skip restoration; Helios names the newer checkpoint to review. Other apps
+to skip restoration; Helios names the newer checkpoint to review. Restoring a
+checkpoint also discards every later release's data changes, so the
+checkpoints of those later releases are marked restored without having been
+restored. A rollback that names one of them is refused: the data is now older
+than that checkpoint, and a rollback does not move it forward. Other apps
 remain active.
 Releases predating boundary recording with unknown data compatibility are also
 refused for code-only rollback; recover through a separately verified backup
@@ -143,8 +147,9 @@ A checkpoint loses the exemption in exactly two cases:
 
 1. Every boundary that records it is restored. The data was put back to that
    checkpoint or an earlier one. A rollback that names it again is refused
-   when a later release changed data again, and otherwise succeeds without
-   reading the snapshot.
+   when a later release changed data again or when it was an earlier
+   checkpoint that was restored, and otherwise succeeds without reading the
+   snapshot.
 2. No boundary records it and this machine's backup history shows that this
    machine took it. That is the checkpoint of an app that was removed:
    removal deletes the app's boundaries, and a rollback finds a checkpoint

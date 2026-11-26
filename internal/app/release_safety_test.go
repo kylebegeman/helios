@@ -449,3 +449,58 @@ func TestRestoredCheckpointCannotSkipLaterUnsafeDataTransition(t *testing.T) {
 		t.Fatalf("matching newer checkpoint refused: %v", err)
 	}
 }
+
+// Restoring the checkpoint of an earlier release marks every later release
+// restored with it, because their data changes went too. The checkpoint of
+// one of those later releases was never restored itself. Naming it must be
+// refused: it used to pass for the replay of a finished restoration, which
+// restores nothing and then starts older code on data older still.
+func TestRollbackRefusesACheckpointThatAnEarlierRestorationDiscarded(t *testing.T) {
+	ctx := context.Background()
+	store := releaseTestStore(t)
+	m := releaseTestManifest()
+	at := time.Now().UTC().Truncate(time.Millisecond).Add(-time.Hour)
+	original := releaseTestRevision(t, store, m, "original-code", state.RevisionRetired, at)
+	first := releaseTestRevision(t, store, m, "first-release", state.RevisionRetired, at.Add(time.Minute))
+	releaseTestRevision(t, store, m, "second-release", state.RevisionActive, at.Add(3*time.Minute))
+	beforeFirst := state.ReleaseBoundary{App: m.App, Revision: "first-release", PreviousRevision: original.ID, Compatibility: manifest.DataRestoreRequired, Snapshot: strings.Repeat("a", 64), StartedAt: at.Add(time.Minute)}
+	beforeSecond := state.ReleaseBoundary{App: m.App, Revision: "second-release", PreviousRevision: first.ID, Compatibility: manifest.DataRestoreRequired, Snapshot: strings.Repeat("b", 64), StartedAt: at.Add(3 * time.Minute)}
+	for _, b := range []state.ReleaseBoundary{beforeFirst, beforeSecond} {
+		if err := store.BeginReleaseBoundary(ctx, b); err != nil {
+			t.Fatal(err)
+		}
+		if err := store.FinishReleaseBoundary(ctx, m.App, b.Revision, state.ReleaseCompleted, "", b.StartedAt.Add(time.Minute)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// The app goes back to its original code with the data from before the
+	// first release.
+	if err := store.BeginReleaseRestore(ctx, m.App, beforeFirst.Revision, beforeFirst.Snapshot); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.CompleteReleaseRestore(ctx, beforeFirst, at.Add(10*time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+
+	dockerUnreachable(t)
+	rollback := Rollback{Deploy: Deploy{Store: store, Secrets: newSecrets(t), StateDir: t.TempDir()}}
+	raw, _ := json.Marshal(RollbackInput{App: m.App, Revision: first.ID, RestoreData: beforeSecond.Snapshot})
+	_, err := rollback.Plan(ctx, raw)
+	if err == nil {
+		t.Fatal("a checkpoint that was discarded, not restored, was planned as a restoration")
+	}
+	for _, want := range []string{"discarded", beforeSecond.Snapshot, beforeFirst.Snapshot, "does not move it forward"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("refusal does not say %q: %v", want, err)
+		}
+	}
+	// The restoration that did happen still replays.
+	raw, _ = json.Marshal(RollbackInput{App: m.App, Revision: original.ID, RestoreData: beforeFirst.Snapshot})
+	plan, err := rollback.Plan(ctx, raw)
+	if err != nil {
+		t.Fatalf("the finished restoration no longer replays: %v", err)
+	}
+	if err := plan.Steps[0].Apply(ctx, io.Discard); err != nil {
+		t.Fatal(err)
+	}
+}
