@@ -48,7 +48,8 @@ CREATE TABLE IF NOT EXISTS storage_samples (
 CREATE TABLE IF NOT EXISTS storage_prunes (
   bucket       TEXT PRIMARY KEY,
   attempted_at INTEGER NOT NULL DEFAULT 0,
-  completed_at INTEGER NOT NULL DEFAULT 0
+  completed_at INTEGER NOT NULL DEFAULT 0,
+  unfinished   INTEGER NOT NULL DEFAULT 0
 );
 CREATE TRIGGER IF NOT EXISTS storage_tombstone_cleared_by_revision
 AFTER INSERT ON revisions
@@ -137,6 +138,8 @@ type StoragePrune struct {
 	Bucket      string    `json:"bucket"`
 	AttemptedAt time.Time `json:"attempted_at,omitempty"`
 	CompletedAt time.Time `json:"completed_at,omitempty"`
+	// Unfinished counts the attempts since the last one that completed.
+	Unfinished int `json:"unfinished,omitempty"`
 }
 
 // missingStorage reports a store an older binary made and no current daemon
@@ -332,8 +335,12 @@ func (s *Store) StorageSamples(ctx context.Context, since time.Time) ([]StorageS
 	return out, rows.Err()
 }
 
-// DeleteStorageSamples drops a bucket's samples, once the bucket is gone.
+// DeleteStorageSamples drops what was recorded about a bucket's size and
+// its prunes, once the bucket is gone.
 func (s *Store) DeleteStorageSamples(ctx context.Context, bucket string) error {
+	if _, err := s.db.ExecContext(ctx, `DELETE FROM storage_prunes WHERE bucket = ?`, bucket); err != nil {
+		return err
+	}
 	_, err := s.db.ExecContext(ctx, `DELETE FROM storage_samples WHERE bucket = ?`, bucket)
 	return err
 }
@@ -343,7 +350,7 @@ func (s *Store) DeleteStorageSamples(ctx context.Context, bucket string) error {
 func (s *Store) StoragePruneOf(ctx context.Context, bucket string) (StoragePrune, error) {
 	p := StoragePrune{Bucket: bucket}
 	var attempted, completed int64
-	err := s.db.QueryRowContext(ctx, `SELECT attempted_at, completed_at FROM storage_prunes WHERE bucket = ?`, bucket).Scan(&attempted, &completed)
+	err := s.db.QueryRowContext(ctx, `SELECT attempted_at, completed_at, unfinished FROM storage_prunes WHERE bucket = ?`, bucket).Scan(&attempted, &completed, &p.Unfinished)
 	if errors.Is(err, sql.ErrNoRows) || missingStorage(err) {
 		return p, nil
 	}
@@ -358,14 +365,37 @@ func (s *Store) StoragePruneOf(ctx context.Context, bucket string) (StoragePrune
 // before the prune so one that dies with the daemon still counts as this
 // week's attempt.
 func (s *Store) StoragePruneAttempted(ctx context.Context, bucket string, at time.Time) error {
-	_, err := s.db.ExecContext(ctx, `INSERT INTO storage_prunes (bucket, attempted_at) VALUES (?, ?)
-		ON CONFLICT(bucket) DO UPDATE SET attempted_at = excluded.attempted_at`, bucket, unix(at))
+	_, err := s.db.ExecContext(ctx, `INSERT INTO storage_prunes (bucket, attempted_at, unfinished) VALUES (?, ?, 1)
+		ON CONFLICT(bucket) DO UPDATE SET attempted_at = excluded.attempted_at, unfinished = unfinished + 1`, bucket, unix(at))
 	return err
+}
+
+// StoragePrunes lists every repository's full prune record, by bucket.
+func (s *Store) StoragePrunes(ctx context.Context) ([]StoragePrune, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT bucket, attempted_at, completed_at, unfinished FROM storage_prunes ORDER BY bucket`)
+	if missingStorage(err) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []StoragePrune
+	for rows.Next() {
+		var p StoragePrune
+		var attempted, completed int64
+		if err := rows.Scan(&p.Bucket, &attempted, &completed, &p.Unfinished); err != nil {
+			return nil, err
+		}
+		p.AttemptedAt, p.CompletedAt = fromUnix(attempted), fromUnix(completed)
+		out = append(out, p)
+	}
+	return out, rows.Err()
 }
 
 // StoragePruneCompleted records that a full prune finished.
 func (s *Store) StoragePruneCompleted(ctx context.Context, bucket string, at time.Time) error {
 	_, err := s.db.ExecContext(ctx, `INSERT INTO storage_prunes (bucket, attempted_at, completed_at) VALUES (?, ?, ?)
-		ON CONFLICT(bucket) DO UPDATE SET completed_at = excluded.completed_at`, bucket, unix(at), unix(at))
+		ON CONFLICT(bucket) DO UPDATE SET completed_at = excluded.completed_at, unfinished = 0`, bucket, unix(at), unix(at))
 	return err
 }

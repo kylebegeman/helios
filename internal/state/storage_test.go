@@ -189,16 +189,30 @@ func TestFullPruneRecordKeepsAttemptAndCompletionApart(t *testing.T) {
 		t.Fatal(err)
 	}
 	p, _ = s.StoragePruneOf(ctx, "helios-site")
-	if !p.AttemptedAt.Equal(storageDay) || !p.CompletedAt.IsZero() {
+	if !p.AttemptedAt.Equal(storageDay) || !p.CompletedAt.IsZero() || p.Unfinished != 1 {
 		t.Fatalf("after an attempt: %+v", p)
+	}
+	// Attempts that do not complete are counted, so one that never does
+	// can be told from one that is merely due.
+	if err := s.StoragePruneAttempted(ctx, "helios-site", storageDay); err != nil {
+		t.Fatal(err)
+	}
+	if all, err := s.StoragePrunes(ctx); err != nil || len(all) != 1 || all[0].Unfinished != 2 || all[0].Bucket != "helios-site" {
+		t.Fatalf("after two attempts: %+v %v", all, err)
 	}
 	done := storageDay.Add(40 * time.Minute)
 	if err := s.StoragePruneCompleted(ctx, "helios-site", done); err != nil {
 		t.Fatal(err)
 	}
 	p, _ = s.StoragePruneOf(ctx, "helios-site")
-	if !p.AttemptedAt.Equal(storageDay) || !p.CompletedAt.Equal(done) {
+	if !p.AttemptedAt.Equal(storageDay) || !p.CompletedAt.Equal(done) || p.Unfinished != 0 {
 		t.Fatalf("after completion: %+v", p)
+	}
+	if err := s.DeleteStorageSamples(ctx, "helios-site"); err != nil {
+		t.Fatal(err)
+	}
+	if all, _ := s.StoragePrunes(ctx); len(all) != 0 {
+		t.Fatalf("the record of a deleted bucket stays: %+v", all)
 	}
 }
 
@@ -242,6 +256,9 @@ func TestStorageTablesDoNotChangeTheStateVersion(t *testing.T) {
 	}
 	if _, err := ro.StoragePruneOf(ctx, "b"); err != nil {
 		t.Fatalf("prune record on an older store: %v", err)
+	}
+	if got, err := ro.StoragePrunes(ctx); err != nil || got != nil {
+		t.Fatalf("prune records on an older store: %v %v", got, err)
 	}
 	ro.Close()
 

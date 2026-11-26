@@ -29,6 +29,12 @@ const AlertCanarySchedule = "15 9 * * 1"
 // anything is thrown away.
 const MachineGCSchedule = "0 4 * * *"
 
+// StorageSweepSchedule is when the buckets are measured and the buckets of
+// long-removed apps expire. It runs after the night's backups and after
+// garbage collection, so a sample shows what the night left behind, and an
+// hour apart from both so that it rarely waits for the operation lock.
+const StorageSweepSchedule = "0 5 * * *"
+
 // Scheduler starts backups and drills when they are due, one at a time,
 // as operations with receipts like any other.
 type Scheduler struct {
@@ -103,6 +109,12 @@ func (s *Scheduler) Tick(ctx context.Context, now time.Time) {
 	}
 	if machineDue {
 		s.run(ctx, app.BackupKind, app.BackupInput{App: manifest.ReservedApp}, "backup of the machine")
+	}
+	// Last, so a backup that came due in this tick is in the sample. A
+	// sweep that fails waits for the next night like one that succeeds: the
+	// watch reports the failure, and retrying every tick would not fix it.
+	if s.dueOp(ctx, app.StorageSweepKind, StorageSweepSchedule, s.Started, now) {
+		s.run(ctx, app.StorageSweepKind, app.StorageSweepInput{}, "storage sweep")
 	}
 }
 
