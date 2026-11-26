@@ -39,7 +39,7 @@ func (s *Store) ImportMachineRecovery(ctx context.Context, sourceDBPath, recover
 	}
 	if v < SchemaVersion {
 		// Migrate a private consistent copy, preserving the archived source.
-		scratch, err := os.MkdirTemp("", "bedrock-state-import-*")
+		scratch, err := os.MkdirTemp("", "helios-state-import-*")
 		if err != nil {
 			return err
 		}
