@@ -463,8 +463,14 @@ stay unless asked, so it can be restored or deployed again with what it had.
 
 --data removes them too, the secrets included. For an app that is no longer
 on this machine, --data removes whatever it left behind: its sealed secrets,
-volumes, database and networks. Its backups in the storage bucket stay, and
-are the only way back.`,
+volumes, database and networks.
+
+The app's backups stay in its storage bucket for 30 days, and after --data
+they are the only way back. Then the bucket is deleted with every backup in
+it. The plan names the bucket and says so; helios storage shows the date,
+helios storage keep <app> cancels it, and deploying the app again clears
+it. The bucket of an app that left through a move is never deleted from
+here.`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return a.operate(cmd.Context(), apps.RemoveKind, apps.RemoveInput{App: args[0], Data: data, Secrets: forgetSecrets}, planOnly)
