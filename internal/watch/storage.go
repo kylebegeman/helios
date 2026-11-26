@@ -85,15 +85,28 @@ func (p *Prober) storage(ctx context.Context) []Condition {
 			Message: strings.Join(problems[bucket], "; ") + "; helios storage shows every bucket"})
 	}
 
+	// A kept bucket is not waiting to be deleted, so the sweep records
+	// nothing against it but a deletion that was begun and left unfinished.
+	// Keeping does not end that one.
 	var held []string
+	waiting := false
 	for _, t := range tombstones {
-		if t.Problem != "" && !t.Kept() && !t.Moved {
+		switch {
+		case t.Problem == "" || t.Moved:
+		case t.Kept():
+			held = append(held, fmt.Sprintf("bucket %s of %s, removed %s and kept: %s", t.Bucket, t.App, t.RemovedAt.UTC().Format("2006-01-02"), t.Problem))
+		default:
+			waiting = true
 			held = append(held, fmt.Sprintf("bucket %s of %s, removed %s, is not being deleted: %s", t.Bucket, t.App, t.RemovedAt.UTC().Format("2006-01-02"), t.Problem))
 		}
 	}
 	if len(held) > 0 {
+		advice := "; helios storage shows each one"
+		if waiting {
+			advice += ", and helios storage keep <app> ends this for a bucket whose backups should stay"
+		}
 		conditions = append(conditions, Condition{Key: storageExpiryKey, Subject: "removed apps' buckets", Severity: state.SeverityWarning,
-			Message: strings.Join(held, "; ") + "; helios storage keep <app> keeps a bucket and ends this"})
+			Message: strings.Join(held, "; ") + advice})
 	}
 	if why := p.sweepProblem(ctx, newest, now); why != "" {
 		conditions = append(conditions, Condition{Key: storageSweepKey, Subject: "the storage sweep", Severity: state.SeverityWarning, Message: why})

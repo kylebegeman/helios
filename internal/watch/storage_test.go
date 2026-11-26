@@ -217,6 +217,17 @@ func TestABucketTheSweepHoldsIsACondition(t *testing.T) {
 	if found := s.rounds(2); len(found) != 0 || s.open(storageExpiryKey) != nil {
 		t.Fatalf("a kept bucket is still a condition: %+v", found)
 	}
+	// The sweep records one thing against a kept bucket: a deletion that
+	// was begun and not finished. Keeping does not end that, and the
+	// condition does not say it would.
+	if err := s.w.Store.SetStorageTombstoneProblem(ctx, "blog", "its deletion was started and did not finish"); err != nil {
+		t.Fatal(err)
+	}
+	found = s.rounds(3)
+	if len(found) != 1 || found[0].Key != storageExpiryKey || !strings.Contains(found[0].Message, "bucket helios-blog of blog, removed "+removed.Format("2006-01-02")+" and kept: its deletion was started and did not finish") ||
+		strings.Contains(found[0].Message, "helios storage keep") || s.open(storageExpiryKey) == nil {
+		t.Fatalf("a kept bucket whose deletion did not finish: %+v", found)
+	}
 }
 
 func recordSweep(t *testing.T, store *state.Store, id string, at time.Time, status state.OperationStatus, opErr string) {

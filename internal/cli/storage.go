@@ -226,6 +226,8 @@ func storageState(row apps.StorageRow) string {
 	}
 	removed := "removed " + storageDate(row.RemovedAt)
 	switch {
+	case row.Kept && row.Held != "":
+		return removed + ", kept (see below)"
 	case row.Kept:
 		return removed + ", kept"
 	case row.Held != "":
@@ -241,7 +243,13 @@ func storageRemarks(row apps.StorageRow) []string {
 	if len(row.Unusual) > 0 {
 		out = append(out, fmt.Sprintf("%s: %s", row.Bucket, strings.Join(row.Unusual, "; ")))
 	}
-	if row.Held != "" && !row.Kept && !row.Moved {
+	switch {
+	case row.Held == "" || row.Moved:
+	case row.Kept:
+		// The one thing recorded against a kept bucket is a deletion that
+		// was begun and not finished, which says itself what to do.
+		out = append(out, fmt.Sprintf("%s is kept, but %s", row.Bucket, row.Held))
+	default:
 		out = append(out, fmt.Sprintf("%s is not being deleted: %s. helios storage keep %s keeps it; helios storage purge %s tries again now", row.Bucket, row.Held, row.Owner, row.Owner))
 	}
 	if row.Note != "" {

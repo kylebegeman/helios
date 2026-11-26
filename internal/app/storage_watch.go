@@ -487,8 +487,12 @@ func (s *storageSession) settle(ctx, budget context.Context, t state.StorageTomb
 		return why, store.SetStorageTombstoneProblem(record, t.App, why)
 	}
 	if verdict == bucketHold {
-		if t.Moved {
-			return why, nil // not a problem: it is how the row is meant to be
+		// A moved app's bucket is held by design, and a kept one is not
+		// going anywhere: neither is a problem to record. What is already
+		// recorded against a kept bucket stands, since it cannot be read
+		// again from here.
+		if t.Moved || t.Kept() {
+			return why, nil
 		}
 		return hold(why)
 	}
@@ -554,12 +558,23 @@ func (s *storageSession) settle(ctx, budget context.Context, t state.StorageTomb
 		if held && !t.Kept() {
 			return hold(why)
 		}
+		if held && !o.read {
+			// A kept bucket that was written to: the reading stopped there,
+			// so whether its config is gone is not known tonight.
+			return "", nil
+		}
 		if o.unfinished() {
-			// A purge stopped part way. What is left may pass as this
-			// machine's, and is no longer a backup of anything.
-			why := fmt.Sprintf("its deletion was started and did not finish: the repository's config is gone, so nothing left in it can be restored; run helios storage purge %s to delete the rest", t.App)
-			if !t.Kept() {
-				why += fmt.Sprintf(", or the sweep does on %s", t.RemovedAt.Add(BucketExpiry).UTC().Format("2006-01-02"))
+			// A purge stopped part way. What is left is no longer a backup
+			// of anything, whoever's it is.
+			why := "its deletion was started and did not finish: the repository's config is gone, so nothing left in it can be restored; "
+			switch {
+			case held:
+				// A purge would be refused for the same reason.
+				why += "what is left is not all on record as this machine's, so it is deleted at the storage provider"
+			case t.Kept():
+				why += fmt.Sprintf("run helios storage purge %s to delete the rest", t.App)
+			default:
+				why += fmt.Sprintf("run helios storage purge %s to delete the rest, or the sweep does on %s", t.App, t.RemovedAt.Add(BucketExpiry).UTC().Format("2006-01-02"))
 			}
 			return hold(why)
 		}

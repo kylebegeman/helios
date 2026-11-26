@@ -1151,3 +1151,66 @@ func TestAPurgeThatIsStoppedRecordsWhereItStopped(t *testing.T) {
 		t.Fatalf("err %v, problem %q\n%s", err, f.tombstone("blog").Problem, out.String())
 	}
 }
+
+// What stands against a kept bucket is only ever an unfinished deletion,
+// and it stands through a night that cannot tell.
+func TestAKeptBucketsRecordIsOnlyEverAnUnfinishedDeletion(t *testing.T) {
+	half := func(t *testing.T) *storageFixture {
+		t.Helper()
+		f := newStorageFixture(t)
+		f.removed("blog", storageDay)
+		f.account.deleteErr = map[string]error{"helios-blog": errors.New("storage answered HTTP 503")}
+		f.now = storageDay.Add(2 * time.Hour)
+		if out, err := f.run(StoragePurgeKind, StorageAppInput{App: "blog"}); err == nil {
+			t.Fatal("the purge did not stop", out)
+		}
+		f.account.deleteErr = nil
+		if out, err := f.run(StorageKeepKind, StorageAppInput{App: "blog"}); err != nil {
+			t.Fatal(err, out)
+		}
+		f.now = f.now.Add(24 * time.Hour)
+		if out, err := f.sweep(); err != nil || !strings.Contains(f.tombstone("blog").Problem, "run helios storage purge blog to delete the rest") {
+			t.Fatalf("%v, problem %q\n%s", err, f.tombstone("blog").Problem, out)
+		}
+		return f
+	}
+	t.Run("something is uploaded to what is left", func(t *testing.T) {
+		f := half(t)
+		f.account.buckets["helios-blog"].lastWrite = f.now
+		f.now = f.now.Add(24 * time.Hour)
+		if out, err := f.sweep(); err != nil || !strings.Contains(f.tombstone("blog").Problem, "its deletion was started and did not finish") {
+			t.Fatalf("the record was cleared on a night that could not tell: %v, problem %q\n%s", err, f.tombstone("blog").Problem, out)
+		}
+	})
+	t.Run("what is left holds another machine's snapshot", func(t *testing.T) {
+		f := half(t)
+		keys := f.account.buckets["helios-blog"].keys
+		f.account.buckets["helios-blog"].keys = append(keys, "snapshots/"+snapshotOf("other", "blog"))
+		f.now = f.now.Add(24 * time.Hour)
+		out, err := f.sweep()
+		problem := f.tombstone("blog").Problem
+		if err != nil || !strings.Contains(problem, "deleted at the storage provider") || strings.Contains(problem, "helios storage purge") {
+			t.Fatalf("%v, problem %q\n%s", err, problem, out)
+		}
+	})
+	t.Run("the storage prefix changes", func(t *testing.T) {
+		f := half(t)
+		setStorage(t, f.secrets, "other", "key-one")
+		f.now = f.now.Add(24 * time.Hour)
+		if out, err := f.sweep(); err != nil || !strings.Contains(f.tombstone("blog").Problem, "its deletion was started and did not finish") {
+			t.Fatalf("%v, problem %q\n%s", err, f.tombstone("blog").Problem, out)
+		}
+	})
+	t.Run("a healthy kept bucket under a changed prefix records nothing", func(t *testing.T) {
+		f := newStorageFixture(t)
+		f.removed("blog", storageDay)
+		if out, err := f.run(StorageKeepKind, StorageAppInput{App: "blog"}); err != nil {
+			t.Fatal(err, out)
+		}
+		setStorage(t, f.secrets, "other", "key-one")
+		f.now = storageDay.Add(24 * time.Hour)
+		if out, err := f.sweep(); err != nil || f.tombstone("blog").Problem != "" {
+			t.Fatalf("%v, problem %q\n%s", err, f.tombstone("blog").Problem, out)
+		}
+	})
+}

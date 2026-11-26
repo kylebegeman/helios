@@ -134,8 +134,9 @@ held, and deleting it is done at the storage provider. Retention forgets
 those snapshots in time; on a store that keeps old versions of a deleted
 file, the forgotten snapshot's file stays listed, and so does the hold,
 unless a lifecycle rule clears old versions. An import made by a release from
-before this rule cannot tell which runs came with it, so no run that started
-before that import, or within a day after it, counts.
+before this rule cannot tell which runs came with it, so no run on record
+when this release first opens the store that started before that import, or
+within a day after it, counts.
 
 The snapshots are read from the bucket's own listing, not through restic. A
 repository sits at the root of its bucket and keeps one file for each
@@ -158,8 +159,11 @@ has no say over a bucket that is not due, so it reports that the repository's
 `config` is gone and nothing left can be restored, every night, until
 `helios storage purge <app>` is run again or the 30 days end. `helios storage
 keep` does not quiet that report: a kept bucket is read every night for this
-one thing, and whose its backups are is otherwise no concern while it is
-kept.
+one thing, `helios storage` and the `host:storage-expiry` condition go on
+showing it, and whose its backups are is otherwise no concern while it is
+kept. When what is left also holds a snapshot that is not on record as this
+machine's, a purge would be refused, and the report says to delete the bucket
+at the storage provider.
 
 Neither the sweep nor `purge` deletes anything, and the sweep raises
 `host:storage-expiry`, when any of these holds:

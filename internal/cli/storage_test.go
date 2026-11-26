@@ -202,3 +202,20 @@ func TestStoragePurgeShowsItsPlanFirst(t *testing.T) {
 		t.Fatalf("an unconfirmed purge dropped the bucket:\n%s", out)
 	}
 }
+
+// A kept bucket shows what is recorded against it, which is only ever a
+// deletion that was begun and not finished, and is not told to keep it.
+func TestStorageShowsWhatIsRecordedAgainstAKeptBucket(t *testing.T) {
+	row := apps.StorageRow{Bucket: "helios-blog", Owner: "blog", Kind: state.StorageRemoved, Kept: true, Held: "its deletion was started and did not finish"}
+	if got := storageState(row); !strings.HasSuffix(got, ", kept (see below)") {
+		t.Fatalf("state %q", got)
+	}
+	remarks := storageRemarks(row)
+	if len(remarks) != 1 || remarks[0] != "helios-blog is kept, but its deletion was started and did not finish" {
+		t.Fatalf("remarks %q", remarks)
+	}
+	row.Held = ""
+	if got := storageState(row); !strings.HasSuffix(got, ", kept") || len(storageRemarks(row)) != 0 {
+		t.Fatalf("a kept bucket with nothing against it: %q %q", got, storageRemarks(row))
+	}
+}
