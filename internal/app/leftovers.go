@@ -16,6 +16,7 @@ import (
 	"github.com/kylebegeman/helios/internal/integration"
 	"github.com/kylebegeman/helios/internal/kernel"
 	"github.com/kylebegeman/helios/internal/manifest"
+	"github.com/kylebegeman/helios/internal/state"
 )
 
 // leftovers is what an app that is no longer on the machine left behind:
@@ -38,6 +39,8 @@ type leftovers struct {
 	// credentials says whether the webhook secret or deploy key helios
 	// made for it are still among the integration credentials.
 	credentials bool
+	// backups says what becomes of its backups in the storage bucket.
+	backups string
 }
 
 func (l *leftovers) empty() bool {
@@ -115,7 +118,15 @@ func (r Remove) planLeftovers(ctx context.Context, in RemoveInput, stateDir stri
 // sit in an app's name too, so one that fits another app still known
 // here (loom-runner's, looking for loom's) is left to that app.
 func (r Remove) findLeftovers(ctx context.Context, app, stateDir string) (*leftovers, error) {
-	l := &leftovers{app: app}
+	l := &leftovers{app: app, backups: "its backups in the storage bucket stay"}
+	// An earlier removal may have started the bucket's 30 days.
+	switch t, err := r.Store.StorageTombstone(ctx, app); {
+	case errors.Is(err, state.ErrNotFound):
+	case err != nil:
+		return nil, err
+	case !t.Moved && !t.Kept():
+		l.backups = fmt.Sprintf("its backups in bucket %s stay until %s unless helios storage keep %s cancels their expiry", t.Bucket, t.RemovedAt.Add(BucketExpiry).UTC().Format("2006-01-02"), app)
+	}
 	if r.Secrets != nil {
 		names, version, err := r.Secrets.Names(app)
 		if err != nil {
@@ -365,12 +376,12 @@ func (l *leftovers) forgetStep(r Remove, stateDir string) kernel.Step {
 	if len(kept) > 0 {
 		change += ": " + strings.Join(kept, "; ")
 	}
-	change += "; its backups in the storage bucket stay, and are the only way to bring its data back"
+	change += "; " + l.backups + ", and are the only way to bring its data back"
 	return kernel.Step{
 		Name: "forget", Change: change,
 		Apply: func(ctx context.Context, out io.Writer) error {
 			// The secrets have their own step, named in the plan.
-			if err := forgetApp(ctx, r.Store, r.Secrets, stateDir, l.app, false, out); err != nil {
+			if err := forgetApp(ctx, r.Store, r.Secrets, stateDir, l.app, false, nil, out); err != nil {
 				return err
 			}
 			for _, dir := range l.dirs {

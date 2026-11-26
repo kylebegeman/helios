@@ -107,7 +107,7 @@ func TestForgettingAnAppClearsWhatTheMachineKeptForIt(t *testing.T) {
 		}
 	}
 	var out strings.Builder
-	if err := forgetApp(ctx, store, sec, stateDir, "hello", false, &out); err != nil {
+	if err := forgetApp(ctx, store, sec, stateDir, "hello", false, nil, &out); err != nil {
 		t.Fatal(err)
 	}
 	if revs, _ := store.Revisions(ctx, "hello"); len(revs) != 0 {
@@ -140,7 +140,7 @@ func TestForgettingAnAppClearsWhatTheMachineKeptForIt(t *testing.T) {
 	if !strings.Contains(out.String(), "webhook secret and deploy key") {
 		t.Fatalf("output: %q", out.String())
 	}
-	if err := forgetApp(ctx, store, sec, stateDir, "hello", true, &out); err != nil {
+	if err := forgetApp(ctx, store, sec, stateDir, "hello", true, nil, &out); err != nil {
 		t.Fatal(err)
 	}
 	if current, _ := sec.Current("hello"); current != 0 {

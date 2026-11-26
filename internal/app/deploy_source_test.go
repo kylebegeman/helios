@@ -227,7 +227,7 @@ func TestRemovingAnAppClearsItsDeployReservationsAndKeepsOtherApps(t *testing.T)
 	if err := writeRehearsalJSON(otherPath, other); err != nil {
 		t.Fatal(err)
 	}
-	if err := forgetApp(context.Background(), d.Store, d.Secrets, d.StateDir, "site", false, io.Discard); err != nil {
+	if err := forgetApp(context.Background(), d.Store, d.Secrets, d.StateDir, "site", false, nil, io.Discard); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(deploySourceReservationPath(d.StateDir, in)); !os.IsNotExist(err) {

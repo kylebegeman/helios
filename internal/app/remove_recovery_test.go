@@ -32,7 +32,7 @@ func TestRemoveCleanupFailureCanRetryWithoutDeletingRetainedData(t *testing.T) {
 	if err := os.WriteFile(blocked, []byte("not a directory"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := forgetApp(ctx, store, sec, stateDir, "site", false, io.Discard); err == nil {
+	if err := forgetApp(ctx, store, sec, stateDir, "site", false, nil, io.Discard); err == nil {
 		t.Fatal("filesystem cleanup failure was ignored")
 	}
 	if revisions, err := store.Revisions(ctx, "site"); err != nil || len(revisions) != 1 {
@@ -46,7 +46,7 @@ func TestRemoveCleanupFailureCanRetryWithoutDeletingRetainedData(t *testing.T) {
 	if err != nil || plan.Steps[0].Name != "unroute" {
 		t.Fatalf("retaining-data removal could not retry: %+v, %v", plan, err)
 	}
-	if err := forgetApp(ctx, store, sec, stateDir, "site", false, io.Discard); err != nil {
+	if err := forgetApp(ctx, store, sec, stateDir, "site", false, nil, io.Discard); err != nil {
 		t.Fatal(err)
 	}
 	if values, _, err := sec.LoadCurrent("site"); err != nil || values["TOKEN"] != "retained" {

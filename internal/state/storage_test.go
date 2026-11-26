@@ -27,7 +27,7 @@ func TestRemovingAnAppLeavesATombstoneAndARedeployClearsIt(t *testing.T) {
 	if got, err := s.StorageTombstones(ctx); err != nil || len(got) != 0 {
 		t.Fatalf("a running app has a tombstone: %v %v", got, err)
 	}
-	if err := s.RemoveAppLeavingTombstone(ctx, "site", "helios-site", storageDay); err != nil {
+	if err := s.RemoveAppLeavingTombstone(ctx, "site", "helios-site", "key:one", storageDay); err != nil {
 		t.Fatal(err)
 	}
 	got, err := s.StorageTombstone(ctx, "site")
@@ -51,7 +51,7 @@ func TestRemovingAnAppLeavesATombstoneAndARedeployClearsIt(t *testing.T) {
 func TestSavingARevisionAlsoClearsTheTombstone(t *testing.T) {
 	ctx := context.Background()
 	s := open(t)
-	if err := s.RemoveAppLeavingTombstone(ctx, "site", "helios-site", storageDay); err != nil {
+	if err := s.RemoveAppLeavingTombstone(ctx, "site", "helios-site", "key:one", storageDay); err != nil {
 		t.Fatal(err)
 	}
 	// SaveRevision is the upsert the deploy uses.
@@ -62,7 +62,7 @@ func TestSavingARevisionAlsoClearsTheTombstone(t *testing.T) {
 		t.Fatalf("tombstone survived a saved revision: %v", err)
 	}
 	// Another app's revision leaves a tombstone alone.
-	if err := s.RemoveAppLeavingTombstone(ctx, "site", "helios-site", storageDay); err != nil {
+	if err := s.RemoveAppLeavingTombstone(ctx, "site", "helios-site", "key:one", storageDay); err != nil {
 		t.Fatal(err)
 	}
 	deployed(t, s, "other", "r1")
@@ -81,7 +81,7 @@ func TestPlainRemovalLeavesNoTombstone(t *testing.T) {
 	if got, _ := s.StorageTombstones(ctx); len(got) != 0 {
 		t.Fatalf("tombstone without being asked for: %v", got)
 	}
-	if err := s.RemoveAppLeavingTombstone(ctx, "site", "", storageDay); err == nil {
+	if err := s.RemoveAppLeavingTombstone(ctx, "site", "", "key:one", storageDay); err == nil {
 		t.Fatal("a tombstone without a bucket was recorded")
 	}
 }
@@ -92,15 +92,15 @@ func TestKeepingBindingAndDroppingATombstone(t *testing.T) {
 	if err := s.KeepStorageTombstone(ctx, "site", storageDay); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("kept a tombstone that is not there: %v", err)
 	}
-	if err := s.RemoveAppLeavingTombstone(ctx, "site", "helios-site", storageDay); err != nil {
+	if err := s.RemoveAppLeavingTombstone(ctx, "site", "helios-site", "key:one", storageDay); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.BindStorageTombstone(ctx, "site", "b2:one"); err != nil {
+	if err := s.BindStorageTombstone(ctx, "site", "key:one", "b2:one"); err != nil {
 		t.Fatal(err)
 	}
 	// The first account a bucket was seen in stays.
-	if err := s.BindStorageTombstone(ctx, "site", "b2:two"); err != nil {
-		t.Fatal(err)
+	if err := s.BindStorageTombstone(ctx, "site", "key:one", "b2:two"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("bound a second account: %v", err)
 	}
 	if err := s.SetStorageTombstoneProblem(ctx, "site", "written since removal"); err != nil {
 		t.Fatal(err)
@@ -118,11 +118,11 @@ func TestKeepingBindingAndDroppingATombstone(t *testing.T) {
 
 	// Removing the app again restarts the clock and withdraws the keep.
 	later := storageDay.Add(48 * time.Hour)
-	if err := s.RemoveAppLeavingTombstone(ctx, "site", "helios-site", later); err != nil {
+	if err := s.RemoveAppLeavingTombstone(ctx, "site", "helios-site", "key:two", later); err != nil {
 		t.Fatal(err)
 	}
 	got, _ = s.StorageTombstone(ctx, "site")
-	if got.Kept() || !got.RemovedAt.Equal(later) || got.Account != "" {
+	if got.Kept() || !got.RemovedAt.Equal(later) || got.Account != "key:two" {
 		t.Fatalf("second removal: %+v", got)
 	}
 	if err := s.DeleteStorageTombstone(ctx, "site"); err != nil {
@@ -251,10 +251,47 @@ func TestStorageTablesDoNotChangeTheStateVersion(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer s.Close()
-	if err := s.RemoveAppLeavingTombstone(ctx, "site", "helios-site", storageDay); err != nil {
+	if err := s.RemoveAppLeavingTombstone(ctx, "site", "helios-site", "key:one", storageDay); err != nil {
 		t.Fatal(err)
 	}
 	if v, _ := s.Version(ctx); v != compat.StateVersion {
 		t.Fatalf("state version %d after adding the tables", v)
+	}
+}
+
+// An app that leaves through a move keeps a row that never expires, and a
+// retried removal cannot turn it into one that does.
+func TestAnAppThatMovedAwayNeverGetsAnExpiringTombstone(t *testing.T) {
+	ctx := context.Background()
+	s := open(t)
+	if err := s.MarkStorageMoved(ctx, "site", "helios-site", storageDay); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.RemoveAppLeavingTombstone(ctx, "site", "helios-site", "key:one", storageDay.Add(time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.StorageTombstone(ctx, "site")
+	if err != nil || !got.Moved || !got.Kept() || !got.RemovedAt.Equal(storageDay) || got.Account != "" {
+		t.Fatalf("a retried removal changed the moved row: %+v %v", got, err)
+	}
+	if err := s.BindStorageTombstone(ctx, "site", "", "b2:one"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("bound an account to a bucket that moved away: %v", err)
+	}
+	// Marking a move withdraws an expiry recorded before it.
+	if err := s.RemoveAppLeavingTombstone(ctx, "blog", "helios-blog", "key:one", storageDay); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.MarkStorageMoved(ctx, "blog", "helios-blog", storageDay.Add(time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := s.StorageTombstone(ctx, "blog"); !got.Moved || !got.Kept() || got.Account != "" {
+		t.Fatalf("moved after removal: %+v", got)
+	}
+	// Deploying it here again makes the bucket this machine's once more.
+	if err := s.SaveRevision(ctx, Revision{App: "site", ID: "r1", Manifest: []byte(`{}`), CreatedAt: storageDay}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.StorageTombstone(ctx, "site"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("a redeploy left the moved row: %v", err)
 	}
 }

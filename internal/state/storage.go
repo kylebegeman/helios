@@ -26,7 +26,8 @@ CREATE TABLE IF NOT EXISTS storage_tombstones (
   removed_at INTEGER NOT NULL,
   kept_at    INTEGER NOT NULL DEFAULT 0,
   account    TEXT NOT NULL DEFAULT '',
-  problem    TEXT NOT NULL DEFAULT ''
+  problem    TEXT NOT NULL DEFAULT '',
+  moved      INTEGER NOT NULL DEFAULT 0
 );
 CREATE TABLE IF NOT EXISTS storage_samples (
   bucket                TEXT NOT NULL,
@@ -91,12 +92,18 @@ type StorageTombstone struct {
 	// KeptAt is when an operator cancelled the expiry. The row stays, so
 	// the report still shows the bucket and it can still be purged by hand.
 	KeptAt time.Time `json:"kept_at,omitempty"`
-	// Account is the storage account the bucket was first seen in, so a
-	// changed storage integration never deletes a same-named bucket in
-	// another account.
+	// Account says where the bucket lives, so a changed storage integration
+	// never deletes a same-named bucket somewhere else. A removal records
+	// the credentials it saw, which needs no network; the first sweep that
+	// reaches the store with the same credentials replaces that with the
+	// store's own account, which outlives a rotated key.
 	Account string `json:"account,omitempty"`
 	// Problem is why the last sweep refused to delete the bucket.
 	Problem string `json:"problem,omitempty"`
+	// Moved means the app left this machine through a move, so its bucket
+	// belongs to the machine it moved to. Such a bucket never expires and
+	// cannot be purged from here; the row only says where it went.
+	Moved bool `json:"moved,omitempty"`
 }
 
 // Kept reports whether an operator cancelled the expiry.
@@ -143,28 +150,49 @@ func missingStorage(err error) bool {
 // same transaction, records that its bucket may expire. Recording the two
 // together is the point: a tombstone exists only for an app this machine
 // held and removed, and an app that is still recorded never has one.
-func (s *Store) RemoveAppLeavingTombstone(ctx context.Context, app, bucket string, at time.Time) error {
-	if app == "" || bucket == "" || at.IsZero() {
-		return errors.New("a storage tombstone needs an app, a bucket and a time")
+//
+// credentials names the storage credentials the removal saw; see
+// StorageTombstone.Account.
+func (s *Store) RemoveAppLeavingTombstone(ctx context.Context, app, bucket, credentials string, at time.Time) error {
+	if app == "" || bucket == "" || credentials == "" || at.IsZero() {
+		return errors.New("a storage tombstone needs an app, a bucket, its credentials and a time")
 	}
-	return s.removeApp(ctx, app, &StorageTombstone{App: app, Bucket: bucket, RemovedAt: at})
+	return s.removeApp(ctx, app, &StorageTombstone{App: app, Bucket: bucket, Account: credentials, RemovedAt: at})
 }
 
 func recordTombstone(ctx context.Context, tx *sql.Tx, t StorageTombstone) error {
 	// A second removal restarts the clock and withdraws an earlier keep or
-	// refusal: the newest removal is the one the operator saw.
-	_, err := tx.ExecContext(ctx, `INSERT INTO storage_tombstones (app, bucket, removed_at) VALUES (?, ?, ?)
-		ON CONFLICT(app) DO UPDATE SET bucket = excluded.bucket, removed_at = excluded.removed_at, kept_at = 0, account = '', problem = ''`,
-		t.App, t.Bucket, unix(t.RemovedAt))
+	// refusal: the newest removal is the one the operator saw. A row that
+	// says the app moved away is the exception and stays as it is: it can
+	// only still be here when that removal was interrupted and is retried,
+	// and the retry must not turn another machine's bucket into one that
+	// expires.
+	_, err := tx.ExecContext(ctx, `INSERT INTO storage_tombstones (app, bucket, removed_at, account) VALUES (?, ?, ?, ?)
+		ON CONFLICT(app) DO UPDATE SET bucket = excluded.bucket, removed_at = excluded.removed_at, kept_at = 0, account = excluded.account, problem = ''
+		WHERE storage_tombstones.moved = 0`,
+		t.App, t.Bucket, unix(t.RemovedAt), t.Account)
 	return err
 }
 
-const selectTombstone = `SELECT app, bucket, removed_at, kept_at, account, problem FROM storage_tombstones`
+// MarkStorageMoved records that an app is leaving this machine through a
+// move, before anything of it is forgotten. Its bucket then never expires
+// here, whatever a later retry of the removal finds.
+func (s *Store) MarkStorageMoved(ctx context.Context, app, bucket string, at time.Time) error {
+	if app == "" || bucket == "" || at.IsZero() {
+		return errors.New("a storage tombstone needs an app, a bucket and a time")
+	}
+	_, err := s.db.ExecContext(ctx, `INSERT INTO storage_tombstones (app, bucket, removed_at, kept_at, moved) VALUES (?, ?, ?, ?, 1)
+		ON CONFLICT(app) DO UPDATE SET bucket = excluded.bucket, removed_at = excluded.removed_at, kept_at = excluded.kept_at, account = '', problem = '', moved = 1`,
+		app, bucket, unix(at), unix(at))
+	return err
+}
+
+const selectTombstone = `SELECT app, bucket, removed_at, kept_at, account, problem, moved FROM storage_tombstones`
 
 func scanTombstone(row scanner) (*StorageTombstone, error) {
 	var t StorageTombstone
 	var removed, kept int64
-	if err := row.Scan(&t.App, &t.Bucket, &removed, &kept, &t.Account, &t.Problem); err != nil {
+	if err := row.Scan(&t.App, &t.Bucket, &removed, &kept, &t.Account, &t.Problem, &t.Moved); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrNotFound
 		}
@@ -223,11 +251,11 @@ func (s *Store) KeepStorageTombstone(ctx context.Context, app string, at time.Ti
 	return s.changeTombstone(ctx, `UPDATE storage_tombstones SET kept_at = ?, problem = '' WHERE app = ?`, unix(at), app)
 }
 
-// BindStorageTombstone records the account a tombstoned bucket was seen in.
-// It binds once: a tombstone already bound keeps its account.
-func (s *Store) BindStorageTombstone(ctx context.Context, app, account string) error {
-	_, err := s.db.ExecContext(ctx, `UPDATE storage_tombstones SET account = ? WHERE app = ? AND account = ''`, account, app)
-	return err
+// BindStorageTombstone replaces the credentials a removal recorded with the
+// store's own account, once: from, the value the caller compared, must
+// still be what the row holds.
+func (s *Store) BindStorageTombstone(ctx context.Context, app, from, account string) error {
+	return s.changeTombstone(ctx, `UPDATE storage_tombstones SET account = ? WHERE app = ? AND account = ? AND moved = 0`, account, app, from)
 }
 
 // SetStorageTombstoneProblem records why a bucket was not deleted, or
