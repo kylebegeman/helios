@@ -116,7 +116,7 @@ func (r *rollout) releaseCheckpointStep() kernel.Step {
 // a status other than "restored": prepared, started, completed, failed and
 // restoring all keep it, and so does a status this code does not know.
 //
-// It loses its protection in exactly two cases.
+// It loses its protection in exactly three cases.
 //
 //  1. Every boundary that records it is "restored". Data was put back to
 //     that checkpoint or an earlier one, and CompleteReleaseRestore marked
@@ -126,31 +126,58 @@ func (r *rollout) releaseCheckpointStep() kernel.Step {
 //     restored boundary. gc stops pinning its revision at the same moment.
 //  2. No boundary records it, and this machine's backup runs show that this
 //     machine took it. RemoveApp deleted the boundaries with the app, and a
-//     rollback finds a checkpoint only through a boundary.
+//     rollback finds a checkpoint only through a boundary. A checkpoint
+//     whose release could not write its boundary is the same case: restic
+//     returned its id to a run here (backupRun.wrote), the run ended in
+//     failure, and nothing can name it.
+//  3. Its release completed, and began longer ago than
+//     checkpointRollbackHorizon plus checkpointRetentionSlack. Restoring
+//     data that old would discard everything written since, which an
+//     ordinary restore of a backup does knowingly and a rollback should
+//     not. Rollback.Plan refuses such a checkpoint from the horizon on, a
+//     day before retention may let go of it, so a rollback never plans to
+//     read a snapshot that retention is free to drop. Only "completed"
+//     ages: a release that failed, or is still running or being restored,
+//     keeps its checkpoint however long that lasts.
 //
-// Everything else stays protected. In particular a checkpoint of a release
-// that completed long ago stays, because Rollback.Plan still accepts it;
-// one a later unsafe release makes Rollback.Plan refuse today stays, because
-// that refusal lifts when the later release is restored; and one this
-// machine has no record of at all stays, because another machine that backs
-// up to the same bucket may hold the boundary. When the boundaries or the
-// backup runs cannot be read, every checkpoint stays.
+// Everything else stays protected. In particular a checkpoint a later unsafe
+// release makes Rollback.Plan refuse today stays, because that refusal lifts
+// when the later release is restored; and one this machine has no record of
+// at all stays, because another machine that backs up to the same bucket may
+// hold the boundary. When the boundaries or the backup runs cannot be read,
+// every checkpoint stays.
 //
 // Losing protection deletes nothing by itself. The checkpoint becomes an
 // ordinary snapshot: the app's keep policy holds it while it is the newest
 // of its day, week or month, and drops it when it is not.
-func checkpointExpired(snapshot string, boundaries []state.ReleaseBoundary, taken map[string]bool) bool {
+func checkpointExpired(snapshot string, boundaries []state.ReleaseBoundary, taken map[string]bool, now time.Time) bool {
 	recorded := false
 	for _, b := range boundaries {
 		if b.Snapshot != snapshot {
 			continue
 		}
-		if b.Status != state.ReleaseRestored {
+		if b.Status != state.ReleaseRestored && !checkpointAged(b, now, checkpointRollbackHorizon+checkpointRetentionSlack) {
 			return false
 		}
 		recorded = true
 	}
 	return recorded || taken[snapshot]
+}
+
+// checkpointRollbackHorizon is how long after a release began its
+// checkpoint can be named by helios rollback --restore-data, once the
+// release has completed.
+const checkpointRollbackHorizon = 30 * 24 * time.Hour
+
+// checkpointRetentionSlack is how much longer than the horizon retention
+// goes on protecting a checkpoint. A rollback planned just inside the
+// horizon is applied long before this runs out.
+const checkpointRetentionSlack = 24 * time.Hour
+
+// checkpointAged reports whether a boundary's release completed and began
+// more than age ago. A boundary with no start time is never aged.
+func checkpointAged(b state.ReleaseBoundary, now time.Time, age time.Duration) bool {
+	return b.Status == state.ReleaseCompleted && !b.StartedAt.IsZero() && now.Sub(b.StartedAt) > age
 }
 
 // releaseCheckpointRuns bounds how far back the backup runs are read for
@@ -176,7 +203,19 @@ func releaseCheckpointRule(ctx context.Context, store *state.Store, app string) 
 			taken[run.Snapshot] = true
 		}
 	}
-	return func(s restic.Snapshot) bool { return checkpointExpired(s.ID, boundaries, taken) }, nil
+	// And the checkpoints restic returned to a run here that then ended in
+	// failure, such as one whose boundary could not be written. A run that
+	// has not ended is left out: its release is between its capture and its
+	// boundary, and the checkpoint must not pass for one nothing names.
+	made, err := store.SnapshotsFailedRunsMade(ctx, app, releaseCheckpointRun)
+	if err != nil {
+		return nil, fmt.Errorf("release checkpoints stay protected, the snapshots this machine made cannot be read: %w", err)
+	}
+	for snapshot := range made {
+		taken[snapshot] = true
+	}
+	now := time.Now()
+	return func(s restic.Snapshot) bool { return checkpointExpired(s.ID, boundaries, taken, now) }, nil
 }
 
 // releaseCheckpointRun is the backup run kind of a release checkpoint.
@@ -249,12 +288,26 @@ func unsafeReleaseBoundaries(ctx context.Context, store *state.Store, target *st
 
 func unsafeRollbackError(app string, unsafe []state.ReleaseBoundary) error {
 	var details []string
-	for _, b := range unsafe {
+	now := time.Now()
+	var first *state.ReleaseBoundary
+	for i, b := range unsafe {
 		detail := b.Revision + " (" + b.Compatibility + ", " + b.Status + ")"
-		if b.Snapshot != "" {
+		switch {
+		case b.Snapshot != "" && checkpointAged(b, now, checkpointRollbackHorizon):
+			detail += "; its checkpoint " + b.Snapshot + " is older than " + checkpointHorizonDays() + " and is no longer kept for a rollback"
+		case b.Snapshot != "":
 			detail += "; checkpoint " + b.Snapshot
 		}
 		details = append(details, detail)
+		if first == nil || b.StartedAt.Before(first.StartedAt) {
+			first = &unsafe[i]
+		}
+	}
+	// The checkpoint a rollback has to name is the one from before the
+	// first of these releases. Once that one has aged out there is nothing
+	// for a rollback to restore.
+	if first != nil && first.Snapshot != "" && checkpointAged(*first, now, checkpointRollbackHorizon) {
+		return fmt.Errorf("code-only rollback of %s is unsafe after %s; the checkpoint from before the first of these releases is past the rollback horizon, so a rollback cannot put the data back; recover through a separately verified backup", app, strings.Join(details, ", "))
 	}
 	return fmt.Errorf("code-only rollback of %s is unsafe after %s; use helios rollback %s --to <checkpoint's previous revision> --restore-data <exact-checkpoint> to replace data and discard writes since that checkpoint", app, strings.Join(details, ", "), app)
 }
@@ -482,4 +535,9 @@ func rollbackCheckpointStep(d Deploy, target *state.Revision, b state.ReleaseBou
 		fmt.Fprintf(out, "checkpoint %s restored; revision %s may now start\n", b.Snapshot, target.ID)
 		return nil
 	}}
+}
+
+// checkpointHorizonDays is the rollback horizon as people read it.
+func checkpointHorizonDays() string {
+	return fmt.Sprintf("%d days", int(checkpointRollbackHorizon/(24*time.Hour)))
 }

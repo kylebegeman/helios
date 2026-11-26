@@ -1075,6 +1075,12 @@ func (r Rollback) Plan(ctx context.Context, raw json.RawMessage) (*kernel.Plan, 
 		if discarded := discardedBy(boundaries, checkpoint); discarded != nil {
 			return nil, fmt.Errorf("checkpoint %s is from before release %s, which was discarded when checkpoint %s for the earlier release %s was restored; the data is now older than this checkpoint, and a rollback does not move it forward again; recover through a separately verified backup", checkpoint.Snapshot, checkpoint.Revision, discarded.Snapshot, discarded.Revision)
 		}
+		// A completed release's checkpoint is kept for a rollback only so
+		// long (see checkpointExpired). Past that, retention is free to let
+		// go of it, and a rollback must not plan to read it.
+		if checkpointAged(*checkpoint, time.Now(), checkpointRollbackHorizon) {
+			return nil, fmt.Errorf("checkpoint %s was captured before release %s, which began more than %s ago and completed; it is no longer kept for a rollback, and restoring it would discard everything written since; recover through a separately verified backup", checkpoint.Snapshot, checkpoint.Revision, checkpointHorizonDays())
+		}
 		if checkpoint.Status == state.ReleaseRestored && len(unsafe) > 0 {
 			later := unsafe[0]
 			for _, boundary := range unsafe[1:] {

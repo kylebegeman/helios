@@ -109,6 +109,9 @@ The checkpoint pins its previous revision, so `--to` is optional. If
 supplied, it must name that same revision. The snapshot's manifest is checked
 against the target before live data is touched.
 
+A checkpoint can be named for 30 days after its release began, once the
+release has completed; see [the rollback horizon](#the-rollback-horizon).
+
 **Restoring discards database and volume writes made since that checkpoint.**
 Helios persists a writer fence, removes the app's containers, replaces its data,
 restores its original current secrets as a new secret version, and only then
@@ -140,10 +143,9 @@ rollback accepts a checkpoint only when a release boundary of the app records
 exactly that snapshot together with the revision to return to, and it restores
 the snapshot only while that boundary is not yet marked restored. Retention
 follows the same test. **A checkpoint is exempt from retention for as long as
-any release boundary of its app records it with a status other than
-restored.** Prepared, started, completed, failed and restoring all keep it.
+a rollback could still restore it.**
 
-A checkpoint loses the exemption in exactly two cases:
+A checkpoint loses the exemption in exactly three cases:
 
 1. Every boundary that records it is restored. The data was put back to that
    checkpoint or an earlier one. A rollback that names it again is refused
@@ -153,12 +155,15 @@ A checkpoint loses the exemption in exactly two cases:
 2. No boundary records it and this machine's backup history shows that this
    machine took it. That is the checkpoint of an app that was removed:
    removal deletes the app's boundaries, and a rollback finds a checkpoint
-   only through a boundary.
+   only through a boundary. It is also the checkpoint of a release that
+   failed before its boundary could be written, once that attempt has ended.
+3. Its release completed and began more than 30 days ago. See
+   [the rollback horizon](#the-rollback-horizon).
 
 Everything else stays exempt, and when in doubt a checkpoint is kept:
 
-- The checkpoint of a release that completed long ago stays, because a
-  rollback still accepts it.
+- The checkpoint of a release that failed, or that is prepared, started or
+  being restored, stays however old it is. Only a completed release ages.
 - A checkpoint that a later data-changing release makes a rollback refuse
   today stays, because the refusal lifts once the later release is restored.
 - A checkpoint this machine has no record of stays, because another machine
@@ -171,8 +176,26 @@ ordinary snapshot: the app's `backup.keep` policy holds it while it is the
 newest of its day, week or month, and forgets it when it is not. Its space
 comes back with the prune that follows.
 
-This rule follows what a rollback accepts today, and a rollback puts no age
-limit on a checkpoint. An app that ships data-changing releases and never
-restores one therefore keeps one checkpoint per release. Limiting that needs
-a decision about rollback first: how old a release may be and still be
-undone by restoring data. Retention can then follow it.
+### The rollback horizon
+
+A release that completed can be undone by restoring data for 30 days, counted
+from when the release began. After that `helios rollback --restore-data`
+refuses its checkpoint: restoring it would discard a month or more of
+writes, which is a recovery from a backup and not a rollback. Retention goes
+on protecting the checkpoint for one more day, so a rollback planned just
+inside the horizon never reads a snapshot that retention is free to drop.
+
+Without the horizon an app that ships data-changing releases and never
+restores one keeps one checkpoint per release for good.
+
+What the horizon means for a rollback depends on the release:
+
+- A release declared `backward-compatible` takes no checkpoint and is rolled
+  back by code alone, at any age.
+- A `restore-required` or `unknown` release cannot be rolled back by code
+  alone at any age. `unknown` is what a manifest without the policy gets. Inside the horizon the rollback names the checkpoint to
+  restore. Past it, `helios rollback` says the checkpoint is past the
+  horizon and offers neither path: recover through a separately verified
+  backup.
+
+The horizon is fixed. It is not a setting.

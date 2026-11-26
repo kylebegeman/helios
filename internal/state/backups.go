@@ -165,6 +165,27 @@ func (s *Store) SnapshotsMade(ctx context.Context, app string, kinds ...string) 
 	return out, rows.Err()
 }
 
+// SnapshotsFailedRunsMade returns the id of every snapshot restic returned
+// to a run of the given kind that then ended in failure, for an app on this
+// machine. A run that has not ended is left out: what it wrote may yet be
+// recorded by whatever the run is for, such as a release boundary.
+func (s *Store) SnapshotsFailedRunsMade(ctx context.Context, app, kind string) (map[string]bool, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT snapshot_made FROM backup_runs WHERE app = ? AND imported = 0 AND kind = ? AND finished_at != 0 AND ok = 0 AND snapshot_made != ''`, app, kind)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]bool{}
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		out[id] = true
+	}
+	return out, rows.Err()
+}
+
 const backupRunColumns = `id, app, kind, started_at, finished_at, ok, snapshot, snapshot_at, files, bytes, detail, error`
 
 // BackupRun returns the recorded run identified by id.

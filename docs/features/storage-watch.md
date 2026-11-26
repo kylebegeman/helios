@@ -243,7 +243,8 @@ bucket: that repository needs a prune run by hand with more time.
 ## Release checkpoints
 
 A release checkpoint is exempt from retention only while a rollback could
-still restore it. See
+still restore it: until it is restored, its app is removed, or its release
+completed more than 30 days ago. See
 [release safety](release-safety.md#when-a-checkpoint-expires) for the rule.
 
 ## What the storage key must be allowed to do
