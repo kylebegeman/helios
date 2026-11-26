@@ -479,7 +479,12 @@ func (s *storageSession) settle(ctx, budget context.Context, t state.StorageTomb
 	})
 	hold := func(why string) (string, error) {
 		fmt.Fprintf(out, "bucket %s stays: %s\n", t.Bucket, why)
-		return why, store.SetStorageTombstoneProblem(ctx, t.App, why)
+		// Why a bucket stays is recorded even when the operation was just
+		// stopped: a deletion that was cut short is the one that most needs
+		// its record.
+		record, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+		defer cancel()
+		return why, store.SetStorageTombstoneProblem(record, t.App, why)
 	}
 	if verdict == bucketHold {
 		if t.Moved {
@@ -525,36 +530,40 @@ func (s *storageSession) settle(ctx, budget context.Context, t state.StorageTomb
 	default:
 		// Not due yet, or kept. A bucket that will not pass on its day says
 		// so now, while the report still shows a date for it. A kept bucket
-		// with nothing recorded against it is not read: it is not going
-		// anywhere.
-		if t.Kept() && t.Problem == "" {
+		// is not going anywhere, so whose its backups are is no problem;
+		// that its deletion was begun and left unfinished still is.
+		clear := func() (string, error) {
+			if t.Problem != "" {
+				return "", store.SetStorageTombstoneProblem(ctx, t.App, "")
+			}
 			return "", nil
 		}
 		if why != "" {
+			if t.Kept() {
+				return clear()
+			}
 			return hold(why)
 		}
 		err := s.obj.Examine(budget, s.listed[t.Bucket], check)
-		if why, held := refused(err); held {
-			return hold(why)
-		}
-		if err != nil {
+		why, held := refused(err)
+		if err != nil && !held {
 			// A listing that fails tonight is not news: the next night
 			// reads it again, and what is recorded stands until then.
 			return "", nil
 		}
+		if held && !t.Kept() {
+			return hold(why)
+		}
 		if o.unfinished() {
-			// A purge stopped part way. What is left passes as this
+			// A purge stopped part way. What is left may pass as this
 			// machine's, and is no longer a backup of anything.
-			why := fmt.Sprintf("its deletion was started and did not finish: the repository's config is gone, so the backups left in it can no longer be restored; run helios storage purge %s to delete the rest", t.App)
+			why := fmt.Sprintf("its deletion was started and did not finish: the repository's config is gone, so nothing left in it can be restored; run helios storage purge %s to delete the rest", t.App)
 			if !t.Kept() {
 				why += fmt.Sprintf(", or the sweep does on %s", t.RemovedAt.Add(BucketExpiry).UTC().Format("2006-01-02"))
 			}
 			return hold(why)
 		}
-		if t.Problem != "" {
-			return "", store.SetStorageTombstoneProblem(ctx, t.App, "")
-		}
-		return "", nil
+		return clear()
 	}
 	if why != "" {
 		return hold(why)
@@ -620,10 +629,11 @@ type owned struct {
 }
 
 // unfinished reports whether the bucket that was read is what an
-// interrupted deletion leaves: snapshots of a repository whose config is
-// already gone.
+// interrupted deletion leaves: a repository whose config is already gone,
+// down to a bucket with nothing in it at all. A tombstone is only recorded
+// for a bucket this machine backed up into, so a repository was there.
 func (o *owned) unfinished() bool {
-	return o.read && !o.config && len(o.seen) > 0
+	return o.read && !o.config
 }
 
 func (o *owned) mine(id string) bool {

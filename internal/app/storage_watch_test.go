@@ -1087,3 +1087,67 @@ func TestASnapshotIsCountedOnceHoweverManyVersionsOfItThereAre(t *testing.T) {
 		t.Fatalf("%v, problem %q\n%s", err, f.tombstone("blog").Problem, out)
 	}
 }
+
+// The expiry alert tells the operator that keeping a bucket ends it. After
+// a purge that stopped part way, keeping must not hide what is left: it is
+// billed, and no longer a backup of anything.
+func TestKeepingAHalfDeletedBucketDoesNotHideIt(t *testing.T) {
+	f := newStorageFixture(t)
+	f.removed("blog", storageDay)
+	f.account.deleteErr = map[string]error{"helios-blog": errors.New("storage answered HTTP 503")}
+	f.now = storageDay.Add(2 * time.Hour)
+	if out, err := f.run(StoragePurgeKind, StorageAppInput{App: "blog"}); err == nil {
+		t.Fatal("the purge did not stop", out)
+	}
+	f.account.deleteErr = nil
+	if out, err := f.run(StorageKeepKind, StorageAppInput{App: "blog"}); err != nil {
+		t.Fatal(err, out)
+	}
+	for night := 1; night <= 2; night++ {
+		f.now = f.now.Add(24 * time.Hour)
+		if out, err := f.sweep(); err != nil || !strings.Contains(f.tombstone("blog").Problem, "its deletion was started and did not finish") {
+			t.Fatalf("night %d: %v, problem %q\n%s", night, err, f.tombstone("blog").Problem, out)
+		}
+	}
+}
+
+// A purge that deleted every file and could not delete the bucket itself
+// leaves an empty bucket, which is still unfinished.
+func TestAnEmptiedBucketIsStillAnUnfinishedDeletion(t *testing.T) {
+	for _, kept := range []bool{false, true} {
+		f := newStorageFixture(t)
+		f.removed("blog", storageDay)
+		if kept {
+			if out, err := f.run(StorageKeepKind, StorageAppInput{App: "blog"}); err != nil {
+				t.Fatal(err, out)
+			}
+		}
+		f.account.buckets["helios-blog"].keys = nil
+		f.now = storageDay.Add(24 * time.Hour)
+		if out, err := f.sweep(); err != nil || !strings.Contains(f.tombstone("blog").Problem, "its deletion was started and did not finish") {
+			t.Fatalf("kept %t: %v, problem %q\n%s", kept, err, f.tombstone("blog").Problem, out)
+		}
+		if out, err := f.run(StoragePurgeKind, StorageAppInput{App: "blog"}); err != nil || f.tombstone("blog") != nil {
+			t.Fatalf("kept %t: purging the empty bucket: %v\n%s", kept, err, out)
+		}
+	}
+}
+
+// A purge has no budget of its own. When the operation it runs in is
+// stopped during the deletion, where it stopped is still recorded.
+func TestAPurgeThatIsStoppedRecordsWhereItStopped(t *testing.T) {
+	f := newStorageFixture(t)
+	f.removed("blog", storageDay)
+	f.now = storageDay.Add(2 * time.Hour)
+	s, err := f.watch.open(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	s.obj = outOfTime{f.account, cancel}
+	var out strings.Builder
+	if _, err := s.settle(ctx, ctx, *f.tombstone("blog"), true, true, &out); err != nil || !strings.Contains(f.tombstone("blog").Problem, "run helios storage purge blog again to finish") {
+		t.Fatalf("err %v, problem %q\n%s", err, f.tombstone("blog").Problem, out.String())
+	}
+}

@@ -243,7 +243,7 @@ func (s *Store) ImportMachineRecovery(ctx context.Context, sourceDBPath, recover
 			return fmt.Errorf("record private recovery revision %s/%s: %w", r.App, r.ID, err)
 		}
 	}
-	if _, err := tx.ExecContext(ctx, "INSERT INTO machine_recoveries(id,digest,imported_at) VALUES(?,?,?)", recoveryID, digest, now); err != nil {
+	if _, err := tx.ExecContext(ctx, "INSERT INTO machine_recoveries(id,digest,imported_at,runs_marked) VALUES(?,?,?,1)", recoveryID, digest, now); err != nil {
 		return err
 	}
 	return tx.Commit()

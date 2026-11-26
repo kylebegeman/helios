@@ -69,40 +69,83 @@ func (s *Store) ensureStorage(ctx context.Context) error {
 	return s.ensureImportedRuns(ctx)
 }
 
-// ensureImportedRuns adds backup_runs.imported, which marks a run that a
+// legacyImportMargin is how far past a recovery's import a run may have
+// started and still be taken for one the import brought. The source
+// machine stamped those runs with its own clock, which may have run ahead
+// of this one's.
+const legacyImportMargin = 24 * time.Hour
+
+// ensureImportedRuns keeps backup_runs.imported true: it marks a run that a
 // machine recovery copied from another machine's state. Such a run says
 // what that machine backed up, and its snapshot is not one this machine
 // made.
 //
-// A store that imported a recovery before the column existed cannot say
-// which of its runs came with it. Every run that started before its last
-// import is marked, which takes this machine's own earlier runs with it: a
-// bucket is then held that could have gone, never the other way round.
+// An import by this binary marks its runs itself and says so on its
+// machine_recoveries row. An import that does not say so was made by a
+// binary from before the mark, whenever that binary ran, and cannot tell
+// which runs came with it. Every unmarked run that started before that
+// import, or within a day after it, is then marked. That takes some of this
+// machine's own runs with it: a bucket is held that could have gone, never
+// the other way round.
 func (s *Store) ensureImportedRuns(ctx context.Context) error {
-	has := func() (bool, error) {
-		var n int
-		err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM pragma_table_info('backup_runs') WHERE name = 'imported'`).Scan(&n)
-		return n > 0, err
+	settled := func() (bool, error) {
+		var columns int
+		err := s.db.QueryRowContext(ctx, `SELECT
+			(SELECT COUNT(*) FROM pragma_table_info('backup_runs') WHERE name = 'imported') +
+			(SELECT COUNT(*) FROM pragma_table_info('machine_recoveries') WHERE name = 'runs_marked')`).Scan(&columns)
+		if err != nil || columns != 2 {
+			return false, err
+		}
+		var unmarked int
+		err = s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM machine_recoveries WHERE runs_marked = 0`).Scan(&unmarked)
+		return unmarked == 0, err
 	}
-	if ok, err := has(); err != nil || ok {
+	if ok, err := settled(); err != nil || ok {
 		return err
 	}
+	// Another process may be opening the same store and doing the same. The
+	// one that loses is refused at once, not made to wait, because its
+	// transaction read before it wrote; so it asks again until the other is
+	// done. Each transaction is over before the next question: the store
+	// has one connection, and a question asked while a transaction held it
+	// would never be answered.
+	var err error
+	for attempt := 0; attempt < 50; attempt++ {
+		if err = s.markImportedRuns(ctx); err == nil {
+			return nil
+		}
+		if ok, settledErr := settled(); settledErr == nil && ok {
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(100 * time.Millisecond):
+		}
+	}
+	return err
+}
+
+func (s *Store) markImportedRuns(ctx context.Context) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
-	if _, err := tx.ExecContext(ctx, `ALTER TABLE backup_runs ADD COLUMN imported INTEGER NOT NULL DEFAULT 0`); err != nil {
-		// Another process opening the same store got there first.
-		if ok, hasErr := has(); hasErr == nil && ok {
-			return nil
-		}
-		return err
-	}
 	if _, err := tx.ExecContext(ctx, recoveryImportSchema); err != nil {
 		return err
 	}
-	if _, err := tx.ExecContext(ctx, `UPDATE backup_runs SET imported = 1 WHERE started_at <= (SELECT MAX(imported_at) FROM machine_recoveries)`); err != nil {
+	if err := ensureColumn(ctx, tx, "backup_runs", "imported", "INTEGER NOT NULL DEFAULT 0"); err != nil {
+		return err
+	}
+	if err := ensureColumn(ctx, tx, "machine_recoveries", "runs_marked", "INTEGER NOT NULL DEFAULT 0"); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE backup_runs SET imported = 1 WHERE imported = 0
+		AND started_at <= (SELECT MAX(imported_at) FROM machine_recoveries WHERE runs_marked = 0) + ?`, legacyImportMargin.Milliseconds()); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE machine_recoveries SET runs_marked = 1 WHERE runs_marked = 0`); err != nil {
 		return err
 	}
 	return tx.Commit()

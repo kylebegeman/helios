@@ -71,6 +71,11 @@ type fakeS3 struct {
 	busy     int
 	// noCancel refuses to cancel an unfinished upload.
 	noCancel bool
+	// sticky answers a deletion with success and keeps the file.
+	sticky bool
+	// resumed counts listings that carried on from a marker after
+	// something was deleted.
+	resumed int
 }
 
 func (f *fakeS3) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -124,6 +129,9 @@ func (f *fakeS3) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			fmt.Fprint(w, `<Error><Code>NotImplemented</Code><Message>no versions here</Message></Error>`)
 			return
 		}
+		if q.Get("key-marker") != "" && len(f.deletes) > 0 {
+			f.resumed++
+		}
 		f.listPage(w, bucket, q.Get("key-marker"), true)
 	case key == "" && r.Method == http.MethodGet && q.Get("list-type") == "2":
 		f.listPage(w, bucket, q.Get("continuation-token"), false)
@@ -151,7 +159,7 @@ func (f *fakeS3) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case r.Method == http.MethodDelete:
 		var rest []fakeObject
 		for _, o := range f.buckets[bucket] {
-			if o.key == key && o.version == q.Get("versionId") {
+			if o.key == key && o.version == q.Get("versionId") && !f.sticky {
 				f.deletes = append(f.deletes, bucket+"/"+key+"@"+o.version)
 				continue
 			}
@@ -440,5 +448,25 @@ func TestS3DeletesInTheOrderOfNamesAndCancelsUploadsFirst(t *testing.T) {
 	}
 	if len(fake.deletes) != 0 || len(fake.buckets["helios-site"]) != 5 {
 		t.Fatalf("files were deleted before the unfinished upload was cancelled: %v", fake.deletes)
+	}
+}
+
+// A listing is never carried on past a page that was just deleted: its
+// marker would name a file version that is gone. And a store that goes on
+// listing what it said it deleted ends the deletion, not the night.
+func TestS3ListsFromTheStartAfterEachDeletedPage(t *testing.T) {
+	ctx := context.Background()
+	fake, store := s3Fixture(t) // pages of two
+	if _, err := store.DeleteBucket(ctx, Bucket{Name: "helios-site"}, Check{NotWrittenSince: removedAt}); err != nil {
+		t.Fatal(err)
+	}
+	if fake.resumed != 0 || len(fake.deletes) != 6 {
+		t.Fatalf("%d listing(s) carried on from a marker after a deletion; deleted %v", fake.resumed, fake.deletes)
+	}
+
+	fake, store = s3Fixture(t)
+	fake.sticky = true
+	if _, err := store.DeleteBucket(ctx, Bucket{Name: "helios-site"}, Check{NotWrittenSince: removedAt}); err == nil || !strings.Contains(err.Error(), "still lists it after deleting it") {
+		t.Fatalf("error %v", err)
 	}
 }

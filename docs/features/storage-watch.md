@@ -128,11 +128,14 @@ that anyone may have made.
 
 Nor does the history a machine recovery brings with it. `helios recover`
 copies the source machine's backup runs into this machine's state, and they
-stay that machine's record. Until the source's snapshots have aged
-out of a repository, the bucket of an app removed on the recovered machine is
-held, and deleting it is done at the storage provider. A machine that
-imported a recovery before this rule existed cannot tell which of its runs
-came with the import, so it counts none from before its last import.
+stay that machine's record. While a repository still holds one of the
+source's snapshots, the bucket of an app removed on the recovered machine is
+held, and deleting it is done at the storage provider. Retention forgets
+those snapshots in time; on a store that keeps old versions of a deleted
+file, the forgotten snapshot's file stays listed, and so does the hold,
+unless a lifecycle rule clears old versions. An import made by a release from
+before this rule cannot tell which runs came with it, so no run that started
+before that import, or within a day after it, counts.
 
 The snapshots are read from the bucket's own listing, not through restic. A
 repository sits at the root of its bucket and keeps one file for each
@@ -152,8 +155,11 @@ will not pass says so on the first night and not on the thirtieth.
 A deletion that stops part way is carried on by the next sweep when the
 bucket's 30 days are up. A `purge` ahead of them that stops is not: the sweep
 has no say over a bucket that is not due, so it reports that the repository's
-`config` is gone and what is left can no longer be restored, every night,
-until `helios storage purge <app>` is run again or the 30 days end.
+`config` is gone and nothing left can be restored, every night, until
+`helios storage purge <app>` is run again or the 30 days end. `helios storage
+keep` does not quiet that report: a kept bucket is read every night for this
+one thing, and whose its backups are is otherwise no concern while it is
+kept.
 
 Neither the sweep nor `purge` deletes anything, and the sweep raises
 `host:storage-expiry`, when any of these holds:
@@ -161,7 +167,7 @@ Neither the sweep nor `purge` deletes anything, and the sweep raises
 - the bucket holds a snapshot this machine has no record of making, it holds
   files but no snapshot at all, or this machine has no record of a backup of
   the app. A backup here that failed after it wrote its snapshot leaves such
-  a snapshot too, until retention forgets it;
+  a snapshot too;
 - something was uploaded to the bucket more than an hour after the app was
   removed, so another machine or tool is using it;
 - the app is deployed on this machine again;

@@ -416,6 +416,9 @@ func (c *s3) Examine(ctx context.Context, b Bucket, check Check) error {
 	return err
 }
 
+// errNextPage ends a listing after the one page that was deleted.
+var errNextPage = errors.New("next page")
+
 func (c *s3) DeleteBucket(ctx context.Context, b Bucket, check Check) (Deleted, error) {
 	var d Deleted
 	// Read the whole bucket before deleting any of it, so a bucket that
@@ -434,29 +437,47 @@ func (c *s3) DeleteBucket(ctx context.Context, b Bucket, check Check) (Deleted, 
 			return d, fmt.Errorf("cancel unfinished upload %s: %w", u.Key, err)
 		}
 	}
-	err = c.objects(ctx, b.Name, func(objects []s3Object) error {
-		// The whole page is checked before any of it is deleted.
-		for _, o := range objects {
-			if err := check.file(o.Key, o.LastModified); err != nil {
-				return err
+	// One page is deleted at a time, and the listing then starts again
+	// from the top. A listing carried on past a page that was just deleted
+	// would be told to continue after a file version that is gone, and what
+	// a store does with that is not ours to rely on.
+	for last := ""; ; {
+		first, emptied := "", true
+		err = c.objects(ctx, b.Name, func(objects []s3Object) error {
+			if len(objects) == 0 {
+				return nil
 			}
+			emptied, first = false, objects[0].Key+"@"+objects[0].VersionID
+			if first == last {
+				return fmt.Errorf("delete %s: the store still lists it after deleting it", objects[0].Key)
+			}
+			// The whole page is checked before any of it is deleted.
+			for _, o := range objects {
+				if err := check.file(o.Key, o.LastModified); err != nil {
+					return err
+				}
+			}
+			for _, o := range objects {
+				var q url.Values
+				if o.VersionID != "" {
+					q = url.Values{"versionId": {o.VersionID}}
+				}
+				err := c.do(ctx, http.MethodDelete, "/"+b.Name+"/"+o.Key, q, nil)
+				if err != nil && !refusedAs(err, "NoSuchKey", "NoSuchVersion") {
+					return fmt.Errorf("delete %s: %w", o.Key, err)
+				}
+				d.Files++
+				d.Bytes += o.Size
+			}
+			return errNextPage
+		})
+		if err != nil && !errors.Is(err, errNextPage) {
+			return d, err
 		}
-		for _, o := range objects {
-			var q url.Values
-			if o.VersionID != "" {
-				q = url.Values{"versionId": {o.VersionID}}
-			}
-			err := c.do(ctx, http.MethodDelete, "/"+b.Name+"/"+o.Key, q, nil)
-			if err != nil && !refusedAs(err, "NoSuchKey", "NoSuchVersion") {
-				return fmt.Errorf("delete %s: %w", o.Key, err)
-			}
-			d.Files++
-			d.Bytes += o.Size
+		if emptied {
+			break
 		}
-		return nil
-	})
-	if err != nil {
-		return d, err
+		last = first
 	}
 	if err := c.do(ctx, http.MethodDelete, "/"+b.Name, nil, nil); err != nil {
 		return d, fmt.Errorf("delete bucket: %w", err)

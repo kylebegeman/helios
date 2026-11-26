@@ -426,7 +426,9 @@ func TestAStoreThatImportedBeforeRunsWereMarkedCountsOnlyLaterRuns(t *testing.T)
 		t.Fatal(err)
 	}
 	imported := time.Now().UTC()
-	for snapshot, at := range map[string]time.Time{"before": imported.Add(-time.Hour), "after": imported.Add(time.Hour)} {
+	// The source machine's clock may have run ahead of this one's, so a run
+	// stamped within a day after the import is taken for an imported one.
+	for snapshot, at := range map[string]time.Time{"before": imported.Add(-time.Hour), "ahead": imported.Add(time.Hour), "after": imported.Add(48 * time.Hour)} {
 		id, err := s.StartBackupRun(ctx, "blog", BackupRunBackup, at)
 		if err != nil {
 			t.Fatal(err)
@@ -468,5 +470,79 @@ func TestAStoreThatImportedBeforeRunsWereMarkedCountsOnlyLaterRuns(t *testing.T)
 			t.Fatalf("a run recorded after the column was added does not count: %v %v", got, err)
 		}
 		s.Close()
+	}
+}
+
+// A binary from before runs were marked may import a recovery into a store
+// that already has the column: the store was opened by this binary, then
+// by the older one. Its import does not say its runs were marked, and the
+// next opening by this binary marks them.
+func TestAnImportByAnOlderBinaryIsMarkedOnTheNextOpening(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "state.db")
+	s, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	imported := time.Now().UTC()
+	// What the older binary writes: the run without the mark, and the
+	// recovery without saying its runs were marked.
+	if _, err := s.db.ExecContext(ctx, `INSERT INTO backup_runs (app, kind, started_at, finished_at, ok, snapshot) VALUES ('blog', ?, ?, ?, 1, 'theirs')`, BackupRunBackup, unix(imported.Add(-time.Hour)), unix(imported.Add(-time.Hour))); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.db.ExecContext(ctx, `INSERT INTO machine_recoveries(id,digest,imported_at) VALUES('r1','d',?)`, unix(imported)); err != nil {
+		t.Fatal(err)
+	}
+	s.Close()
+	s, err = Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	if got, err := s.SnapshotsMade(ctx, "blog", BackupRunBackup); err != nil || len(got) != 0 {
+		t.Fatalf("the older binary's import counts as made here: %v %v", got, err)
+	}
+}
+
+// Two processes may open a store from before the mark at the same moment.
+// Both must come back: the one that loses has a transaction open on the
+// store's only connection when it finds out.
+func TestTwoOpeningsOfAnOlderStoreAtOnceBothReturn(t *testing.T) {
+	for round := range 15 {
+		path := filepath.Join(t.TempDir(), "state.db")
+		s, err := Open(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		s.Close()
+		db, err := sql.Open("sqlite", path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := db.Exec(`ALTER TABLE backup_runs DROP COLUMN imported; ALTER TABLE machine_recoveries DROP COLUMN runs_marked`); err != nil {
+			t.Fatal(err)
+		}
+		db.Close()
+		done := make(chan error, 2)
+		for range 2 {
+			go func() {
+				s, err := Open(path)
+				if err == nil {
+					_, err = s.SnapshotsMade(context.Background(), "blog", BackupRunBackup)
+					s.Close()
+				}
+				done <- err
+			}()
+		}
+		for range 2 {
+			select {
+			case err := <-done:
+				if err != nil {
+					t.Fatalf("round %d: %v", round, err)
+				}
+			case <-time.After(20 * time.Second):
+				t.Fatalf("round %d: an opening never returned", round)
+			}
+		}
 	}
 }
