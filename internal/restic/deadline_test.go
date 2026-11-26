@@ -46,7 +46,11 @@ func TestRepositoryCallsAreStoppedAtTheirDeadline(t *testing.T) {
 			_, err := r.Backup(ctx, "site", nil, DataRoot)
 			return err
 		}},
-		{"forget", func(ctx context.Context, r Runner) error { _, err := r.Forget(ctx, "site", Keep{Daily: 7}); return err }},
+		{"forget", func(ctx context.Context, r Runner) error {
+			_, err := r.Forget(ctx, "site", Keep{Daily: 7}, nil)
+			return err
+		}},
+		{"prune", func(ctx context.Context, r Runner) error { return r.Prune(ctx, false) }},
 		{"restore", func(ctx context.Context, r Runner) error {
 			_, err := r.Restore(ctx, "latest", "site", nil)
 			return err
@@ -78,40 +82,25 @@ func TestRepositoryCallsAreStoppedAtTheirDeadline(t *testing.T) {
 	}
 }
 
-func TestPruneRunsOnItsOwnDeadlineAfterForget(t *testing.T) {
-	for _, removed := range []bool{true, false} {
-		t.Run(map[bool]string{true: "after removing", false: "with nothing removed"}[removed], func(t *testing.T) {
-			fake := dockertest.New(t)
-			var commands [][]string
-			fake.OnCreate = func(c dockertest.Container) {
-				commands = append(commands, append([]string(nil), c.Cmd...))
-				fake.Update(c.Name, func(c *dockertest.Container) {
-					switch c.Cmd[0] {
-					case "forget":
-						c.ExitAfter, c.Logs = 1, `[{"remove":[]}]`
-						if removed {
-							c.Logs = `[{"remove":[{"id":"old"}]}]`
-						}
-					default:
-						// The prune never finishes.
-						c.Logs = `{"message_type":"status"}`
-					}
-				})
-			}
+func TestPruneIsCappedUnlessFullAndHasItsOwnDeadline(t *testing.T) {
+	for _, full := range []bool{false, true} {
+		t.Run(map[bool]string{false: "after a backup", true: "the weekly full prune"}[full], func(t *testing.T) {
+			_, commands := hangingRestic(t)
 			r := runner(t)
 			r.Deadlines = Deadlines{Forget: time.Hour, Prune: 50 * time.Millisecond}
-			n, err := r.Forget(safetyContext(t), "site", Keep{Daily: 7})
+			err := r.Prune(safetyContext(t), full)
 			var deadline *DeadlineError
 			if !errors.As(err, &deadline) || deadline.Action != "prune" {
 				t.Fatalf("a prune out of time must say so: %v", err)
 			}
-			if want := map[bool]int{true: 1, false: 0}[removed]; n != want {
-				t.Fatalf("forgotten snapshots are gone even when the prune is not: got %d, want %d", n, want)
+			want := []string{"prune", "--max-repack-size", PruneMaxRepack}
+			if full {
+				// No cap, and nothing that forces a lock: a full prune stopped
+				// here leaves a stale lock for the next backup's unlock.
+				want = []string{"prune"}
 			}
-			// A prune an earlier run lost still has space to free, so it runs
-			// even when nothing was forgotten, and rewrites a bounded amount.
-			if len(commands) != 2 || slices.Contains(commands[0], "--prune") || !slices.Equal(commands[1], []string{"prune", "--max-repack-size", PruneMaxRepack}) {
-				t.Fatalf("unexpected restic runs: %v", commands)
+			if len(*commands) != 1 || !slices.Equal((*commands)[0], want) {
+				t.Fatalf("unexpected restic runs: %v", *commands)
 			}
 		})
 	}
@@ -126,7 +115,7 @@ func TestTheCallersCancellationIsNotReportedAsADeadline(t *testing.T) {
 	fake.OnCreate = func(dockertest.Container) { cancel() }
 	r := runner(t)
 	r.Deadlines.Forget = time.Hour
-	_, err := r.Forget(ctx, "site", Keep{Daily: 7})
+	_, err := r.Forget(ctx, "site", Keep{Daily: 7}, nil)
 	var deadline *DeadlineError
 	if !errors.Is(err, context.Canceled) || errors.As(err, &deadline) {
 		t.Fatalf("cancellation must stay cancellation: %v", err)

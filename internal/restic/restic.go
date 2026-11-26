@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -32,7 +33,9 @@ const DataRoot = "/data"
 // Tag marks snapshots helios made.
 const Tag = "bedrock"
 
-// ReleaseCheckpointTag keeps explicit rollback points beyond ordinary retention.
+// ReleaseCheckpointTag marks a release checkpoint. Forget keeps one beyond
+// ordinary retention for as long as its caller says a rollback may still
+// restore it.
 const ReleaseCheckpointTag = "bedrock-release-checkpoint"
 
 // Repo is one repository and how to open it.
@@ -58,6 +61,9 @@ type Runner struct {
 	// Deadlines bound the calls a backup makes; a zero field takes its
 	// default.
 	Deadlines Deadlines
+	// localMounts are added to every run. A bucket needs none; the test
+	// against a real repository in a directory mounts it here.
+	localMounts []string
 }
 
 // Default deadlines for the repository calls a backup makes while it holds
@@ -77,8 +83,9 @@ const (
 	// which reads the snapshot list and deletes a few files.
 	ForgetTimeout = 15 * time.Minute
 	// PruneTimeout bounds the prune that frees what forgotten snapshots
-	// used. PruneMaxRepack keeps one prune's rewriting small enough to
-	// finish inside it, so successive prunes make progress.
+	// used. PruneMaxRepack keeps an ordinary prune's rewriting small enough
+	// to finish inside it, so successive prunes make progress. The weekly
+	// full prune has the same deadline and no cap.
 	PruneTimeout = time.Hour
 	// RestoreTimeout bounds a restore a backup makes, such as a machine
 	// backup copying an app's pinned snapshot into itself. A restore an
@@ -86,9 +93,9 @@ const (
 	RestoreTimeout = 2 * time.Hour
 )
 
-// PruneMaxRepack is how much data one prune may rewrite. restic leaves
-// the rest for the next prune; packs that are wholly unused are deleted
-// whatever their size.
+// PruneMaxRepack is how much data an ordinary prune may rewrite. restic
+// leaves the rest for the next prune; packs that are wholly unused are
+// deleted whatever their size.
 const PruneMaxRepack = "2G"
 
 // Deadlines bound individual repository calls. A zero field takes its
@@ -207,7 +214,7 @@ func (r Runner) run(ctx context.Context, mounts []string, args ...string) ([]str
 		Cmd:         args,
 		Env:         []string{"RESTIC_REPOSITORY=" + r.Repo.Repository, "RESTIC_CACHE_DIR=/cache"},
 		Labels:      map[string]string{docker.LabelApp: r.Owner, docker.LabelWorkload: "backup"},
-		Mounts:      append(append([]string{}, mounts...), CacheVolume+":/cache", secrets+":"+secretsInside+":ro"),
+		Mounts:      append(slices.Concat(mounts, r.localMounts), CacheVolume+":/cache", secrets+":"+secretsInside+":ro"),
 		HostNetwork: true,
 	}
 	e := r.Engine
@@ -511,16 +518,47 @@ func (r Runner) Unlock(ctx context.Context) error {
 	return err
 }
 
-// Forget applies the retention policy, then prunes. It returns how many
-// snapshots were removed, also when the prune then fails.
+// Forgotten is what one application of the retention policy removed.
+type Forgotten struct {
+	// Snapshots is every snapshot forgotten, release checkpoints included.
+	Snapshots int
+	// Checkpoints is how many of them were release checkpoints that had
+	// lost their protection.
+	Checkpoints int
+	// CheckpointsKept is how many release checkpoints the policy would
+	// have dropped and their protection kept.
+	CheckpointsKept int
+}
+
+// IsCheckpoint reports whether a snapshot is a release checkpoint.
+func (s Snapshot) IsCheckpoint() bool { return slices.Contains(s.Tags, ReleaseCheckpointTag) }
+
+var snapshotID = regexp.MustCompile(`^[0-9a-f]{64}$`)
+
+// forgetBatch is how many snapshots one forget names, which keeps the
+// command line far below any limit.
+const forgetBatch = 100
+
+// Forget applies the retention policy to a host's snapshots and returns
+// what it removed. It does not prune; Prune frees the space.
 //
-// The prune is a call of its own and runs even when nothing was forgotten
-// this time: forgotten snapshots are gone as soon as forget returns, so a
-// prune an earlier backup lost to its deadline would otherwise wait until
-// the policy next removes one. Each prune rewrites at most PruneMaxRepack,
-// so a repository with a lot to reclaim catches up over several backups.
-func (r Runner) Forget(ctx context.Context, host string, keep Keep) (int, error) {
-	args := []string{"forget", "--json", "--host", host, "--tag", Tag, "--keep-tag", ReleaseCheckpointTag}
+// A release checkpoint is kept whatever the policy says, unless
+// checkpointExpired says it has lost its protection; nil protects them all.
+// An expired checkpoint is an ordinary snapshot: the policy keeps it while
+// it is the newest of its day, week or month, and drops it otherwise.
+//
+// restic's own --keep-tag can only keep every checkpoint for ever, so the
+// policy is applied in two calls: a dry run that says what the policy would
+// drop, then a forget of exactly the snapshots that may go, by full id.
+// Nothing is removed unless the dry run was read completely.
+func (r Runner) Forget(ctx context.Context, host string, keep Keep, checkpointExpired func(Snapshot) bool) (Forgotten, error) {
+	var done Forgotten
+	if keep.Daily <= 0 && keep.Weekly <= 0 && keep.Monthly <= 0 {
+		// A policy that keeps nothing is no policy, not "remove everything".
+		return done, nil
+	}
+	limit := orDefault(r.Deadlines.Forget, ForgetTimeout)
+	args := []string{"forget", "--dry-run", "--json", "--host", host, "--tag", Tag}
 	if keep.Daily > 0 {
 		args = append(args, "--keep-daily", fmt.Sprint(keep.Daily))
 	}
@@ -530,26 +568,124 @@ func (r Runner) Forget(ctx context.Context, host string, keep Keep) (int, error)
 	if keep.Monthly > 0 {
 		args = append(args, "--keep-monthly", fmt.Sprint(keep.Monthly))
 	}
-	lines, err := r.bounded(ctx, orDefault(r.Deadlines.Forget, ForgetTimeout), nil, args...)
+	lines, err := r.bounded(ctx, limit, nil, args...)
 	if err != nil {
-		return 0, err
+		return done, err
 	}
-	removed := 0
+	var ids []string
+	checkpoint := map[string]bool{}
 	for _, l := range lines {
 		if !strings.HasPrefix(l, "[") {
 			continue
 		}
 		var groups []struct {
-			Remove []json.RawMessage `json:"remove"`
+			Remove []Snapshot `json:"remove"`
 		}
-		if json.Unmarshal([]byte(l), &groups) == nil {
-			for _, g := range groups {
-				removed += len(g.Remove)
+		if err := json.Unmarshal([]byte(l), &groups); err != nil {
+			return done, fmt.Errorf("restic forget: cannot read what the policy would remove: %w", err)
+		}
+		for _, g := range groups {
+			for _, snap := range g.Remove {
+				if !snapshotID.MatchString(snap.ID) {
+					return done, fmt.Errorf("restic forget: the policy names a snapshot without a full id (%q)", snap.ID)
+				}
+				if snap.IsCheckpoint() {
+					if checkpointExpired == nil || !checkpointExpired(snap) {
+						done.CheckpointsKept++
+						continue
+					}
+					checkpoint[snap.ID] = true
+				}
+				ids = append(ids, snap.ID)
 			}
 		}
 	}
-	_, err = r.bounded(ctx, orDefault(r.Deadlines.Prune, PruneTimeout), nil, "prune", "--max-repack-size", PruneMaxRepack)
-	return removed, err
+	for len(ids) > 0 {
+		n := min(len(ids), forgetBatch)
+		// Named by id, restic forgets exactly these and ignores filters.
+		if _, err := r.bounded(ctx, limit, nil, append([]string{"forget", "--json"}, ids[:n]...)...); err != nil {
+			return done, err
+		}
+		done.Snapshots += n
+		for _, id := range ids[:n] {
+			if checkpoint[id] {
+				done.Checkpoints++
+			}
+		}
+		ids = ids[n:]
+	}
+	return done, nil
+}
+
+// Prune frees what forgotten snapshots used. It runs even when nothing was
+// forgotten this time: forgotten snapshots are gone as soon as forget
+// returns, so a prune an earlier backup lost to its deadline would
+// otherwise wait until the policy next removes one.
+//
+// An ordinary prune rewrites at most PruneMaxRepack, so it finishes inside
+// its deadline and a repository with a lot to reclaim catches up over
+// several backups. A full prune has no such cap and rewrites every pack
+// worth rewriting; it has the same deadline, and one stopped there leaves
+// an exclusive lock that the next backup's Unlock clears.
+func (r Runner) Prune(ctx context.Context, full bool) error {
+	args := []string{"prune"}
+	if !full {
+		args = append(args, "--max-repack-size", PruneMaxRepack)
+	}
+	_, err := r.bounded(ctx, orDefault(r.Deadlines.Prune, PruneTimeout), nil, args...)
+	return err
+}
+
+// AllSnapshots lists every snapshot in the repository, whoever made it,
+// newest first. It takes no lock, so it reads a repository whose last prune
+// was stopped at its deadline, and never holds up a backup.
+func (r Runner) AllSnapshots(ctx context.Context) ([]Snapshot, error) {
+	lines, err := r.bounded(ctx, ListTimeout, nil, "snapshots", "--json", "--no-lock")
+	if err != nil {
+		return nil, err
+	}
+	var out []Snapshot
+	found := false
+	for _, l := range lines {
+		if strings.HasPrefix(l, "[") {
+			if err := json.Unmarshal([]byte(l), &out); err != nil {
+				return nil, fmt.Errorf("restic snapshots: %w", err)
+			}
+			found = true
+		}
+	}
+	if !found {
+		return nil, errors.New("restic snapshots: no list in the output")
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Time.After(out[j].Time) })
+	return out, nil
+}
+
+// UsedTimeout bounds counting what a repository's snapshots reference,
+// which reads the index and every snapshot's tree but no file contents.
+const UsedTimeout = 10 * time.Minute
+
+// UsedBytes is how much of the repository its snapshots still reference:
+// restic's raw-data statistic, the stored size of every blob a snapshot
+// uses, counted once. What the bucket holds beyond it is data no snapshot
+// uses, waiting for a prune, plus the repository's small indexes.
+func (r Runner) UsedBytes(ctx context.Context) (int64, error) {
+	lines, err := r.bounded(ctx, UsedTimeout, nil, "stats", "--mode", "raw-data", "--json", "--no-lock")
+	if err != nil {
+		return 0, err
+	}
+	for i := len(lines) - 1; i >= 0; i-- {
+		var s struct {
+			TotalSize *int64 `json:"total_size"`
+		}
+		if json.Unmarshal([]byte(lines[i]), &s) == nil && s.TotalSize != nil {
+			if *s.TotalSize < 0 {
+				return 0, fmt.Errorf("restic stats: a used size of %d bytes", *s.TotalSize)
+			}
+			return *s.TotalSize, nil
+		}
+	}
+	return 0, errors.New("restic stats: no used size in the output")
 }
 
 // Restore puts a snapshot's files back under /data, into whatever is
@@ -591,7 +727,7 @@ func (r Runner) Restore(ctx context.Context, snapshot, host string, mounts []str
 const StatsTimeout = 30 * time.Minute
 
 // Size is what restoring a snapshot writes: its files' bytes, and how
-// many files hold them.
+// many entries hold them. restic counts directories as entries too.
 type Size struct {
 	Bytes, Files int64
 }

@@ -2,9 +2,12 @@ package restic
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -84,21 +87,88 @@ func TestResticRunsAgainstARealRepository(t *testing.T) {
 	if err != nil || !contains(snaps, summary.SnapshotID) {
 		t.Fatalf("snapshots: %v %v", err, snaps)
 	}
-	// Forget and its prune run through run directly for the same reason,
-	// with the arguments Forget gives them.
-	if _, err := r.run(ctx, withRepo(), "forget", "--json", "--host", "box", "--tag", Tag, "--keep-tag", ReleaseCheckpointTag, "--keep-daily", "7"); err != nil {
+	// Retention against the real thing: the backup above and six more a
+	// day apart, three of them release checkpoints, under a policy that
+	// keeps three days.
+	local := r
+	local.localMounts = repoMount
+	ids := map[string]string{}
+	for day, name := range []string{"old", "live-checkpoint", "expired-checkpoint", "plain", "kept-checkpoint", "yesterday"} {
+		args := []string{"backup", "--json", "--host", "box", "--tag", Tag, "--time", fmt.Sprintf("2026-10-%02d 03:30:00", day+1)}
+		if strings.HasSuffix(name, "checkpoint") {
+			args = append(args, "--tag", ReleaseCheckpointTag)
+		}
+		lines, err := r.run(ctx, withRepo(VolumeMount(volume, "files", true)), append(args, DataRoot)...)
+		if err != nil {
+			t.Fatalf("backup %s: %v", name, err)
+		}
+		for _, l := range lines {
+			var s struct {
+				Type string `json:"message_type"`
+				ID   string `json:"snapshot_id"`
+			}
+			if json.Unmarshal([]byte(l), &s) == nil && s.Type == "summary" {
+				ids[name] = s.ID
+			}
+		}
+		if ids[name] == "" {
+			t.Fatalf("backup %s reported no snapshot", name)
+		}
+	}
+	before, err := local.AllSnapshots(ctx)
+	if err != nil || len(before) != 7 {
+		t.Fatalf("snapshots before retention: %d %v", len(before), err)
+	}
+	forgotten, err := local.Forget(ctx, "box", Keep{Daily: 3}, func(s Snapshot) bool {
+		return s.ID == ids["expired-checkpoint"] || s.ID == ids["kept-checkpoint"]
+	})
+	if err != nil {
 		t.Fatalf("forget: %v", err)
 	}
-	if _, err := r.run(ctx, withRepo(), "prune", "--max-repack-size", PruneMaxRepack); err != nil {
+	// The three newest days are the first backup, taken now, "yesterday"
+	// and "kept-checkpoint": expired, but the policy keeps it as an ordinary
+	// snapshot. Of the four the policy drops, the live checkpoint stays.
+	if forgotten != (Forgotten{Snapshots: 3, Checkpoints: 1, CheckpointsKept: 1}) {
+		t.Fatalf("forgotten: %+v", forgotten)
+	}
+	after, err := local.AllSnapshots(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var left []string
+	for _, s := range after {
+		left = append(left, s.ID)
+	}
+	slices.Sort(left)
+	want := []string{summary.SnapshotID, ids["yesterday"], ids["kept-checkpoint"], ids["live-checkpoint"]}
+	slices.Sort(want)
+	if !slices.Equal(left, want) {
+		t.Fatalf("snapshots after retention: %v, want %v", left, want)
+	}
+	// A second application finds only the protected checkpoint to drop.
+	if again, err := local.Forget(ctx, "box", Keep{Daily: 3}, nil); err != nil || again != (Forgotten{CheckpointsKept: 1}) {
+		t.Fatalf("second forget: %+v %v", again, err)
+	}
+	if err := local.Prune(ctx, false); err != nil {
 		t.Fatalf("prune: %v", err)
 	}
-	// RestoreSize runs without mounts too; this is its command, and the
-	// count is the one file and its five bytes.
+	if err := local.Prune(ctx, true); err != nil {
+		t.Fatalf("full prune: %v", err)
+	}
+	if used, err := local.UsedBytes(ctx); err != nil || used <= 0 {
+		t.Fatalf("used bytes %d, %v", used, err)
+	}
+	if err := local.Unlock(ctx); err != nil {
+		t.Fatalf("unlock: %v", err)
+	}
+	// RestoreSize runs without mounts too; this is its command. The bytes
+	// are the one file's five; restic's count is every entry a restore
+	// writes, so the file and the three directories above it.
 	stats, err := r.run(ctx, withRepo(), "stats", summary.SnapshotID, "--mode", "restore-size", "--json")
 	if err != nil {
 		t.Fatalf("stats: %v", err)
 	}
-	if size, err := restoreSize(stats); err != nil || size != (Size{Bytes: int64(len("kept\n")), Files: 1}) {
+	if size, err := restoreSize(stats); err != nil || size != (Size{Bytes: int64(len("kept\n")), Files: 4}) {
 		t.Fatalf("restore size %+v, %v from %v", size, err, stats)
 	}
 	if _, err := r.Restore(ctx, summary.SnapshotID, "box", withRepo(DirMount(restored, false))); err != nil {

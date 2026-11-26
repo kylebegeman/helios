@@ -53,7 +53,7 @@ func (r *rollout) releaseCheckpointStep() kernel.Step {
 		if err != nil {
 			return fmt.Errorf("data-changing release needs a rollback checkpoint: %w", err)
 		}
-		x := &backingUp{b: Backup{Store: r.store, Secrets: r.d.Secrets, StateDir: r.stateDir}, owner: m.App, target: m.App, bucket: storage.Bucket(m.App), staging: filepath.Join(r.stateDir, "release-checkpoints", m.App, r.revision), run: &backupRun{store: r.store, app: m.App, kind: "release-checkpoint"}}
+		x := &backingUp{b: Backup{Store: r.store, Secrets: r.d.Secrets, StateDir: r.stateDir}, owner: m.App, target: m.App, bucket: storage.Bucket(m.App), staging: filepath.Join(r.stateDir, "release-checkpoints", m.App, r.revision), run: &backupRun{store: r.store, app: m.App, kind: releaseCheckpointRun}}
 		defer os.RemoveAll(x.staging)
 		if err := x.appPrepareStep(previous, &m).Apply(ctx, out); err != nil {
 			return err
@@ -98,6 +98,84 @@ func (r *rollout) releaseCheckpointStep() kernel.Step {
 		return nil
 	}}
 }
+
+// Release checkpoint expiry.
+//
+// A release checkpoint is the previous revision's data, captured just before
+// a data-changing release. One thing reads it: helios rollback
+// --restore-data. Rollback.Plan accepts a checkpoint only when a release
+// boundary of the app records exactly that snapshot together with the
+// revision to return to, and rollbackCheckpointStep restores it only while
+// that boundary is not "restored". So a checkpoint is protected from
+// retention for as long as any release boundary of its app records it with
+// a status other than "restored": prepared, started, completed, failed and
+// restoring all keep it, and so does a status this code does not know.
+//
+// It loses its protection in exactly two cases.
+//
+//  1. Every boundary that records it is "restored". Data was put back to
+//     that checkpoint or an earlier one, and CompleteReleaseRestore marked
+//     every later transition restored. A rollback naming it again is either
+//     refused, because a later release changed data again, or accepted
+//     without reading it: rollbackCheckpointStep returns at once for a
+//     restored boundary. gc stops pinning its revision at the same moment.
+//  2. No boundary records it, and this machine's backup runs show that this
+//     machine took it. RemoveApp deleted the boundaries with the app, and a
+//     rollback finds a checkpoint only through a boundary.
+//
+// Everything else stays protected. In particular a checkpoint of a release
+// that completed long ago stays, because Rollback.Plan still accepts it;
+// one a later unsafe release makes Rollback.Plan refuse today stays, because
+// that refusal lifts when the later release is restored; and one this
+// machine has no record of at all stays, because another machine that backs
+// up to the same bucket may hold the boundary. When the boundaries or the
+// backup runs cannot be read, every checkpoint stays.
+//
+// Losing protection deletes nothing by itself. The checkpoint becomes an
+// ordinary snapshot: the app's keep policy holds it while it is the newest
+// of its day, week or month, and drops it when it is not.
+func checkpointExpired(snapshot string, boundaries []state.ReleaseBoundary, taken map[string]bool) bool {
+	recorded := false
+	for _, b := range boundaries {
+		if b.Snapshot != snapshot {
+			continue
+		}
+		if b.Status != state.ReleaseRestored {
+			return false
+		}
+		recorded = true
+	}
+	return recorded || taken[snapshot]
+}
+
+// releaseCheckpointRuns bounds how far back the backup runs are read for
+// checkpoints this machine took. A run older than that is not found, and
+// its checkpoint then simply keeps its protection.
+const releaseCheckpointRuns = 5000
+
+// releaseCheckpointRule reads an app's release boundaries and checkpoint
+// runs once and returns the expiry rule over them. On any error it returns
+// no rule, which protects every checkpoint.
+func releaseCheckpointRule(ctx context.Context, store *state.Store, app string) (func(restic.Snapshot) bool, error) {
+	boundaries, err := store.ReleaseBoundaries(ctx, app)
+	if err != nil {
+		return nil, fmt.Errorf("release checkpoints stay protected, their boundaries cannot be read: %w", err)
+	}
+	runs, err := store.BackupRuns(ctx, app, releaseCheckpointRun, releaseCheckpointRuns)
+	if err != nil {
+		return nil, fmt.Errorf("release checkpoints stay protected, their backup runs cannot be read: %w", err)
+	}
+	taken := map[string]bool{}
+	for _, run := range runs {
+		if run.OK && fullSnapshotID.MatchString(run.Snapshot) {
+			taken[run.Snapshot] = true
+		}
+	}
+	return func(s restic.Snapshot) bool { return checkpointExpired(s.ID, boundaries, taken) }, nil
+}
+
+// releaseCheckpointRun is the backup run kind of a release checkpoint.
+const releaseCheckpointRun = "release-checkpoint"
 
 func (r *rollout) prepareReleaseBoundary(ctx context.Context) (*state.ReleaseBoundary, error) {
 	b, err := r.store.ReleaseBoundary(ctx, r.m.App, r.revision)
