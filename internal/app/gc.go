@@ -345,8 +345,15 @@ func gcResourcesToKeep(ctx context.Context, store *state.Store) (*gcRetention, e
 	if err != nil {
 		return nil, err
 	}
+	now := time.Now()
 	for _, b := range boundaries {
 		if !fullSnapshotID.MatchString(b.Snapshot) || b.PreviousRevision == "" {
+			continue
+		}
+		// A checkpoint past the rollback horizon is no longer one a
+		// rollback restores, so its code is no longer held for it. This is
+		// the test retention applies to the snapshot (checkpointExpired).
+		if checkpointAged(b, now, checkpointRollbackHorizon+checkpointRetentionSlack) {
 			continue
 		}
 		switch b.Status {

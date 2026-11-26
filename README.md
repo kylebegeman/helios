@@ -909,8 +909,9 @@ data raises a warning. A new repository's first week raises nothing. See
 rules and what the storage key must be allowed to do.
 
 A release checkpoint is exempt from retention only while a rollback could
-still restore it. Once it was restored, or its app was removed, ordinary
-retention decides. See
+still restore it. Once it was restored, its app was removed, or its release
+finished its jobs and began more than 30 days ago, ordinary retention
+decides, and a rollback no longer accepts a checkpoint that old. See
 [release safety](docs/features/release-safety.md#when-a-checkpoint-expires).
 
 `helios drill` uses an internal network with no outbound access, starts all

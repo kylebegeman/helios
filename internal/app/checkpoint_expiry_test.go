@@ -19,6 +19,7 @@ import (
 var (
 	checkpointA = strings.Repeat("a", 64)
 	checkpointB = strings.Repeat("b", 64)
+	checkpointC = strings.Repeat("c", 64)
 )
 
 // checkpointScenario is an app with one earlier revision and one release
@@ -32,7 +33,14 @@ type checkpointScenario struct {
 
 func newCheckpointScenario(t *testing.T) *checkpointScenario {
 	t.Helper()
-	s := &checkpointScenario{store: releaseTestStore(t), m: releaseTestManifest(), at: time.Now().UTC().Truncate(time.Millisecond).Add(-time.Hour)}
+	return newCheckpointScenarioAged(t, time.Hour)
+}
+
+// newCheckpointScenarioAged is the scenario with everything in it that long
+// ago.
+func newCheckpointScenarioAged(t *testing.T, age time.Duration) *checkpointScenario {
+	t.Helper()
+	s := &checkpointScenario{store: releaseTestStore(t), m: releaseTestManifest(), at: time.Now().UTC().Truncate(time.Millisecond).Add(-age)}
 	releaseTestRevision(t, s.store, s.m, "old-rev", state.RevisionPrevious, s.at)
 	releaseTestRevision(t, s.store, s.m, "new-rev", state.RevisionActive, s.at.Add(time.Minute))
 	s.rollback = Rollback{Deploy: Deploy{Store: s.store, Secrets: newSecrets(t), StateDir: t.TempDir()}}
@@ -120,15 +128,6 @@ func TestACheckpointARollbackStillAcceptsNeverExpires(t *testing.T) {
 		}
 		if s.expired(t, checkpointA) {
 			t.Fatal("the checkpoint of a restore in progress lost its protection")
-		}
-	})
-
-	t.Run("a release that completed long ago", func(t *testing.T) {
-		s := newCheckpointScenario(t)
-		s.at = s.at.Add(-400 * 24 * time.Hour)
-		s.boundary(t, "new-rev", "old-rev", checkpointA, 2*time.Minute, state.ReleaseCompleted)
-		if !s.restores(t, checkpointA) || s.expired(t, checkpointA) {
-			t.Fatal("age alone took a checkpoint a rollback still accepts")
 		}
 	})
 
@@ -264,10 +263,174 @@ func TestACheckpointThisMachineHasNoRecordOfStaysProtected(t *testing.T) {
 	}
 }
 
+// A completed release's checkpoint is kept for a rollback for thirty days.
+// The rollback refuses it from then on, and retention lets go of it a day
+// later, so there is never a checkpoint a rollback would read that
+// retention is free to drop.
+func TestACompletedReleasesCheckpointAgesOutAndRollbackRefusesItFirst(t *testing.T) {
+	day := 24 * time.Hour
+	for _, c := range []struct {
+		name              string
+		age               time.Duration
+		restores, expired bool
+	}{
+		{"inside the horizon", 29 * day, true, false},
+		{"past the horizon, inside the slack", 30*day + 2*time.Hour, false, false},
+		{"past both", 31*day + 2*time.Hour, false, true},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			s := newCheckpointScenarioAged(t, c.age)
+			s.boundary(t, "new-rev", "old-rev", checkpointA, 2*time.Minute, state.ReleaseCompleted)
+			if got := s.restores(t, checkpointA); got != c.restores {
+				t.Fatalf("a rollback restores the checkpoint: %v, want %v", got, c.restores)
+			}
+			if got := s.expired(t, checkpointA); got != c.expired {
+				t.Fatalf("the checkpoint lost its protection: %v, want %v", got, c.expired)
+			}
+			// The code a restore returns to is held exactly as long as
+			// the snapshot is. As the previous revision it is kept in any
+			// case, so it is retired first.
+			releaseTestRevision(t, s.store, s.m, "old-rev", state.RevisionRetired, s.at)
+			keep, err := gcResourcesToKeep(context.Background(), s.store)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := !keep.revisions[s.m.App+"/old-rev"]; got != c.expired {
+				t.Fatalf("gc let go of the revision the checkpoint returns to: %v, want %v", got, c.expired)
+			}
+		})
+	}
+
+	// The refusal says why, and what is left to do.
+	s := newCheckpointScenarioAged(t, 45*day)
+	s.boundary(t, "new-rev", "old-rev", checkpointA, 2*time.Minute, state.ReleaseCompleted)
+	dockerUnreachable(t)
+	raw, _ := json.Marshal(RollbackInput{App: s.m.App, RestoreData: checkpointA})
+	_, err := s.rollback.Plan(context.Background(), raw)
+	if err == nil {
+		t.Fatal("a rollback planned to restore a checkpoint past the horizon")
+	}
+	for _, want := range []string{checkpointA, "30 days", "no longer kept for a rollback", "separately verified backup"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("refusal does not say %q: %v", want, err)
+		}
+	}
+}
+
+// Only a release that completed ages. One that failed, or is still under
+// way or being restored, keeps its checkpoint however old it is, and a
+// rollback still accepts it.
+func TestOnlyACompletedReleasesCheckpointAges(t *testing.T) {
+	for _, status := range []string{state.ReleasePrepared, state.ReleaseStarted, state.ReleaseFailed, state.ReleaseRestoring} {
+		t.Run(status, func(t *testing.T) {
+			s := newCheckpointScenarioAged(t, 400*24*time.Hour)
+			s.boundary(t, "new-rev", "old-rev", checkpointA, 2*time.Minute, status)
+			if !s.restores(t, checkpointA) {
+				t.Fatal("a rollback no longer accepts an old checkpoint of a release that did not complete")
+			}
+			if s.expired(t, checkpointA) {
+				t.Fatal("an old checkpoint of a release that did not complete lost its protection")
+			}
+		})
+	}
+	// A boundary that does not say when it began is never aged.
+	undated := []state.ReleaseBoundary{{App: "site", Revision: "r", Snapshot: checkpointA, Status: state.ReleaseCompleted}}
+	if checkpointExpired(checkpointA, undated, nil, time.Now()) {
+		t.Fatal("a checkpoint of a release with no start time aged out")
+	}
+}
+
+// A checkpoint is past the horizon when the release it was taken for is.
+// A second, recent release that records the same snapshot keeps it.
+func TestACheckpointARecentReleaseAlsoRecordsStays(t *testing.T) {
+	now := time.Now()
+	old := state.ReleaseBoundary{App: "site", Revision: "one", Snapshot: checkpointA, Status: state.ReleaseCompleted, StartedAt: now.Add(-90 * 24 * time.Hour)}
+	recent := state.ReleaseBoundary{App: "site", Revision: "two", Snapshot: checkpointA, Status: state.ReleaseCompleted, StartedAt: now.Add(-time.Hour)}
+	if !checkpointExpired(checkpointA, []state.ReleaseBoundary{old}, nil, now) {
+		t.Fatal("the scenario is wrong: the old release alone does not age the checkpoint out")
+	}
+	if checkpointExpired(checkpointA, []state.ReleaseBoundary{old, recent}, nil, now) {
+		t.Fatal("a checkpoint a recent release records aged out with the old one")
+	}
+}
+
+// A code-only rollback across a data-changing release names the checkpoint
+// to restore. Once that checkpoint is past the horizon it says so, and does
+// not advise a restore the rollback would refuse.
+func TestAnUnsafeRollbackDoesNotAdviseACheckpointPastTheHorizon(t *testing.T) {
+	now := time.Now()
+	recent := state.ReleaseBoundary{App: "site", Revision: "two", Compatibility: manifest.DataRestoreRequired, Snapshot: checkpointB, Status: state.ReleaseCompleted, StartedAt: now.Add(-time.Hour)}
+	err := unsafeRollbackError("site", []state.ReleaseBoundary{recent})
+	if !strings.Contains(err.Error(), "--restore-data") || !strings.Contains(err.Error(), "checkpoint "+checkpointB) || strings.Contains(err.Error(), "horizon") {
+		t.Fatalf("a recent checkpoint is not advised as before: %v", err)
+	}
+	old := state.ReleaseBoundary{App: "site", Revision: "one", Compatibility: manifest.DataRestoreRequired, Snapshot: checkpointA, Status: state.ReleaseCompleted, StartedAt: now.Add(-60 * 24 * time.Hour)}
+	err = unsafeRollbackError("site", []state.ReleaseBoundary{recent, old})
+	for _, want := range []string{checkpointA, "older than 30 days", "past the rollback horizon", "separately verified backup"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("refusal does not say %q: %v", want, err)
+		}
+	}
+	if strings.Contains(err.Error(), "--restore-data") {
+		t.Fatalf("a restore the rollback would refuse is still advised: %v", err)
+	}
+	// A later release's checkpoint is still accepted. It does not return to
+	// the data that was asked for, and the refusal says where it does go.
+	recent.PreviousRevision = "one"
+	later := state.ReleaseBoundary{App: "site", Revision: "three", PreviousRevision: "two", Compatibility: manifest.DataRestoreRequired, Snapshot: checkpointC, Status: state.ReleaseCompleted, StartedAt: now.Add(-time.Minute)}
+	err = unsafeRollbackError("site", []state.ReleaseBoundary{later, recent, old})
+	for _, want := range []string{"past the rollback horizon", "helios rollback site --restore-data " + checkpointB, "returns to revision one", "to go back further, recover through a separately verified backup"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("refusal does not say %q: %v", want, err)
+		}
+	}
+	if strings.Contains(err.Error(), "--restore-data "+checkpointA) || strings.Contains(err.Error(), "--restore-data "+checkpointC) {
+		t.Fatalf("the refusal advises the wrong checkpoint: %v", err)
+	}
+}
+
+// A checkpoint whose release could not write its boundary is one nothing
+// can name. The run that took it failed, but restic had returned its id.
+func TestACheckpointWhoseBoundaryWasNeverWrittenExpires(t *testing.T) {
+	ctx := context.Background()
+	s := newCheckpointScenario(t)
+	id, err := s.store.StartBackupRun(ctx, s.m.App, releaseCheckpointRun, s.at)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s.expired(t, checkpointA) {
+		t.Fatal("a checkpoint nobody recorded making lost its protection")
+	}
+	if err := s.store.RecordSnapshotMade(ctx, id, checkpointA); err != nil {
+		t.Fatal(err)
+	}
+	// The release is between its capture and its boundary.
+	if s.expired(t, checkpointA) {
+		t.Fatal("a checkpoint lost its protection while its run was still going")
+	}
+	if err := s.store.FinishBackupRun(ctx, id, state.BackupRun{OK: false, Error: "the boundary could not be written", FinishedAt: s.at}); err != nil {
+		t.Fatal(err)
+	}
+	if !s.expired(t, checkpointA) {
+		t.Fatal("a checkpoint this machine took, which no boundary records, stayed protected")
+	}
+	// Another app's failed checkpoint says nothing about this app's.
+	other, err := s.store.StartBackupRun(ctx, "other", releaseCheckpointRun, s.at)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.store.RecordSnapshotMade(ctx, other, checkpointB); err != nil {
+		t.Fatal(err)
+	}
+	if s.expired(t, checkpointB) {
+		t.Fatal("another app's checkpoint run expired this app's checkpoint")
+	}
+}
+
 func TestCheckpointRuleProtectsEverythingItCannotJudge(t *testing.T) {
 	// A status this code does not know is not "restored".
 	odd := []state.ReleaseBoundary{{App: "site", Revision: "r", Snapshot: checkpointA, Status: "archived"}}
-	if checkpointExpired(checkpointA, odd, map[string]bool{checkpointA: true}) {
+	if checkpointExpired(checkpointA, odd, map[string]bool{checkpointA: true}, time.Now()) {
 		t.Fatal("an unknown boundary status expired a checkpoint")
 	}
 	// State that cannot be read yields no rule at all, and an error to report.

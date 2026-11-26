@@ -234,6 +234,9 @@ func (c MoveCapture) Plan(ctx context.Context, raw json.RawMessage) (*kernel.Pla
 					if err != nil {
 						return err
 					}
+					if x.summary != nil {
+						x.run.wrote(x.summary.SnapshotID)
+					}
 					if x.summary == nil || !snapshotIDPattern.MatchString(x.summary.SnapshotID) {
 						return errors.New("final capture returned no exact snapshot identity")
 					}

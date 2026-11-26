@@ -166,6 +166,26 @@ func (r *backupRun) abandon(ctx context.Context, operation, reason string) {
 	}
 }
 
+// wrote records the snapshot restic just returned for this run, at once and
+// apart from how the run ends. The snapshot is in the repository from that
+// moment, and a run that fails or is abandoned afterwards says nothing of
+// it: without this, such a snapshot is one nobody recorded making, and it
+// holds the bucket of a removed app for good (see storage_watch.go). A
+// failed run still has no snapshot for anything else that reads it.
+//
+// It is only ever given what restic returned to this run, and the store
+// takes nothing but a full id. It is written under its own deadline, since
+// the step that took the snapshot may already have been stopped, and a
+// write that fails only leaves the snapshot unrecorded, as it was before.
+func (r *backupRun) wrote(snapshot string) {
+	if r.id == 0 {
+		return
+	}
+	record, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	_ = r.store.RecordSnapshotMade(record, r.id, snapshot)
+}
+
 // fail records a failed run and returns the error.
 func (r *backupRun) fail(err error) error {
 	if r.id != 0 {
@@ -500,6 +520,10 @@ func (x *backingUp) captureSnapshot(ctx context.Context, r restic.Runner, mounts
 	summary, err := r.Backup(ctx, x.target, mounts, restic.DataRoot)
 	if err != nil {
 		return err
+	}
+	// Before anything else can fail: the snapshot is written.
+	if summary != nil {
+		x.run.wrote(summary.SnapshotID)
 	}
 	if x.receiptDir != "" {
 		if summary == nil || !fullSnapshotID.MatchString(summary.SnapshotID) || summary.BackupStart.IsZero() {

@@ -66,7 +66,7 @@ func (s *Store) ensureStorage(ctx context.Context) error {
 	if _, err := s.db.ExecContext(ctx, storageSchema); err != nil {
 		return err
 	}
-	return s.ensureImportedRuns(ctx)
+	return s.ensureRunColumns(ctx)
 }
 
 // legacyImportMargin is how far past a recovery's import a run may have
@@ -75,10 +75,12 @@ func (s *Store) ensureStorage(ctx context.Context) error {
 // of this one's.
 const legacyImportMargin = 24 * time.Hour
 
-// ensureImportedRuns keeps backup_runs.imported true: it marks a run that a
-// machine recovery copied from another machine's state. Such a run says
-// what that machine backed up, and its snapshot is not one this machine
-// made.
+// ensureRunColumns adds what the storage watch records on a backup run, to
+// a store from before either column.
+//
+// backup_runs.imported marks a run that a machine recovery copied from
+// another machine's state. Such a run says what that machine backed up, and
+// its snapshot is not one this machine made.
 //
 // An import by this binary marks its runs itself and says so on its
 // machine_recoveries row. An import that does not say so was made by a
@@ -87,13 +89,16 @@ const legacyImportMargin = 24 * time.Hour
 // import, or within a day after it, is then marked. That takes some of this
 // machine's own runs with it: a bucket is held that could have gone, never
 // the other way round.
-func (s *Store) ensureImportedRuns(ctx context.Context) error {
+//
+// backup_runs.snapshot_made is every snapshot restic said a run wrote; see
+// RecordSnapshotMade.
+func (s *Store) ensureRunColumns(ctx context.Context) error {
 	settled := func() (bool, error) {
 		var columns int
 		err := s.db.QueryRowContext(ctx, `SELECT
-			(SELECT COUNT(*) FROM pragma_table_info('backup_runs') WHERE name = 'imported') +
+			(SELECT COUNT(*) FROM pragma_table_info('backup_runs') WHERE name IN ('imported', 'snapshot_made')) +
 			(SELECT COUNT(*) FROM pragma_table_info('machine_recoveries') WHERE name = 'runs_marked')`).Scan(&columns)
-		if err != nil || columns != 2 {
+		if err != nil || columns != 3 {
 			return false, err
 		}
 		var unmarked int
@@ -111,7 +116,7 @@ func (s *Store) ensureImportedRuns(ctx context.Context) error {
 	// would never be answered.
 	var err error
 	for attempt := 0; attempt < 50; attempt++ {
-		if err = s.markImportedRuns(ctx); err == nil {
+		if err = s.addRunColumns(ctx); err == nil {
 			return nil
 		}
 		if ok, settledErr := settled(); settledErr == nil && ok {
@@ -126,7 +131,10 @@ func (s *Store) ensureImportedRuns(ctx context.Context) error {
 	return err
 }
 
-func (s *Store) markImportedRuns(ctx context.Context) error {
+// addRunColumns adds the columns that are missing and marks the runs of an
+// import that did not mark its own. On a store that has the columns and no
+// such import it changes nothing.
+func (s *Store) addRunColumns(ctx context.Context) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -136,6 +144,9 @@ func (s *Store) markImportedRuns(ctx context.Context) error {
 		return err
 	}
 	if err := ensureColumn(ctx, tx, "backup_runs", "imported", "INTEGER NOT NULL DEFAULT 0"); err != nil {
+		return err
+	}
+	if err := ensureColumn(ctx, tx, "backup_runs", "snapshot_made", "TEXT NOT NULL DEFAULT ''"); err != nil {
 		return err
 	}
 	if err := ensureColumn(ctx, tx, "machine_recoveries", "runs_marked", "INTEGER NOT NULL DEFAULT 0"); err != nil {

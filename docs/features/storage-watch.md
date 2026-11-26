@@ -126,6 +126,16 @@ checkpoint. The record of an app's backup runs is kept after the app is
 removed. A drill or a restore does not count, because it reads a snapshot
 that anyone may have made.
 
+A run records the snapshot it wrote the moment restic returns the snapshot's
+id, apart from how the run ends. So a backup that failed or was abandoned
+after its capture, and a release checkpoint whose release boundary could not
+be recorded, still count for the snapshot they left in the repository. A run
+that is stopped and taken up again may leave more than one, and each counts.
+Such a run stays a failed run with no snapshot everywhere else: `helios
+backups`, restores and drills read nothing from it. Retention reads it for
+one thing: a checkpoint that a failed run left and no release boundary
+records is no longer exempt, because nothing can name it.
+
 Nor does the history a machine recovery brings with it. `helios recover`
 copies the source machine's backup runs into this machine's state, and they
 stay that machine's record. While a repository still holds one of the
@@ -150,6 +160,17 @@ deleted, and a snapshot that turns up in between stops the deletion there. A
 backup that recorded its snapshot by a short id, as some releases did, owns
 the snapshot that id begins.
 
+On an S3 store the listing is of every file version. A store that keeps no
+versions is read through its plain listing of files instead, whether it
+refuses a listing of versions or answers one with the plain listing. That is
+decided by the first answer a store gives: one that has listed versions is
+never read through the plain listing, which would leave old versions out. An
+answer that is neither listing, or a plain listing that says there is more
+and does not carry on, is an error and never an empty bucket, so it counts as
+a listing that failed. A store whose listing is a moment behind its deletions
+and still shows a file that was just deleted is asked again a few times
+before the deletion stops there for the next sweep.
+
 The sweep makes the same check every night while a bucket waits, so one that
 will not pass says so on the first night and not on the thirtieth.
 
@@ -170,8 +191,10 @@ Neither the sweep nor `purge` deletes anything, and the sweep raises
 
 - the bucket holds a snapshot this machine has no record of making, it holds
   files but no snapshot at all, or this machine has no record of a backup of
-  the app. A backup here that failed after it wrote its snapshot leaves such
-  a snapshot too;
+  the app. A backup here leaves such a snapshot too when it was killed while
+  restic was writing, before restic returned the snapshot's id, or when it
+  failed after its capture under a release from before that id was recorded
+  apart from the run;
 - something was uploaded to the bucket more than an hour after the app was
   removed, so another machine or tool is using it;
 - the app is deployed on this machine again;
@@ -223,7 +246,8 @@ bucket: that repository needs a prune run by hand with more time.
 ## Release checkpoints
 
 A release checkpoint is exempt from retention only while a rollback could
-still restore it. See
+still restore it: until it is restored, its app is removed, or its release
+finished its jobs and began more than 30 days ago. See
 [release safety](release-safety.md#when-a-checkpoint-expires) for the rule.
 
 ## What the storage key must be allowed to do
@@ -234,7 +258,7 @@ them than backups do.
 | Store | Needed |
 |---|---|
 | Backblaze B2 | `listBuckets`, `listFiles`, `deleteFiles`, `deleteBuckets`, on a key not restricted to one bucket |
-| S3 | list all buckets, list object versions and multipart uploads, delete object versions, abort multipart uploads, delete bucket |
+| S3 | list all buckets, list object versions and multipart uploads, delete object versions, abort multipart uploads, delete bucket; on a store without versions, list and delete objects |
 
 A key that may list but not delete still gives the report and the growth
 alert. The sweep then holds each expired bucket and says so in

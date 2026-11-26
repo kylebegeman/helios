@@ -89,33 +89,114 @@ func (s *Store) SkipDrill(ctx context.Context, app string, occurrence time.Time,
 	return res.LastInsertId()
 }
 
-// SnapshotsMade returns the id of every snapshot that a successful run of
-// one of the given kinds recorded for an app on this machine. Pass the kinds
-// that write a snapshot: a drill or a restore records the snapshot it read,
-// which may be one another machine made. A run that a machine recovery
-// copied from another machine's state does not count either: it is that
-// machine's record. The runs of a removed app are kept, so this still
-// answers after the app is gone.
+// RecordSnapshotMade records, on a run that is still open or already
+// closed, the id restic returned for the snapshot the run wrote into its
+// repository. It is recorded the moment restic answers, apart from how the
+// run ends, because a run can still fail after that and its snapshot is in
+// the repository all the same.
+//
+// The id is kept apart from the run's snapshot on purpose. A failed run has
+// no snapshot to restore, verify, keep or report, and everything that reads
+// a run goes on finding none. Only SnapshotsMade and SnapshotsFailedRunsMade
+// read this: whose a snapshot is does not depend on whether its run went on
+// to succeed.
+//
+// A run can write more than one. One that was stopped after restic answered
+// is taken up again by its operation and captures afresh, and the first
+// snapshot is in the repository still. Each id is added to the ones the run
+// already has, with a space between; none is ever replaced.
+//
+// Only a full snapshot id is taken. It decides whether a bucket may be
+// deleted, and anything shorter could stand for a snapshot nobody named.
+func (s *Store) RecordSnapshotMade(ctx context.Context, id int64, snapshot string) error {
+	if !fullSnapshotID(snapshot) {
+		return errors.New("a snapshot a run made is recorded by its full id")
+	}
+	res, err := s.db.ExecContext(ctx, `UPDATE backup_runs SET snapshot_made = CASE
+		WHEN snapshot_made = '' THEN ?
+		WHEN instr(snapshot_made, ?) > 0 THEN snapshot_made
+		ELSE snapshot_made || ' ' || ? END WHERE id = ?`, snapshot, snapshot, snapshot, id)
+	if err != nil {
+		return err
+	}
+	if n, err := res.RowsAffected(); err != nil {
+		return err
+	} else if n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// fullSnapshotID reports whether id is a restic snapshot id in full: 64
+// lowercase hexadecimal characters.
+func fullSnapshotID(id string) bool {
+	if len(id) != 64 {
+		return false
+	}
+	for i := 0; i < len(id); i++ {
+		if c := id[i]; (c < '0' || c > '9') && (c < 'a' || c > 'f') {
+			return false
+		}
+	}
+	return true
+}
+
+// SnapshotsMade returns the id of every snapshot that a run of one of the
+// given kinds made for an app on this machine: the snapshot a successful run
+// recorded, and the snapshot restic returned to a run whatever became of it
+// (see RecordSnapshotMade). Pass the kinds that write a snapshot: a drill or
+// a restore records the snapshot it read, which may be one another machine
+// made. A run that a machine recovery copied from another machine's state
+// does not count either: it is that machine's record. The runs of a removed
+// app are kept, so this still answers after the app is gone.
 func (s *Store) SnapshotsMade(ctx context.Context, app string, kinds ...string) (map[string]bool, error) {
 	out := map[string]bool{}
 	if len(kinds) == 0 {
 		return out, nil
 	}
+	of := `FROM backup_runs WHERE app = ? AND imported = 0 AND kind IN (?` + strings.Repeat(", ?", len(kinds)-1) + `)`
 	args := []any{app}
 	for _, kind := range kinds {
 		args = append(args, kind)
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT DISTINCT snapshot FROM backup_runs WHERE app = ? AND ok = 1 AND imported = 0 AND snapshot != '' AND kind IN (?`+strings.Repeat(", ?", len(kinds)-1)+`)`, args...)
+	rows, err := s.db.QueryContext(ctx, `SELECT snapshot `+of+` AND ok = 1 AND snapshot != '' UNION SELECT snapshot_made `+of+` AND snapshot_made != ''`, append(args, args...)...)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 	for rows.Next() {
-		var id string
-		if err := rows.Scan(&id); err != nil {
+		var made string
+		if err := rows.Scan(&made); err != nil {
 			return nil, err
 		}
-		out[id] = true
+		// One id, or the several a run made (see RecordSnapshotMade).
+		for _, id := range strings.Fields(made) {
+			out[id] = true
+		}
+	}
+	return out, rows.Err()
+}
+
+// SnapshotsFailedRunsMade returns the id of every snapshot restic returned
+// to a run of the given kind that then ended in failure, for an app on this
+// machine. A run that has not ended is left out: what it wrote may yet be
+// recorded by whatever the run is for, such as a release boundary.
+func (s *Store) SnapshotsFailedRunsMade(ctx context.Context, app, kind string) (map[string]bool, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT snapshot_made FROM backup_runs WHERE app = ? AND imported = 0 AND kind = ? AND finished_at != 0 AND ok = 0 AND snapshot_made != ''`, app, kind)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]bool{}
+	for rows.Next() {
+		var made string
+		if err := rows.Scan(&made); err != nil {
+			return nil, err
+		}
+		// One id, or the several a run made (see RecordSnapshotMade).
+		for _, id := range strings.Fields(made) {
+			out[id] = true
+		}
 	}
 	return out, rows.Err()
 }
