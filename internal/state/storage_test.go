@@ -657,6 +657,28 @@ func TestASnapshotARunWroteBeforeItFailedIsStillOnRecordAsMadeHere(t *testing.T)
 		t.Fatalf("snapshots made here after the refusals: %q, want a b c d", got)
 	}
 
+	// A run that was stopped and taken up again captures twice, and both
+	// snapshots are in the repository. The second never replaces the first,
+	// and one told twice is kept once.
+	again := began("wiki", "release-checkpoint")
+	wrote(again, full("1"))
+	wrote(again, full("2"))
+	wrote(again, full("1"))
+	if got := made("wiki", "release-checkpoint"); got != "1 2" {
+		t.Fatalf("a run that captured twice made %q, want 1 2", got)
+	}
+	if left, err := store.SnapshotsFailedRunsMade(ctx, "wiki", "release-checkpoint"); err != nil || len(left) != 0 {
+		t.Fatalf("a run still going counts as failed: %v %v", left, err)
+	}
+	failed(again)
+	left, err := store.SnapshotsFailedRunsMade(ctx, "wiki", "release-checkpoint")
+	if err != nil || len(left) != 2 || !left[full("1")] || !left[full("2")] {
+		t.Fatalf("the snapshots a failed run made: %v %v", left, err)
+	}
+	if other, err := store.SnapshotsFailedRunsMade(ctx, "wiki", BackupRunBackup); err != nil || len(other) != 0 {
+		t.Fatalf("another kind's runs answered: %v %v", other, err)
+	}
+
 	// A run a machine recovery brought is that machine's, whatever it holds.
 	if _, err := store.db.ExecContext(ctx, `UPDATE backup_runs SET imported = 1 WHERE id IN (?, ?)`, backup, good); err != nil {
 		t.Fatal(err)

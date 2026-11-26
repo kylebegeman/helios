@@ -281,9 +281,34 @@ const (
 	s3PlainListing   = "ListBucketResult"
 )
 
-// s3EmptyPages is how many pages in a row a plain listing may hold nothing
-// and still say there is more.
+// s3UploadListing is the root element of a listing of unfinished uploads.
+const s3UploadListing = "ListMultipartUploadsResult"
+
+// s3EmptyPages is how many pages in a row a listing may hold nothing and
+// still say there is more.
 const s3EmptyPages = 16
+
+// markers holds the markers of a listing to the order of its names. A page
+// says where the next one carries on: after a name and, among the entries
+// of that name, after an id. The names come in order, so each marker must
+// lie after the one before it.
+type markers struct {
+	key  string
+	seen map[string]bool
+}
+
+// passed takes the marker a page named and reports whether the listing has
+// been there already.
+func (m *markers) passed(key, id string) bool {
+	switch {
+	case m.seen == nil || key > m.key:
+		m.key, m.seen = key, map[string]bool{}
+	case key < m.key || m.seen[id]:
+		return true
+	}
+	m.seen[id] = true
+	return false
+}
 
 // noListing is the error for an answer that is not the listing asked for.
 // Read as one it would hold nothing, and a full bucket would pass for an
@@ -324,18 +349,15 @@ func (c *s3) objects(ctx context.Context, bucket string, each func([]s3Object) e
 // versions. A store that has listed versions and then will not is not one
 // without versions, and its plain listing would leave versions out.
 //
-// A page says where the next one carries on: after a name and, among the
-// versions of that name, after a version. The names come in order, so each
-// marker must lie after the one before it. That, and the bound on pages that
-// hold nothing, is what ends a listing whose store hands out the same
-// marker for ever.
+// Each marker must lie after the one before it (see markers). That, and the
+// bound on pages that hold nothing, is what ends a listing whose store hands
+// out the same marker for ever.
 func (c *s3) versions(ctx context.Context, bucket string, each func([]s3Object) error) (bool, error) {
 	q := url.Values{"versions": {""}, "max-keys": {"1000"}}
-	// key is the name the listing last carried on after, and seen the
-	// versions of that name it has carried on after; empty counts the pages
-	// in a row that held nothing.
-	key, seen, empty := "", map[string]bool{}, 0
-	for first := true; ; first = false {
+	// empty counts the pages in a row that held nothing.
+	var after markers
+	empty := 0
+	for {
 		var out struct {
 			XMLName             xml.Name
 			IsTruncated         bool       `xml:"IsTruncated"`
@@ -346,14 +368,14 @@ func (c *s3) versions(ctx context.Context, bucket string, each func([]s3Object) 
 		}
 		err := c.do(ctx, http.MethodGet, "/"+bucket, q, &out)
 		switch {
-		case unsupported(err) && (c.versioned || !first):
+		case unsupported(err) && c.versioned:
 			return false, fmt.Errorf("list file versions: the store listed versions and now refuses to: %w", err)
 		case unsupported(err):
 			c.plain = true
 			return false, nil
 		case err != nil:
 			return false, fmt.Errorf("list file versions: %w", err)
-		case out.XMLName.Local == s3PlainListing && (c.versioned || !first):
+		case out.XMLName.Local == s3PlainListing && c.versioned:
 			return false, errors.New("list file versions: the store listed versions and now answers with a plain listing")
 		case out.XMLName.Local == s3PlainListing:
 			c.plain = true
@@ -381,13 +403,9 @@ func (c *s3) versions(ctx context.Context, bucket string, each func([]s3Object) 
 		} else if empty++; empty > s3EmptyPages {
 			return true, fmt.Errorf("list file versions: the listing does not end: %d pages in a row held nothing and said there was more", empty)
 		}
-		switch {
-		case out.NextKeyMarker > key:
-			key, seen = out.NextKeyMarker, map[string]bool{}
-		case out.NextKeyMarker < key || seen[out.NextVersionIDMarker]:
-			return true, fmt.Errorf("list file versions: the listing does not carry on after %s: the store named a marker it had already passed", key)
+		if after.passed(out.NextKeyMarker, out.NextVersionIDMarker) {
+			return true, fmt.Errorf("list file versions: the listing does not carry on after %s: the store named a marker it had already passed", after.key)
 		}
-		seen[out.NextVersionIDMarker] = true
 		q.Set("key-marker", out.NextKeyMarker)
 		q.Del("version-id-marker")
 		if out.NextVersionIDMarker != "" {
@@ -480,22 +498,35 @@ type s3Upload struct {
 
 // uploads lists a bucket's unfinished multipart uploads. Their parts are
 // billed and keep the bucket from being deleted.
+//
+// A store without such uploads says so as one without versions does: it
+// refuses the call, or it answers with the plain listing of the bucket,
+// which is told by the answer's root element. Either is taken only as the
+// first answer. The listing is held to the order of its markers and to the
+// bound on empty pages, as the listings of files are.
 func (c *s3) uploads(ctx context.Context, bucket string) ([]s3Upload, error) {
 	var all []s3Upload
 	q := url.Values{"uploads": {""}, "max-uploads": {"1000"}}
-	for {
+	var after markers
+	empty := 0
+	for first := true; ; first = false {
 		var out struct {
+			XMLName            xml.Name
 			IsTruncated        bool       `xml:"IsTruncated"`
 			NextKeyMarker      string     `xml:"NextKeyMarker"`
 			NextUploadIDMarker string     `xml:"NextUploadIdMarker"`
 			Uploads            []s3Upload `xml:"Upload"`
 		}
 		err := c.do(ctx, http.MethodGet, "/"+bucket, q, &out)
-		if unsupported(err) {
+		switch {
+		case unsupported(err) && first:
 			return nil, nil
-		}
-		if err != nil {
+		case err != nil:
 			return nil, fmt.Errorf("list unfinished uploads: %w", err)
+		case out.XMLName.Local == s3PlainListing && first:
+			return nil, nil
+		case out.XMLName.Local != s3UploadListing:
+			return nil, fmt.Errorf("list unfinished uploads: %w", noListing(out.XMLName.Local))
 		}
 		all = append(all, out.Uploads...)
 		if !out.IsTruncated {
@@ -503,6 +534,14 @@ func (c *s3) uploads(ctx context.Context, bucket string) ([]s3Upload, error) {
 		}
 		if out.NextKeyMarker == "" {
 			return nil, errors.New("list unfinished uploads: a truncated page without a marker")
+		}
+		if len(out.Uploads) > 0 {
+			empty = 0
+		} else if empty++; empty > s3EmptyPages {
+			return nil, fmt.Errorf("list unfinished uploads: the listing does not end: %d pages in a row held nothing and said there was more", empty)
+		}
+		if after.passed(out.NextKeyMarker, out.NextUploadIDMarker) {
+			return nil, fmt.Errorf("list unfinished uploads: the listing does not carry on after %s: the store named a marker it had already passed", after.key)
 		}
 		q.Set("key-marker", out.NextKeyMarker)
 		q.Set("upload-id-marker", out.NextUploadIDMarker)

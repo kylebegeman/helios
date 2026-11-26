@@ -1077,7 +1077,11 @@ func (r Rollback) Plan(ctx context.Context, raw json.RawMessage) (*kernel.Plan, 
 		}
 		// A completed release's checkpoint is kept for a rollback only so
 		// long (see checkpointExpired). Past that, retention is free to let
-		// go of it, and a rollback must not plan to read it.
+		// go of it, and a rollback must not plan to read it. The clock
+		// decides only whether there is a plan, never what is in one: a
+		// plan made inside the horizon and applied past it is refused
+		// here, before the fence and before any data is touched, and
+		// retention's extra day covers one applied in time.
 		if checkpointAged(*checkpoint, time.Now(), checkpointRollbackHorizon) {
 			return nil, fmt.Errorf("checkpoint %s was captured before release %s, which began more than %s ago and completed; it is no longer kept for a rollback, and restoring it would discard everything written since; recover through a separately verified backup", checkpoint.Snapshot, checkpoint.Revision, checkpointHorizonDays())
 		}

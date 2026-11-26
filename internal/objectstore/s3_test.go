@@ -93,10 +93,16 @@ type fakeS3 struct {
 	// one with pages that hold nothing and say there is more.
 	deaf   bool
 	hollow bool
+	// backwards has the markers of hollow pages of versions go down.
+	backwards bool
 	// answer, when set, is what any listing of a bucket's files gets.
 	answer *string
 	// lists counts the listings of a bucket's files.
 	lists int
+	// uploadPage, when set, answers the nth listing of unfinished uploads,
+	// counted from one and given the marker it was asked to carry on after.
+	uploadPage  func(n int, marker string) string
+	uploadLists int
 }
 
 func (f *fakeS3) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -138,6 +144,9 @@ func (f *fakeS3) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			fmt.Fprintf(w, `<Bucket><Name>%s</Name></Bucket>`, name)
 		}
 		fmt.Fprint(w, `</Buckets></ListAllMyBucketsResult>`)
+	case key == "" && r.Method == http.MethodGet && q.Has("uploads") && f.uploadPage != nil:
+		f.uploadLists++
+		fmt.Fprint(w, f.uploadPage(f.uploadLists, q.Get("key-marker")+"@"+q.Get("upload-id-marker")))
 	case key == "" && r.Method == http.MethodGet && q.Has("uploads"):
 		fmt.Fprint(w, `<ListMultipartUploadsResult><IsTruncated>false</IsTruncated>`)
 		for _, u := range f.uploads[bucket] {
@@ -258,7 +267,11 @@ func (f *fakeS3) listPage(w http.ResponseWriter, bucket, marker string, versions
 	}
 	if versions && f.hollow {
 		// Nothing, more to come, and a marker no page before had.
-		fmt.Fprintf(w, `<ListVersionsResult><IsTruncated>true</IsTruncated><NextKeyMarker>k%04d</NextKeyMarker></ListVersionsResult>`, f.lists)
+		n := f.lists
+		if f.backwards {
+			n = 9999 - n
+		}
+		fmt.Fprintf(w, `<ListVersionsResult><IsTruncated>true</IsTruncated><NextKeyMarker>k%04d</NextKeyMarker><NextVersionIdMarker>v%d</NextVersionIdMarker></ListVersionsResult>`, n, f.lists)
 		return
 	}
 	if versions {
@@ -784,6 +797,7 @@ func TestS3VersionListingThatDoesNotCarryOnEndsInAnError(t *testing.T) {
 		want string
 	}{
 		"the same marker again": {func(f *fakeS3) { f.deaf = true }, "the store named a marker it had already passed"},
+		"a marker further back": {func(f *fakeS3) { f.hollow, f.backwards = true, true }, "the store named a marker it had already passed"},
 		"pages of nothing":      {func(f *fakeS3) { f.hollow = true }, "pages in a row held nothing and said there was more"},
 	} {
 		// A listing that goes round is stopped by the clock, and fails here.
@@ -800,6 +814,91 @@ func TestS3VersionListingThatDoesNotCarryOnEndsInAnError(t *testing.T) {
 		}
 		if fake.lists > 4*s3EmptyPages {
 			t.Fatalf("%s: the bucket was listed %d times", name, fake.lists)
+		}
+		cancel()
+	}
+}
+
+// The listing of unfinished uploads is held to the same as the listings of
+// files: it is read to its end across pages, a store without it may answer
+// with the plain listing of the bucket, and one that does not carry on ends
+// in an error.
+func TestS3ListsUnfinishedUploadsToTheEndOrEndsInAnError(t *testing.T) {
+	upload := func(key, id string) string {
+		return fmt.Sprintf(`<Upload><Key>%s</Key><UploadId>%s</UploadId><Initiated>%s</Initiated></Upload>`, key, id, removedAt.Add(-time.Hour).Format(time.RFC3339))
+	}
+	more := func(key, id, uploads string) string {
+		return fmt.Sprintf(`<ListMultipartUploadsResult><IsTruncated>true</IsTruncated><NextKeyMarker>%s</NextKeyMarker><NextUploadIdMarker>%s</NextUploadIdMarker>%s</ListMultipartUploadsResult>`, key, id, uploads)
+	}
+	const last = `<ListMultipartUploadsResult><IsTruncated>false</IsTruncated></ListMultipartUploadsResult>`
+	const plain = `<ListBucketResult><IsTruncated>true</IsTruncated><Contents><Key>config</Key></Contents></ListBucketResult>`
+
+	// Two uploads of one name and one of another, a page each. All three
+	// are found and cancelled, and the bucket goes.
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	fake, store := s3Fixture(t)
+	fake.uploads["helios-site"] = []s3Upload{{Key: "data/cc/half", UploadID: "u1"}, {Key: "data/cc/half", UploadID: "u2"}, {Key: "data/dd/half", UploadID: "u3"}}
+	var asked []string
+	fake.uploadPage = func(_ int, marker string) string {
+		asked = append(asked, marker)
+		switch marker {
+		case "@":
+			return more("data/cc/half", "u1", upload("data/cc/half", "u1"))
+		case "data/cc/half@u1":
+			return more("data/cc/half", "u2", upload("data/cc/half", "u2"))
+		case "data/cc/half@u2":
+			return more("data/dd/half", "u3", upload("data/dd/half", "u3"))
+		}
+		return last
+	}
+	pending, err := store.(*s3).uploads(ctx, "helios-site")
+	if err != nil || len(pending) != 3 {
+		t.Fatalf("uploads %v, error %v", pending, err)
+	}
+	if strings.Join(asked, " ") != "@ data/cc/half@u1 data/cc/half@u2 data/dd/half@u3" {
+		t.Fatalf("asked %v", asked)
+	}
+	if deleted, err := store.DeleteBucket(ctx, Bucket{Name: "helios-site"}, Check{NotWrittenSince: removedAt}); err != nil || !deleted.Bucket || len(fake.uploads["helios-site"]) != 0 {
+		t.Fatalf("deleted %+v, error %v, uploads left %v", deleted, err, fake.uploads["helios-site"])
+	}
+
+	// A store that answers the question with the plain listing of the
+	// bucket has no such uploads, however long that listing is.
+	fake, store = plainFixture(t)
+	fake.versions = false
+	fake.uploadPage = func(int, string) string { return plain }
+	if deleted, err := store.DeleteBucket(ctx, Bucket{Name: "helios-site"}, Check{NotWrittenSince: removedAt}); err != nil || !deleted.Bucket {
+		t.Fatalf("a store without unfinished uploads: deleted %+v, error %v", deleted, err)
+	}
+
+	for name, broken := range map[string]struct {
+		page func(n int, marker string) string
+		want string
+	}{
+		"the same marker again": {func(int, string) string { return more("data/cc/half", "u1", upload("data/cc/half", "u1")) }, "the store named a marker it had already passed"},
+		"a marker further back": {func(n int, _ string) string {
+			return more(fmt.Sprintf("data/%c", 'z'-rune(n)), fmt.Sprintf("u%d", n), upload("data/cc/half", "u1"))
+		}, "the store named a marker it had already passed"},
+		"pages of nothing": {func(n int, _ string) string { return more(fmt.Sprintf("k%04d", n), "", "") }, "pages in a row held nothing and said there was more"},
+		"a plain listing after uploads": {func(n int, _ string) string {
+			if n == 1 {
+				return more("data/cc/half", "u1", upload("data/cc/half", "u1"))
+			}
+			return plain
+		}, "which is not a listing of the bucket"},
+		"an answer that is no listing": {func(int, string) string { return `<Ok/>` }, "which is not a listing of the bucket"},
+	} {
+		// A listing that goes round is stopped by the clock, and fails here.
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		fake, store := s3Fixture(t)
+		fake.uploadPage = broken.page
+		_, err := store.DeleteBucket(ctx, Bucket{Name: "helios-site"}, Check{NotWrittenSince: removedAt})
+		if err == nil || !strings.Contains(err.Error(), broken.want) || len(fake.deletes) != 0 {
+			t.Fatalf("%s: delete error %v, deletes %v", name, err, fake.deletes)
+		}
+		if fake.uploadLists > 4*s3EmptyPages {
+			t.Fatalf("%s: the uploads were listed %d times", name, fake.uploadLists)
 		}
 		cancel()
 	}

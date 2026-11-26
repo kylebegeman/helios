@@ -97,8 +97,14 @@ func (s *Store) SkipDrill(ctx context.Context, app string, occurrence time.Time,
 //
 // The id is kept apart from the run's snapshot on purpose. A failed run has
 // no snapshot to restore, verify, keep or report, and everything that reads
-// a run goes on finding none. Only SnapshotsMade reads this: whose a
-// snapshot is does not depend on whether its run went on to succeed.
+// a run goes on finding none. Only SnapshotsMade and SnapshotsFailedRunsMade
+// read this: whose a snapshot is does not depend on whether its run went on
+// to succeed.
+//
+// A run can write more than one. One that was stopped after restic answered
+// is taken up again by its operation and captures afresh, and the first
+// snapshot is in the repository still. Each id is added to the ones the run
+// already has, with a space between; none is ever replaced.
 //
 // Only a full snapshot id is taken. It decides whether a bucket may be
 // deleted, and anything shorter could stand for a snapshot nobody named.
@@ -106,7 +112,10 @@ func (s *Store) RecordSnapshotMade(ctx context.Context, id int64, snapshot strin
 	if !fullSnapshotID(snapshot) {
 		return errors.New("a snapshot a run made is recorded by its full id")
 	}
-	res, err := s.db.ExecContext(ctx, `UPDATE backup_runs SET snapshot_made = ? WHERE id = ?`, snapshot, id)
+	res, err := s.db.ExecContext(ctx, `UPDATE backup_runs SET snapshot_made = CASE
+		WHEN snapshot_made = '' THEN ?
+		WHEN instr(snapshot_made, ?) > 0 THEN snapshot_made
+		ELSE snapshot_made || ' ' || ? END WHERE id = ?`, snapshot, snapshot, snapshot, id)
 	if err != nil {
 		return err
 	}
@@ -156,11 +165,14 @@ func (s *Store) SnapshotsMade(ctx context.Context, app string, kinds ...string) 
 	}
 	defer rows.Close()
 	for rows.Next() {
-		var id string
-		if err := rows.Scan(&id); err != nil {
+		var made string
+		if err := rows.Scan(&made); err != nil {
 			return nil, err
 		}
-		out[id] = true
+		// One id, or the several a run made (see RecordSnapshotMade).
+		for _, id := range strings.Fields(made) {
+			out[id] = true
+		}
 	}
 	return out, rows.Err()
 }
@@ -177,11 +189,14 @@ func (s *Store) SnapshotsFailedRunsMade(ctx context.Context, app, kind string) (
 	defer rows.Close()
 	out := map[string]bool{}
 	for rows.Next() {
-		var id string
-		if err := rows.Scan(&id); err != nil {
+		var made string
+		if err := rows.Scan(&made); err != nil {
 			return nil, err
 		}
-		out[id] = true
+		// One id, or the several a run made (see RecordSnapshotMade).
+		for _, id := range strings.Fields(made) {
+			out[id] = true
+		}
 	}
 	return out, rows.Err()
 }

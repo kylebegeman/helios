@@ -136,9 +136,11 @@ func (r *rollout) releaseCheckpointStep() kernel.Step {
 //     ordinary restore of a backup does knowingly and a rollback should
 //     not. Rollback.Plan refuses such a checkpoint from the horizon on, a
 //     day before retention may let go of it, so a rollback never plans to
-//     read a snapshot that retention is free to drop. Only "completed"
-//     ages: a release that failed, or is still running or being restored,
-//     keeps its checkpoint however long that lasts.
+//     read a snapshot that retention is free to drop. gc stops pinning its
+//     revision when retention lets go. Only "completed" ages, which is a
+//     release whose jobs finished, whatever became of its start: one whose
+//     jobs failed, or that is still running or being restored, keeps its
+//     checkpoint however long that lasts.
 //
 // Everything else stays protected. In particular a checkpoint a later unsafe
 // release makes Rollback.Plan refuse today stays, because that refusal lifts
@@ -303,11 +305,26 @@ func unsafeRollbackError(app string, unsafe []state.ReleaseBoundary) error {
 			first = &unsafe[i]
 		}
 	}
-	// The checkpoint a rollback has to name is the one from before the
-	// first of these releases. Once that one has aged out there is nothing
-	// for a rollback to restore.
+	// The checkpoint that returns to the data this rollback asked for is the
+	// one from before the first of these releases. Once that one has aged
+	// out, a rollback can go back only as far as the earliest checkpoint it
+	// still accepts, which belongs to a later release and returns to a later
+	// revision; further back than that is a recovery from a backup.
 	if first != nil && first.Snapshot != "" && checkpointAged(*first, now, checkpointRollbackHorizon) {
-		return fmt.Errorf("code-only rollback of %s is unsafe after %s; the checkpoint from before the first of these releases is past the rollback horizon, so a rollback cannot put the data back; recover through a separately verified backup", app, strings.Join(details, ", "))
+		refusal := fmt.Sprintf("code-only rollback of %s is unsafe after %s; the checkpoint from before the first of these releases is past the rollback horizon, so a rollback cannot put that data back", app, strings.Join(details, ", "))
+		var nearest *state.ReleaseBoundary
+		for i, b := range unsafe {
+			if b.Snapshot == "" || b.PreviousRevision == "" || checkpointAged(b, now, checkpointRollbackHorizon) {
+				continue
+			}
+			if nearest == nil || b.StartedAt.Before(nearest.StartedAt) {
+				nearest = &unsafe[i]
+			}
+		}
+		if nearest == nil {
+			return errors.New(refusal + "; recover through a separately verified backup")
+		}
+		return fmt.Errorf("%s; the earliest checkpoint a rollback still accepts is %s, which returns to revision %s and discards writes since: helios rollback %s --restore-data %s; to go back further, recover through a separately verified backup", refusal, nearest.Snapshot, nearest.PreviousRevision, app, nearest.Snapshot)
 	}
 	return fmt.Errorf("code-only rollback of %s is unsafe after %s; use helios rollback %s --to <checkpoint's previous revision> --restore-data <exact-checkpoint> to replace data and discard writes since that checkpoint", app, strings.Join(details, ", "), app)
 }

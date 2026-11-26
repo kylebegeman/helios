@@ -90,7 +90,7 @@ const legacyImportMargin = 24 * time.Hour
 // machine's own runs with it: a bucket is held that could have gone, never
 // the other way round.
 //
-// backup_runs.snapshot_made is the snapshot restic said a run wrote; see
+// backup_runs.snapshot_made is every snapshot restic said a run wrote; see
 // RecordSnapshotMade.
 func (s *Store) ensureRunColumns(ctx context.Context) error {
 	settled := func() (bool, error) {

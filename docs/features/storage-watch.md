@@ -129,9 +129,12 @@ that anyone may have made.
 A run records the snapshot it wrote the moment restic returns the snapshot's
 id, apart from how the run ends. So a backup that failed or was abandoned
 after its capture, and a release checkpoint whose release boundary could not
-be recorded, still count for the snapshot they left in the repository. Such a
-run stays a failed run with no snapshot everywhere else: `helios backups`,
-restores, drills and retention read nothing from it.
+be recorded, still count for the snapshot they left in the repository. A run
+that is stopped and taken up again may leave more than one, and each counts.
+Such a run stays a failed run with no snapshot everywhere else: `helios
+backups`, restores and drills read nothing from it. Retention reads it for
+one thing: a checkpoint that a failed run left and no release boundary
+records is no longer exempt, because nothing can name it.
 
 Nor does the history a machine recovery brings with it. `helios recover`
 copies the source machine's backup runs into this machine's state, and they
@@ -244,7 +247,7 @@ bucket: that repository needs a prune run by hand with more time.
 
 A release checkpoint is exempt from retention only while a rollback could
 still restore it: until it is restored, its app is removed, or its release
-completed more than 30 days ago. See
+finished its jobs and began more than 30 days ago. See
 [release safety](release-safety.md#when-a-checkpoint-expires) for the rule.
 
 ## What the storage key must be allowed to do

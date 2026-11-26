@@ -157,13 +157,15 @@ A checkpoint loses the exemption in exactly three cases:
    removal deletes the app's boundaries, and a rollback finds a checkpoint
    only through a boundary. It is also the checkpoint of a release that
    failed before its boundary could be written, once that attempt has ended.
-3. Its release completed and began more than 30 days ago. See
-   [the rollback horizon](#the-rollback-horizon).
+3. Its release's jobs finished and the release began more than 30 days
+   ago, plus a day. See [the rollback horizon](#the-rollback-horizon).
 
 Everything else stays exempt, and when in doubt a checkpoint is kept:
 
-- The checkpoint of a release that failed, or that is prepared, started or
-  being restored, stays however old it is. Only a completed release ages.
+- The checkpoint of a release whose jobs failed, or that is prepared,
+  started or being restored, stays however old it is. Only a release whose
+  jobs finished ages. That is the status `completed`, which a release has
+  from then on even when its new code went on to fail its start.
 - A checkpoint that a later data-changing release makes a rollback refuse
   today stays, because the refusal lifts once the later release is restored.
 - A checkpoint this machine has no record of stays, because another machine
@@ -178,12 +180,14 @@ comes back with the prune that follows.
 
 ### The rollback horizon
 
-A release that completed can be undone by restoring data for 30 days, counted
-from when the release began. After that `helios rollback --restore-data`
-refuses its checkpoint: restoring it would discard a month or more of
-writes, which is a recovery from a backup and not a rollback. Retention goes
-on protecting the checkpoint for one more day, so a rollback planned just
-inside the horizon never reads a snapshot that retention is free to drop.
+A release whose jobs finished can be undone by restoring data for 30 days,
+counted from when the release began. After that `helios rollback
+--restore-data` refuses its checkpoint: restoring it would discard a month or
+more of writes, which is a recovery from a backup and not a rollback.
+Retention goes on protecting the checkpoint for one more day, so a rollback
+planned just inside the horizon never reads a snapshot that retention is free
+to drop. Garbage collection holds the revision the checkpoint returns to for
+exactly as long.
 
 Without the horizon an app that ships data-changing releases and never
 restores one keeps one checkpoint per release for good.
@@ -193,9 +197,12 @@ What the horizon means for a rollback depends on the release:
 - A release declared `backward-compatible` takes no checkpoint and is rolled
   back by code alone, at any age.
 - A `restore-required` or `unknown` release cannot be rolled back by code
-  alone at any age. `unknown` is what a manifest without the policy gets. Inside the horizon the rollback names the checkpoint to
-  restore. Past it, `helios rollback` says the checkpoint is past the
-  horizon and offers neither path: recover through a separately verified
-  backup.
+  alone at any age. `unknown` is what a manifest without the policy gets.
+  Inside the horizon the rollback names the checkpoint to restore. Past it,
+  the data from before that release is out of a rollback's reach, and
+  `helios rollback` says so. When a later release still has a checkpoint
+  inside the horizon it names that one and the revision it returns to, which
+  is as far back as a rollback goes. Further back is a recovery from a
+  separately verified backup.
 
 The horizon is fixed. It is not a setting.

@@ -19,6 +19,7 @@ import (
 var (
 	checkpointA = strings.Repeat("a", 64)
 	checkpointB = strings.Repeat("b", 64)
+	checkpointC = strings.Repeat("c", 64)
 )
 
 // checkpointScenario is an app with one earlier revision and one release
@@ -286,6 +287,17 @@ func TestACompletedReleasesCheckpointAgesOutAndRollbackRefusesItFirst(t *testing
 			if got := s.expired(t, checkpointA); got != c.expired {
 				t.Fatalf("the checkpoint lost its protection: %v, want %v", got, c.expired)
 			}
+			// The code a restore returns to is held exactly as long as
+			// the snapshot is. As the previous revision it is kept in any
+			// case, so it is retired first.
+			releaseTestRevision(t, s.store, s.m, "old-rev", state.RevisionRetired, s.at)
+			keep, err := gcResourcesToKeep(context.Background(), s.store)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := !keep.revisions[s.m.App+"/old-rev"]; got != c.expired {
+				t.Fatalf("gc let go of the revision the checkpoint returns to: %v, want %v", got, c.expired)
+			}
 		})
 	}
 
@@ -361,6 +373,19 @@ func TestAnUnsafeRollbackDoesNotAdviseACheckpointPastTheHorizon(t *testing.T) {
 	}
 	if strings.Contains(err.Error(), "--restore-data") {
 		t.Fatalf("a restore the rollback would refuse is still advised: %v", err)
+	}
+	// A later release's checkpoint is still accepted. It does not return to
+	// the data that was asked for, and the refusal says where it does go.
+	recent.PreviousRevision = "one"
+	later := state.ReleaseBoundary{App: "site", Revision: "three", PreviousRevision: "two", Compatibility: manifest.DataRestoreRequired, Snapshot: checkpointC, Status: state.ReleaseCompleted, StartedAt: now.Add(-time.Minute)}
+	err = unsafeRollbackError("site", []state.ReleaseBoundary{later, recent, old})
+	for _, want := range []string{"past the rollback horizon", "helios rollback site --restore-data " + checkpointB, "returns to revision one", "to go back further, recover through a separately verified backup"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("refusal does not say %q: %v", want, err)
+		}
+	}
+	if strings.Contains(err.Error(), "--restore-data "+checkpointA) || strings.Contains(err.Error(), "--restore-data "+checkpointC) {
+		t.Fatalf("the refusal advises the wrong checkpoint: %v", err)
 	}
 }
 
