@@ -79,6 +79,11 @@ func (r *rollout) releaseCheckpointStep() kernel.Step {
 			}
 			var err error
 			x.summary, err = repo.Backup(ctx, m.App, mounts, restic.DataRoot)
+			// The checkpoint is in the repository now, whatever fails from
+			// here to the end of the step.
+			if err == nil && x.summary != nil {
+				x.run.wrote(x.summary.SnapshotID)
+			}
 			return err
 		})
 		if err != nil {

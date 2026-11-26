@@ -72,7 +72,9 @@ const bucketWriteSlack = time.Hour
 // snapshotRunKinds are the backup run kinds that write a snapshot into an
 // app's repository on this machine: a backup, the capture a move takes, and
 // a release checkpoint. A drill or a restore records the snapshot it read,
-// which proves nothing about who made it.
+// which proves nothing about who made it. A run of these kinds counts for
+// the snapshot restic returned to it even when it failed afterwards
+// (backupRun.wrote): the snapshot is in the repository either way.
 var snapshotRunKinds = []string{state.BackupRunBackup, releaseCheckpointRun}
 
 // StorageSampleWindow is how long samples are kept: the seven days growth
@@ -693,7 +695,7 @@ func (o *owned) whole() error {
 	o.read = true
 	switch {
 	case o.strangers > 0:
-		return &notThisMachines{fmt.Sprintf("%d of its %d snapshot(s) are not on record as made by this machine (the first is %s): another machine backs up to it or did, or a backup here failed after it wrote one; it is left for that machine, or for whoever deletes it at the storage provider", o.strangers, len(o.seen), shortID(o.first))}
+		return &notThisMachines{fmt.Sprintf("%d of its %d snapshot(s) are not on record as made by this machine (the first is %s): another machine backs up to it or did, or a backup here was stopped before the snapshot it wrote was recorded; it is left for that machine, or for whoever deletes it at the storage provider", o.strangers, len(o.seen), shortID(o.first))}
 	case len(o.seen) == 0 && o.others > 0:
 		// A deletion that was interrupted cannot look like this: unfinished
 		// uploads go first, then the files in the order of their names, of
@@ -712,12 +714,13 @@ func shortID(id string) string {
 
 // ownership returns what decides whether a bucket's contents are this
 // machine's to delete: every snapshot in it must be one a backup, a move's
-// capture or a release checkpoint on this machine recorded making. A run a
-// machine recovery copied from another machine's state is not such a record. The runs of a
-// removed app are kept, so the record outlives the app. With no such record
-// at all it returns why the bucket is held instead: the proof has to be
-// there, not merely not contradicted. An error means this machine's own
-// state could not be read.
+// capture or a release checkpoint on this machine recorded making, which a
+// run does the moment restic returns the snapshot's id, whether or not it
+// then succeeds. A run a machine recovery copied from another machine's
+// state is not such a record. The runs of a removed app are kept, so the
+// record outlives the app. With no such record at all it returns why the
+// bucket is held instead: the proof has to be there, not merely not
+// contradicted. An error means this machine's own state could not be read.
 func (s *storageSession) ownership(ctx context.Context, t state.StorageTombstone) (*owned, string, error) {
 	made, err := s.w.Store.SnapshotsMade(ctx, t.App, snapshotRunKinds...)
 	if err != nil {

@@ -570,6 +570,56 @@ func TestAnyDoubtHoldsTheBucket(t *testing.T) {
 	}
 }
 
+// A backup or a release checkpoint that failed after restic wrote its
+// snapshot left that snapshot in the repository. The run recorded the id
+// restic returned, so the snapshot is this machine's and the bucket still
+// expires. A failed run that recorded no such id proves nothing.
+func TestABucketHoldingTheSnapshotOfARunThatFailedAfterWritingItStillExpires(t *testing.T) {
+	ctx := context.Background()
+	due := storageDay.Add(BucketExpiry + time.Hour)
+	failedRun := func(f *storageFixture, kind, wrote string) {
+		t.Helper()
+		id, err := f.store.StartBackupRun(ctx, "blog", kind, storageDay.Add(-24*time.Hour))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if wrote != "" {
+			if err := f.store.RecordSnapshotMade(ctx, id, wrote); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if err := f.store.FinishBackupRun(ctx, id, state.BackupRun{FinishedAt: storageDay.Add(-24 * time.Hour), Error: "failed after its capture"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	abandoned, checkpoint := snapshotOf("vps", "blog abandoned"), snapshotOf("vps", "blog checkpoint")
+
+	f := newStorageFixture(t)
+	f.removed("blog", storageDay)
+	failedRun(f, state.BackupRunBackup, abandoned)
+	failedRun(f, releaseCheckpointRun, checkpoint)
+	f.holds("helios-blog", snapshotOf("vps", "blog"), abandoned, checkpoint)
+	f.now = due
+	if out, err := f.sweep(); err != nil || f.tombstone("blog") != nil {
+		t.Fatalf("the sweep: %v, tombstone %+v\n%s", err, f.tombstone("blog"), out)
+	}
+	if _, gone := f.account.deleted["helios-blog"]; !gone {
+		t.Fatalf("the bucket was not deleted: %v", f.account.deleted)
+	}
+
+	// The same bucket when the failed runs say nothing of what they wrote.
+	f = newStorageFixture(t)
+	f.removed("blog", storageDay)
+	failedRun(f, state.BackupRunBackup, "")
+	failedRun(f, releaseCheckpointRun, "")
+	f.holds("helios-blog", snapshotOf("vps", "blog"), abandoned, checkpoint)
+	f.now = due
+	out, err := f.sweep()
+	if got := f.tombstone("blog"); err != nil || len(f.account.deleted) != 0 || got == nil || !strings.Contains(got.Problem, "2 of its 3 snapshot(s) are not on record as made by this machine") {
+		t.Fatalf("the sweep: %v, deleted %v, tombstone %+v\n%s", err, f.account.deleted, got, out)
+	}
+}
+
 // A tombstone alone proves nothing about whose backups a bucket holds. A
 // machine that removed an app it never backed up has one only if something
 // went wrong, and it must still not delete the bucket: an app of the same

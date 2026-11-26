@@ -126,6 +126,13 @@ checkpoint. The record of an app's backup runs is kept after the app is
 removed. A drill or a restore does not count, because it reads a snapshot
 that anyone may have made.
 
+A run records the snapshot it wrote the moment restic returns the snapshot's
+id, apart from how the run ends. So a backup that failed or was abandoned
+after its capture, and a release checkpoint whose release boundary could not
+be recorded, still count for the snapshot they left in the repository. Such a
+run stays a failed run with no snapshot everywhere else: `helios backups`,
+restores, drills and retention read nothing from it.
+
 Nor does the history a machine recovery brings with it. `helios recover`
 copies the source machine's backup runs into this machine's state, and they
 stay that machine's record. While a repository still holds one of the
@@ -170,8 +177,10 @@ Neither the sweep nor `purge` deletes anything, and the sweep raises
 
 - the bucket holds a snapshot this machine has no record of making, it holds
   files but no snapshot at all, or this machine has no record of a backup of
-  the app. A backup here that failed after it wrote its snapshot leaves such
-  a snapshot too;
+  the app. A backup here leaves such a snapshot too when it was killed while
+  restic was writing, before restic returned the snapshot's id, or when it
+  failed after its capture under a release from before that id was recorded
+  apart from the run;
 - something was uploaded to the bucket more than an hour after the app was
   removed, so another machine or tool is using it;
 - the app is deployed on this machine again;

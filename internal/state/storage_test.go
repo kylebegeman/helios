@@ -444,7 +444,7 @@ func TestAStoreThatImportedBeforeRunsWereMarkedCountsOnlyLaterRuns(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := db.Exec(`ALTER TABLE backup_runs DROP COLUMN imported; INSERT INTO machine_recoveries(id,digest,imported_at) VALUES('r1','d',?)`, unix(imported)); err != nil {
+	if _, err := db.Exec(`ALTER TABLE backup_runs DROP COLUMN imported; ALTER TABLE backup_runs DROP COLUMN snapshot_made; INSERT INTO machine_recoveries(id,digest,imported_at) VALUES('r1','d',?)`, unix(imported)); err != nil {
 		t.Fatal(err)
 	}
 	db.Close()
@@ -508,7 +508,13 @@ func TestAnImportByAnOlderBinaryIsMarkedOnTheNextOpening(t *testing.T) {
 // Both must come back: the one that loses has a transaction open on the
 // store's only connection when it finds out.
 func TestTwoOpeningsOfAnOlderStoreAtOnceBothReturn(t *testing.T) {
-	for round := range 15 {
+	// A store from before the storage watch, and one from its first
+	// release, which lacks only what a run's capture returned.
+	older := []string{
+		`ALTER TABLE backup_runs DROP COLUMN imported; ALTER TABLE backup_runs DROP COLUMN snapshot_made; ALTER TABLE machine_recoveries DROP COLUMN runs_marked`,
+		`ALTER TABLE backup_runs DROP COLUMN snapshot_made`,
+	}
+	for round := range 30 {
 		path := filepath.Join(t.TempDir(), "state.db")
 		s, err := Open(path)
 		if err != nil {
@@ -519,7 +525,7 @@ func TestTwoOpeningsOfAnOlderStoreAtOnceBothReturn(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if _, err := db.Exec(`ALTER TABLE backup_runs DROP COLUMN imported; ALTER TABLE machine_recoveries DROP COLUMN runs_marked`); err != nil {
+		if _, err := db.Exec(older[round%len(older)]); err != nil {
 			t.Fatal(err)
 		}
 		db.Close()
@@ -544,5 +550,199 @@ func TestTwoOpeningsOfAnOlderStoreAtOnceBothReturn(t *testing.T) {
 				t.Fatalf("round %d: an opening never returned", round)
 			}
 		}
+	}
+}
+
+// A run can fail after restic has written its snapshot. The id restic
+// returned is recorded apart from the run's snapshot: the snapshot is this
+// machine's, and the failed run still has none to restore, keep or report.
+func TestASnapshotARunWroteBeforeItFailedIsStillOnRecordAsMadeHere(t *testing.T) {
+	ctx := context.Background()
+	store := open(t)
+	at := storageDay
+	full := func(c string) string { return strings.Repeat(c, 64) }
+	began := func(app, kind string) int64 {
+		t.Helper()
+		id, err := store.StartBackupRun(ctx, app, kind, at)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return id
+	}
+	wrote := func(id int64, snapshot string) {
+		t.Helper()
+		if err := store.RecordSnapshotMade(ctx, id, snapshot); err != nil {
+			t.Fatal(err)
+		}
+	}
+	failed := func(id int64) {
+		t.Helper()
+		if err := store.FinishBackupRun(ctx, id, BackupRun{FinishedAt: at, Error: "retention could not start"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	made := func(app string, kinds ...string) string {
+		t.Helper()
+		got, err := store.SnapshotsMade(ctx, app, kinds...)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var ids []string
+		for id := range got {
+			ids = append(ids, id[:1])
+		}
+		sort.Strings(ids)
+		return strings.Join(ids, " ")
+	}
+
+	// A backup and a release checkpoint that failed after their captures.
+	backup := began("blog", BackupRunBackup)
+	wrote(backup, full("a"))
+	failed(backup)
+	checkpoint := began("blog", "release-checkpoint")
+	wrote(checkpoint, full("b"))
+	failed(checkpoint)
+	// A run still open, as a stopped daemon leaves it.
+	wrote(began("blog", BackupRunBackup), full("c"))
+	// A run that failed before restic returned anything.
+	failed(began("blog", BackupRunBackup))
+	// A run that went on to succeed names its snapshot twice, once.
+	good := began("blog", BackupRunBackup)
+	wrote(good, full("d"))
+	if err := store.FinishBackupRun(ctx, good, BackupRun{OK: true, FinishedAt: at, Snapshot: full("d")}); err != nil {
+		t.Fatal(err)
+	}
+	// A drill writes no snapshot, whatever is recorded against it.
+	wrote(began("blog", BackupRunDrill), full("e"))
+	// Another app's run is another app's.
+	other := began("shop", BackupRunBackup)
+	wrote(other, full("f"))
+	failed(other)
+
+	if got := made("blog", BackupRunBackup, "release-checkpoint"); got != "a b c d" {
+		t.Fatalf("snapshots made here: %q, want a b c d", got)
+	}
+	if got := made("blog", BackupRunBackup); got != "a c d" {
+		t.Fatalf("snapshots backups made here: %q, want a c d", got)
+	}
+
+	// Everything else that reads the failed run finds no snapshot.
+	run, err := store.BackupRun(ctx, backup)
+	if err != nil || run.OK || run.Snapshot != "" || !run.SnapshotAt.IsZero() {
+		t.Fatalf("the failed run reads as having a snapshot: %+v %v", run, err)
+	}
+	if last, err := store.LastGoodBackupRun(ctx, "blog", "release-checkpoint"); err != nil || last != nil {
+		t.Fatalf("the failed checkpoint reads as a good one: %+v %v", last, err)
+	}
+	runs, err := store.BackupRuns(ctx, "blog", "", 20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, r := range runs {
+		if !r.OK && r.Snapshot != "" {
+			t.Fatalf("a run that did not succeed lists a snapshot: %+v", r)
+		}
+	}
+
+	// Only what can be a whole snapshot id is taken, and only for a run.
+	for _, id := range []string{"", "abcd1234", full("a")[:63], full("a") + "a", strings.Repeat("A", 64), strings.Repeat("g", 64), "snapshots/" + full("a")[:54]} {
+		if err := store.RecordSnapshotMade(ctx, backup, id); err == nil {
+			t.Fatalf("%q was recorded as a snapshot a run made", id)
+		}
+	}
+	if err := store.RecordSnapshotMade(ctx, 9999, full("a")); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("a snapshot was recorded for a run that does not exist: %v", err)
+	}
+	if got := made("blog", BackupRunBackup, "release-checkpoint"); got != "a b c d" {
+		t.Fatalf("snapshots made here after the refusals: %q, want a b c d", got)
+	}
+
+	// A run a machine recovery brought is that machine's, whatever it holds.
+	if _, err := store.db.ExecContext(ctx, `UPDATE backup_runs SET imported = 1 WHERE id IN (?, ?)`, backup, good); err != nil {
+		t.Fatal(err)
+	}
+	if got := made("blog", BackupRunBackup, "release-checkpoint"); got != "b c" {
+		t.Fatalf("snapshots made here once two runs are another machine's: %q, want b c", got)
+	}
+}
+
+// A machine recovery copies the source machine's runs without what restic
+// returned to them: a snapshot one of them wrote was not made here.
+func TestASnapshotAnImportedRunWroteIsNotThisMachines(t *testing.T) {
+	ctx := context.Background()
+	source, target := open(t), open(t)
+	id, err := source.StartBackupRun(ctx, "blog", BackupRunBackup, storageDay)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := source.RecordSnapshotMade(ctx, id, strings.Repeat("a", 64)); err != nil {
+		t.Fatal(err)
+	}
+	if err := source.FinishBackupRun(ctx, id, BackupRun{FinishedAt: storageDay, Error: "failed after its capture"}); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := source.SnapshotsMade(ctx, "blog", BackupRunBackup); err != nil || len(got) != 1 {
+		t.Fatalf("the source machine's own record: %v %v", got, err)
+	}
+	if err := target.ImportMachineRecovery(ctx, source.Path(), "recovery-1", nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	if runs, err := target.BackupRuns(ctx, "blog", "", 10); err != nil || len(runs) != 1 {
+		t.Fatalf("the imported run is not in the history: %v %v", runs, err)
+	}
+	if got, err := target.SnapshotsMade(ctx, "blog", BackupRunBackup); err != nil || len(got) != 0 {
+		t.Fatalf("a snapshot the source machine wrote counts as made here: %v %v", got, err)
+	}
+}
+
+// A store from the release before the column gains it on the next opening,
+// without a new state version, and what it already recorded still counts.
+func TestAStoreFromBeforeMadeSnapshotsWereRecordedGainsTheColumnOnOpening(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "state.db")
+	s, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	id, err := s.StartBackupRun(ctx, "blog", BackupRunBackup, storageDay)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.FinishBackupRun(ctx, id, BackupRun{OK: true, FinishedAt: storageDay, Snapshot: "good"}); err != nil {
+		t.Fatal(err)
+	}
+	s.Close()
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`ALTER TABLE backup_runs DROP COLUMN snapshot_made`); err != nil {
+		t.Fatal(err)
+	}
+	db.Close()
+
+	for range 2 { // the second opening finds the column and changes nothing
+		s, err = Open(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if v, _ := s.Version(ctx); v != compat.StateVersion {
+			t.Fatalf("state version %d after adding the column, want %d", v, compat.StateVersion)
+		}
+		failed, err := s.StartBackupRun(ctx, "blog", BackupRunBackup, storageDay)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := s.RecordSnapshotMade(ctx, failed, strings.Repeat("a", 64)); err != nil {
+			t.Fatal(err)
+		}
+		if err := s.FinishBackupRun(ctx, failed, BackupRun{FinishedAt: storageDay, Error: "failed after its capture"}); err != nil {
+			t.Fatal(err)
+		}
+		got, err := s.SnapshotsMade(ctx, "blog", BackupRunBackup)
+		if err != nil || len(got) != 2 || !got["good"] || !got[strings.Repeat("a", 64)] {
+			t.Fatalf("snapshots made here: %v %v", got, err)
+		}
+		s.Close()
 	}
 }
