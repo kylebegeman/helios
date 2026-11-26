@@ -152,8 +152,13 @@ func (s *Store) ImportMachineRecovery(ctx context.Context, sourceDBPath, recover
 	now := unix(time.Now().UTC())
 	for _, table := range tables {
 		query := "INSERT INTO " + table.name + " (" + strings.Join(table.columns, ",") + ") VALUES (" + strings.TrimSuffix(strings.Repeat("?,", len(table.columns)), ",") + ")"
-		if table.name == "watches" {
+		switch table.name {
+		case "watches":
 			query += " ON CONFLICT(url) DO NOTHING"
+		case "backup_runs":
+			// The source machine's runs are its record, not this machine's:
+			// a snapshot they name was not made here.
+			query = "INSERT INTO backup_runs (" + strings.Join(table.columns, ",") + ",imported) VALUES (" + strings.Repeat("?,", len(table.columns)) + "1)"
 		}
 		for _, row := range table.rows {
 			switch table.name {
@@ -238,7 +243,7 @@ func (s *Store) ImportMachineRecovery(ctx context.Context, sourceDBPath, recover
 			return fmt.Errorf("record private recovery revision %s/%s: %w", r.App, r.ID, err)
 		}
 	}
-	if _, err := tx.ExecContext(ctx, "INSERT INTO machine_recoveries(id,digest,imported_at) VALUES(?,?,?)", recoveryID, digest, now); err != nil {
+	if _, err := tx.ExecContext(ctx, "INSERT INTO machine_recoveries(id,digest,imported_at,runs_marked) VALUES(?,?,?,1)", recoveryID, digest, now); err != nil {
 		return err
 	}
 	return tx.Commit()

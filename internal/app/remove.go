@@ -62,6 +62,8 @@ type removal struct {
 	// secrets says whether the app's sealed secrets go too.
 	secrets bool
 	volumes []string
+	// fate is what becomes of the app's backup bucket.
+	fate bucketFate
 }
 
 // Plan implements kernel.Definition.
@@ -101,6 +103,9 @@ func (r Remove) Plan(ctx context.Context, raw json.RawMessage) (*kernel.Plan, er
 	// With its data gone, the secrets that opened it go too: left behind,
 	// they are keys to nothing on this machine that nothing removes.
 	x.secrets = in.Secrets || in.Data
+	if x.fate, err = r.bucketFate(ctx, in.App); err != nil {
+		return nil, err
+	}
 	plan := &kernel.Plan{Target: in.App, Recovery: kernel.Resume}
 	plan.Steps = append(plan.Steps, x.unrouteStep(), x.dnsStep(), x.containersStep())
 	if in.Data {
@@ -279,7 +284,7 @@ func (x *removal) removeContainer(ctx context.Context, e *docker.Engine, c docke
 
 func (x *removal) dataStep() kernel.Step {
 	return kernel.Step{
-		Name: "data", Change: "remove the app's volumes, database and object store: " + strings.Join(x.volumes, ", ") + " (no way back except a backup; its backups in the storage bucket stay)",
+		Name: "data", Change: "remove the app's volumes, database and object store: " + strings.Join(x.volumes, ", ") + " (no way back except a backup; " + x.fate.afterData() + ")",
 		Apply: func(ctx context.Context, out io.Writer) error {
 			e, err := docker.Connect(ctx)
 			if err != nil {
@@ -312,6 +317,7 @@ func (x *removal) forgetStep() kernel.Step {
 	case x.secrets:
 		change += ", and its sealed secrets (only a machine backup made before now, helios backup helios, keeps them)"
 	}
+	change += x.fate.change(x.in.App)
 	return kernel.Step{
 		Name: "forget", Change: change,
 		Apply: func(ctx context.Context, out io.Writer) error {
@@ -326,10 +332,17 @@ func (x *removal) forgetStep() kernel.Step {
 			if err := e.RemoveNetwork(ctx, docker.AppNetwork(x.in.App)); err != nil {
 				return err
 			}
-			if err := forgetApp(ctx, x.r.Store, x.r.Secrets, x.stateDir, x.in.App, x.secrets, out); err != nil {
+			tombstone, err := x.fate.record(ctx, x.r.Store, x.in.App, time.Now().UTC())
+			if err != nil {
+				return err
+			}
+			if err := forgetApp(ctx, x.r.Store, x.r.Secrets, x.stateDir, x.in.App, x.secrets, tombstone, out); err != nil {
 				return err
 			}
 			fmt.Fprintf(out, "%s forgotten\n", x.in.App)
+			if tombstone != nil {
+				fmt.Fprintf(out, "bucket %s is deleted with its backups after %s; helios storage keep %s cancels that\n", tombstone.Bucket, tombstone.RemovedAt.Add(BucketExpiry).Local().Format("2006-01-02"), x.in.App)
+			}
 			return nil
 		},
 	}
@@ -338,8 +351,9 @@ func (x *removal) forgetStep() kernel.Step {
 // forgetApp drops what the machine keeps about an app beside its
 // containers: its rows, its staging directories, the webhook credentials
 // helios made for it and, when asked, its sealed secrets. Its backup runs
-// stay, because they say where its data went.
-func forgetApp(ctx context.Context, store *state.Store, sec *secrets.Store, stateDir, app string, secretsToo bool, out io.Writer) error {
+// stay, because they say where its data went. A tombstone is recorded in
+// the same write that forgets the app, so its bucket starts to expire.
+func forgetApp(ctx context.Context, store *state.Store, sec *secrets.Store, stateDir, app string, secretsToo bool, tombstone *state.StorageTombstone, out io.Writer) error {
 	// Keep revision rows until every fallible cleanup finishes. Otherwise a
 	// retry loses its manifest and falls into a destructive --data purge.
 	for _, dir := range []string{"backups", "restore", "drills", "builds", "moves"} {
@@ -376,6 +390,9 @@ func forgetApp(ctx context.Context, store *state.Store, sec *secrets.Store, stat
 	}
 	if err := forgetMigration(store.Path(), app); err != nil {
 		return err
+	}
+	if tombstone != nil {
+		return store.RemoveAppLeavingTombstone(ctx, app, tombstone.Bucket, tombstone.Account, tombstone.RemovedAt)
 	}
 	return store.RemoveApp(ctx, app)
 }

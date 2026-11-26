@@ -103,6 +103,10 @@ func Registry(store *state.Store, sec *secrets.Store, socket, stateDir string) k
 	reg.Add(app.Drop{Store: store, Secrets: sec, Addresses: addresses})
 	backup := app.Backup{Store: store, Secrets: sec, StateDir: stateDir, Hostname: hostname, Profile: host.ProfilePath}
 	reg.Add(backup)
+	storage := app.StorageWatch{Store: store, Secrets: sec, Hostname: hostname}
+	reg.Add(app.StorageSweep{StorageWatch: storage})
+	reg.Add(app.StorageKeep{StorageWatch: storage})
+	reg.Add(app.StoragePurge{StorageWatch: storage})
 	reg.Add(app.MoveCapture{Backup: backup})
 	reg.Add(app.MoveStage{Deploy: deploy, Hostname: hostname})
 	reg.Add(app.MoveTest{Deploy: deploy, Hostname: hostname})
@@ -359,6 +363,10 @@ func (d *daemon) startLoops(ctx context.Context, edgeLoaded time.Time) {
 	prober := watch.NewProber(d.store)
 	prober.CheckSecrets = d.sec.Load
 	prober.OriginPullTrust = func() (edge.OriginPullTrust, error) { return app.LoadOriginPullTrust(d.sec) }
+	prober.StorageSet = func() bool {
+		_, err := integration.LoadStorage(d.sec)
+		return err == nil
+	}
 	d.every(ctx, d.cfg.WatchInterval, true, func(time.Time) {
 		guarded(logf, "watch", func() { d.watchRound(ctx, watcher, prober.Observe, d.peers.Observe) })
 	})

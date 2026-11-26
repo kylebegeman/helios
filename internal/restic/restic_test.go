@@ -3,6 +3,7 @@ package restic
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -162,18 +163,13 @@ func TestTheSecretsFileGivesAShellTheValuesAsTheyWere(t *testing.T) {
 	}
 }
 
-func TestReleaseCheckpointTagsAreCapturedAndKeptByRetention(t *testing.T) {
+func TestReleaseCheckpointsAreTaggedWhenCaptured(t *testing.T) {
 	fake := dockertest.New(t)
-	var commands [][]string
+	var command []string
 	fake.OnCreate = func(c dockertest.Container) {
-		commands = append(commands, append([]string(nil), c.Cmd...))
+		command = append([]string(nil), c.Cmd...)
 		fake.Update(c.Name, func(c *dockertest.Container) {
-			c.ExitAfter = 1
-			if c.Cmd[0] == "backup" {
-				c.Logs = `{"message_type":"summary","snapshot_id":"` + strings.Repeat("a", 64) + `"}`
-			} else {
-				c.Logs = `[]`
-			}
+			c.ExitAfter, c.Logs = 1, `{"message_type":"summary","snapshot_id":"`+strings.Repeat("a", 64)+`"}`
 		})
 	}
 	r := runner(t)
@@ -181,22 +177,165 @@ func TestReleaseCheckpointTagsAreCapturedAndKeptByRetention(t *testing.T) {
 	if _, err := r.Backup(context.Background(), "site", nil, DataRoot); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := r.Forget(context.Background(), "site", Keep{Daily: 1}); err != nil {
+	tagged := false
+	for i := 1; i < len(command); i++ {
+		tagged = tagged || (command[i-1] == "--tag" && command[i] == ReleaseCheckpointTag)
+	}
+	if !tagged {
+		t.Fatalf("checkpoint was not tagged: %v", command)
+	}
+}
+
+// forgetting stands in for restic forget: the dry run answers with what the
+// policy would remove, and every run is recorded.
+func forgetting(t *testing.T, dryRun string) *[][]string {
+	t.Helper()
+	fake := dockertest.New(t)
+	var commands [][]string
+	fake.OnCreate = func(c dockertest.Container) {
+		commands = append(commands, append([]string(nil), c.Cmd...))
+		fake.Update(c.Name, func(c *dockertest.Container) {
+			c.ExitAfter = 1
+			if slices.Contains(c.Cmd, "--dry-run") {
+				c.Logs = dryRun
+			}
+		})
+	}
+	return &commands
+}
+
+func TestForgetKeepsEveryCheckpointThatHasNotExpired(t *testing.T) {
+	ordinary, live, expired := strings.Repeat("a", 64), strings.Repeat("b", 64), strings.Repeat("c", 64)
+	dryRun := `[{"host":"site","keep":[{"id":"` + strings.Repeat("9", 64) + `","tags":["bedrock"]}],"remove":[` +
+		`{"id":"` + ordinary + `","tags":["bedrock"]},` +
+		`{"id":"` + live + `","tags":["bedrock","bedrock-release-checkpoint"]},` +
+		`{"id":"` + expired + `","tags":["bedrock","bedrock-release-checkpoint"]}]}]`
+	for _, tc := range []struct {
+		name    string
+		expired func(Snapshot) bool
+		want    Forgotten
+		forget  []string
+	}{
+		{name: "no rule protects them all", want: Forgotten{Snapshots: 1, CheckpointsKept: 2}, forget: []string{ordinary}},
+		{name: "one has expired", expired: func(s Snapshot) bool { return s.ID == expired },
+			want: Forgotten{Snapshots: 2, Checkpoints: 1, CheckpointsKept: 1}, forget: []string{ordinary, expired}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			commands := forgetting(t, dryRun)
+			got, err := runner(t).Forget(context.Background(), "site", Keep{Daily: 7, Weekly: 4}, tc.expired)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got != tc.want {
+				t.Fatalf("forgotten %+v, want %+v", got, tc.want)
+			}
+			wantDry := []string{"forget", "--dry-run", "--json", "--host", "site", "--tag", Tag, "--keep-daily", "7", "--keep-weekly", "4"}
+			wantReal := append([]string{"forget", "--json"}, tc.forget...)
+			if len(*commands) != 2 || !slices.Equal((*commands)[0], wantDry) || !slices.Equal((*commands)[1], wantReal) {
+				t.Fatalf("restic ran %v", *commands)
+			}
+		})
+	}
+}
+
+func TestForgetRemovesNothingItCouldNotRead(t *testing.T) {
+	id := strings.Repeat("a", 64)
+	for _, tc := range []struct{ name, dryRun, wantError string }{
+		{"a short id", `[{"remove":[{"id":"` + id + `"},{"id":"abcd1234"}]}]`, "without a full id"},
+		{"something that is not an id", `[{"remove":[{"id":"--prune"}]}]`, "without a full id"},
+		{"a broken answer", `[{"remove":[{"id":"` + id + `"}`, "cannot read"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			commands := forgetting(t, tc.dryRun)
+			got, err := runner(t).Forget(context.Background(), "site", Keep{Daily: 7}, func(Snapshot) bool { return true })
+			if err == nil || !strings.Contains(err.Error(), tc.wantError) {
+				t.Fatalf("got %+v, %v; want an error with %q", got, err, tc.wantError)
+			}
+			if got.Snapshots != 0 || len(*commands) != 1 {
+				t.Fatalf("something was forgotten: %+v %v", got, *commands)
+			}
+		})
+	}
+}
+
+func TestForgetWithNothingToRemoveOrNoPolicyRunsNoRemoval(t *testing.T) {
+	commands := forgetting(t, `[{"keep":[{"id":"`+strings.Repeat("a", 64)+`"}],"remove":null}]`)
+	got, err := runner(t).Forget(context.Background(), "site", Keep{Monthly: 6}, nil)
+	if err != nil || got != (Forgotten{}) || len(*commands) != 1 {
+		t.Fatalf("nothing to remove: %+v %v %v", got, err, *commands)
+	}
+	// A policy that keeps nothing must not read as "remove everything".
+	commands = forgetting(t, `[]`)
+	got, err = runner(t).Forget(context.Background(), "site", Keep{}, func(Snapshot) bool { return true })
+	if err != nil || got != (Forgotten{}) || len(*commands) != 0 {
+		t.Fatalf("no policy: %+v %v %v", got, err, *commands)
+	}
+}
+
+func TestForgetNamesManySnapshotsInBatches(t *testing.T) {
+	var b strings.Builder
+	b.WriteString(`[{"remove":[`)
+	for i := 0; i < forgetBatch+5; i++ {
+		if i > 0 {
+			b.WriteString(",")
+		}
+		fmt.Fprintf(&b, `{"id":"%064x"}`, i)
+	}
+	b.WriteString(`]}]`)
+	commands := forgetting(t, b.String())
+	got, err := runner(t).Forget(context.Background(), "site", Keep{Daily: 1}, nil)
+	if err != nil || got.Snapshots != forgetBatch+5 {
+		t.Fatalf("forgotten %+v, %v", got, err)
+	}
+	if len(*commands) != 3 || len((*commands)[1]) != 2+forgetBatch || len((*commands)[2]) != 2+5 {
+		t.Fatalf("unexpected batches: %d runs", len(*commands))
+	}
+}
+
+func TestRepositoryStatisticsTakeNoLock(t *testing.T) {
+	fake := dockertest.New(t)
+	var commands [][]string
+	fake.OnCreate = func(c dockertest.Container) {
+		commands = append(commands, append([]string(nil), c.Cmd...))
+		fake.Update(c.Name, func(c *dockertest.Container) {
+			c.ExitAfter = 1
+			if c.Cmd[0] == "stats" {
+				c.Logs = `{"total_size":4001329,"total_uncompressed_size":4001778,"total_blob_count":8,"snapshots_count":2}`
+			} else {
+				c.Logs = `[{"id":"` + strings.Repeat("a", 64) + `","time":"2026-11-01T10:00:00Z","hostname":"site","tags":["bedrock","bedrock-release-checkpoint"],"summary":{"total_bytes_processed":3000000}},` +
+					`{"id":"` + strings.Repeat("b", 64) + `","time":"2026-11-03T10:00:00Z","hostname":"site","tags":["bedrock"],"summary":{"total_bytes_processed":1000000}}]`
+			}
+		})
+	}
+	r := runner(t)
+	used, err := r.UsedBytes(context.Background())
+	if err != nil || used != 4001329 {
+		t.Fatalf("used %d, %v", used, err)
+	}
+	snaps, err := r.AllSnapshots(context.Background())
+	if err != nil {
 		t.Fatal(err)
 	}
-	if len(commands) != 3 {
-		t.Fatalf("%v", commands)
+	if len(snaps) != 2 || snaps[0].ID != strings.Repeat("b", 64) || snaps[0].Summary.TotalBytes != 1000000 || !snaps[1].IsCheckpoint() || snaps[0].IsCheckpoint() {
+		t.Fatalf("snapshots: %+v", snaps)
 	}
-	hasPair := func(command []string, key, value string) bool {
-		for i := 1; i < len(command); i++ {
-			if command[i-1] == key && command[i] == value {
-				return true
-			}
-		}
-		return false
+	want := [][]string{{"stats", "--mode", "raw-data", "--json", "--no-lock"}, {"snapshots", "--json", "--no-lock"}}
+	if !slices.Equal(commands[0], want[0]) || !slices.Equal(commands[1], want[1]) {
+		t.Fatalf("restic ran %v", commands)
 	}
-	if !hasPair(commands[0], "--tag", ReleaseCheckpointTag) || !hasPair(commands[1], "--keep-tag", ReleaseCheckpointTag) {
-		t.Fatalf("checkpoint could be pruned: %v", commands)
+}
+
+func TestRepositoryStatisticsFailInsteadOfGuessing(t *testing.T) {
+	fake := dockertest.New(t)
+	fake.OnCreate = func(c dockertest.Container) {
+		fake.Update(c.Name, func(c *dockertest.Container) { c.ExitAfter, c.Logs = 1, `{"message_type":"status"}` })
+	}
+	r := runner(t)
+	if _, err := r.UsedBytes(context.Background()); err == nil {
+		t.Fatal("a used size was made up")
+	}
+	if _, err := r.AllSnapshots(context.Background()); err == nil {
+		t.Fatal("an empty repository was made up")
 	}
 }
 

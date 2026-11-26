@@ -1067,6 +1067,14 @@ func (r Rollback) Plan(ctx context.Context, raw json.RawMessage) (*kernel.Plan, 
 		if checkpoint == nil {
 			return nil, errors.New("checkpoint is not the retained pre-release data for the requested revision")
 		}
+		// Restoring a checkpoint marks every later release of the app
+		// restored with it: their data changes were discarded together. A
+		// later one of those checkpoints was never itself restored, so a
+		// rollback that names it must not be taken for a replay of a
+		// finished restoration, which restores nothing.
+		if discarded := discardedBy(boundaries, checkpoint); discarded != nil {
+			return nil, fmt.Errorf("checkpoint %s is from before release %s, which was discarded when checkpoint %s for the earlier release %s was restored; the data is now older than this checkpoint, and a rollback does not move it forward again; recover through a separately verified backup", checkpoint.Snapshot, checkpoint.Revision, discarded.Snapshot, discarded.Revision)
+		}
 		if checkpoint.Status == state.ReleaseRestored && len(unsafe) > 0 {
 			later := unsafe[0]
 			for _, boundary := range unsafe[1:] {
@@ -1275,4 +1283,24 @@ func loomGuard(sec *secrets.Store) (*edge.Guard, error) {
 		g.ServerName = v.Host
 	}
 	return g, nil
+}
+
+// discardedBy returns the earlier release whose restoration discarded the
+// checkpoint's release, or nil when the checkpoint is the one that was
+// restored, or was not restored at all. Completing a restoration stamps the
+// restored boundary and every later one of the app with the same time, so
+// the boundary that was restored is the earliest with that time; a later
+// restoration of this very checkpoint stamps it with a later time than any
+// earlier boundary carries.
+func discardedBy(boundaries []state.ReleaseBoundary, checkpoint *state.ReleaseBoundary) *state.ReleaseBoundary {
+	if checkpoint.Status != state.ReleaseRestored {
+		return nil
+	}
+	for i := range boundaries {
+		b := &boundaries[i]
+		if b.Status == state.ReleaseRestored && b.StartedAt.Before(checkpoint.StartedAt) && !b.FinishedAt.Before(checkpoint.FinishedAt) {
+			return b
+		}
+	}
+	return nil
 }

@@ -955,7 +955,7 @@ func (x *backingUp) retentionStep() kernel.Step {
 			if complete {
 				return x.discardStaging(ctx)
 			}
-			removed, err := x.forget(ctx)
+			done, err := x.forget(ctx, out)
 			detail := x.detail()
 			if err != nil {
 				// The resumed retention closes the run, as failStaged
@@ -975,24 +975,86 @@ func (x *backingUp) retentionStep() kernel.Step {
 				return err
 			}
 			switch {
-			case removed > 0:
-				fmt.Fprintf(out, "removed %d old snapshot(s)\n", removed)
+			case done.Snapshots > 0:
+				fmt.Fprintf(out, "removed %d old snapshot(s)\n", done.Snapshots)
 			case err == nil:
 				fmt.Fprintln(out, "nothing old enough to remove")
+			}
+			if done.Checkpoints > 0 {
+				fmt.Fprintf(out, "%d of them were release checkpoints no rollback can restore any more\n", done.Checkpoints)
+			}
+			if done.CheckpointsKept > 0 {
+				fmt.Fprintf(out, "kept %d older release checkpoint(s) a rollback may still restore\n", done.CheckpointsKept)
 			}
 			return nil
 		},
 	}
 }
 
-// forget applies the retention policy to this backup's repository.
-func (x *backingUp) forget(ctx context.Context) (int, error) {
+// FullPruneEvery is how often a repository gets a prune without the repack
+// cap. The capped prune after each backup rewrites at most PruneMaxRepack,
+// which keeps it inside its deadline but lets a repository with more
+// partly used packs than that fall behind for good: the dead data only
+// grows. Once a week is often enough to catch up and rare enough that an
+// hour of rewriting, during which the repository is locked, stays an
+// exception.
+const FullPruneEvery = 7 * 24 * time.Hour
+
+// fullPruneDue reports whether a repository's full prune is due. Attempts
+// count, not completions: a full prune that ran out of its deadline is not
+// tried again every night, and the capped prunes in between still make
+// progress. A repository never pruned in full is due at once, so a missed
+// week is caught up by the next backup. A recorded attempt in the future
+// is a clock that moved, and counts as due.
+func fullPruneDue(last state.StoragePrune, now time.Time) bool {
+	return last.AttemptedAt.IsZero() || !now.Before(last.AttemptedAt.Add(FullPruneEvery)) || last.AttemptedAt.After(now)
+}
+
+// forget applies the retention policy to this backup's repository, then
+// prunes it: in full when the weekly prune is due, capped otherwise.
+func (x *backingUp) forget(ctx context.Context, out io.Writer) (restic.Forgotten, error) {
 	e, r, err := x.repo(ctx)
 	if err != nil {
-		return 0, err
+		return restic.Forgotten{}, err
 	}
 	defer e.Close()
-	return r.Forget(ctx, x.target, x.keep)
+	// A rule that cannot be read protects every checkpoint. It is still an
+	// error, so the run says retention was deferred.
+	expired, ruleErr := x.checkpointRule(ctx)
+	done, err := r.Forget(ctx, x.target, x.keep, expired)
+	if err != nil {
+		return done, err
+	}
+	full := false
+	store, now := x.b.Store, time.Now().UTC()
+	if store != nil {
+		last, err := store.StoragePruneOf(ctx, x.bucket)
+		// The attempt is recorded before it starts. If it cannot be read or
+		// recorded, the capped prune runs instead: a full prune nobody
+		// remembers would run again every night.
+		if err == nil && fullPruneDue(last, now) && store.StoragePruneAttempted(ctx, x.bucket, now) == nil {
+			full = true
+			fmt.Fprintln(out, "weekly full prune: rewriting every pack worth rewriting")
+		}
+	}
+	if err := r.Prune(ctx, full); err != nil {
+		return done, err
+	}
+	if full {
+		if err := store.StoragePruneCompleted(ctx, x.bucket, time.Now().UTC()); err != nil {
+			return done, fmt.Errorf("record the full prune: %w", err)
+		}
+	}
+	return done, ruleErr
+}
+
+// checkpointRule is the release checkpoint expiry rule for this backup's
+// repository. The machine's own repository holds no checkpoints.
+func (x *backingUp) checkpointRule(ctx context.Context) (func(restic.Snapshot) bool, error) {
+	if x.b.Store == nil || x.owner == manifest.ReservedApp {
+		return nil, nil
+	}
+	return releaseCheckpointRule(ctx, x.b.Store, x.owner)
 }
 
 func firstLine(s string) string {

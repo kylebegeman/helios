@@ -52,7 +52,11 @@ func retentionRepository(t *testing.T, summary restic.Summary, forget *string) (
 				case "fail":
 					c.ExitCode, c.Logs = 1, `{"message_type":"exit_error","code":1,"message":"Fatal: unable to create lock in backend: repository is already locked exclusively"}`
 				default:
-					c.Logs = `[{"remove":[{"id":"old"}]}]`
+					// The dry run names what the policy drops; the forget
+					// that follows names it by id and prints nothing.
+					if slices.Contains(c.Cmd, "--dry-run") {
+						c.Logs = `[{"remove":[{"id":"` + strings.Repeat("0", 64) + `","tags":["bedrock"]}]}]`
+					}
 				}
 			}
 		})
@@ -88,7 +92,7 @@ func TestBackupDefersRetentionThatFailsOrRunsOutOfTime(t *testing.T) {
 				}
 				want := []string{"init", "unlock", "backup", "forget"}
 				if forget == "prune hang" {
-					want = append(want, "prune")
+					want = append(want, "forget", "prune")
 				}
 				if !slices.Equal(*commands, want) {
 					t.Fatalf("stale locks must be cleared before the capture: %v, want %v", *commands, want)

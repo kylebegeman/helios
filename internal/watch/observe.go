@@ -122,6 +122,9 @@ type Prober struct {
 	// OperationLockStale overrides how long the operation lock may be
 	// held; zero means OperationLockStale.
 	OperationLockStale time.Duration
+	// StorageSet says whether the storage integration is set; nil leaves a
+	// sweep that stopped running unwatched.
+	StorageSet func() bool
 
 	// mu keeps rounds from overlapping.
 	mu sync.Mutex
@@ -176,6 +179,8 @@ func (p *Prober) Observe(ctx context.Context) []Condition {
 	if why := p.machineBackupProblem(ctx, p.Now()); why != "" {
 		conditions = append(conditions, Condition{Key: "host:machine-backup", Subject: "machine backups", Severity: state.SeverityWarning, Message: why})
 	}
+
+	conditions = append(conditions, p.storage(ctx)...)
 
 	e, err := p.Connect(ctx)
 	if err != nil {

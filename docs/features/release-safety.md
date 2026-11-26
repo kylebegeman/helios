@@ -68,13 +68,14 @@ no changes.
 Before an unknown or restore-required release against an existing data app,
 Helios captures a quiesced checkpoint of the active revision. Storage must be
 configured and capture must succeed before any release job runs. The checkpoint
-is tagged `bedrock-release-checkpoint` and ordinary backup retention keeps it.
-Checkpoint storage therefore grows until checkpoints are deliberately retired
-outside automatic retention. Garbage collection also keeps the prior revision
-record and its workload images while a checkpoint has not been restored, even
-beyond the ordinary five retired revisions. This preserves the code needed for
-an explicit data rollback after later deployments. Once restoration completes,
-ordinary active and previous revision retention applies again.
+is tagged `bedrock-release-checkpoint` and backup retention leaves it alone
+for as long as a rollback could restore it; see
+[when a checkpoint expires](#when-a-checkpoint-expires). Garbage collection
+also keeps the prior revision record and its workload images while a
+checkpoint has not been restored, even beyond the ordinary five retired
+revisions. This preserves the code needed for an explicit data rollback after
+later deployments. Once restoration completes, ordinary active and previous
+revision retention applies again.
 
 The exact checkpoint and prior revision are persisted before release execution.
 The release boundary then transitions from prepared to started to completed or
@@ -122,8 +123,56 @@ revive the app. Retrying the same rollback restores the same checkpoint and
 clears any partially restored data before retrying. A completed restoration is
 idempotent while no later unsafe data release has occurred. If a later release
 changes data incompatibly, the previously restored checkpoint cannot be reused
-to skip restoration; Helios names the newer checkpoint to review. Other apps
+to skip restoration; Helios names the newer checkpoint to review. Restoring a
+checkpoint also discards every later release's data changes, so the
+checkpoints of those later releases are marked restored without having been
+restored. A rollback that names one of them is refused: the data is now older
+than that checkpoint, and a rollback does not move it forward. Other apps
 remain active.
 Releases predating boundary recording with unknown data compatibility are also
 refused for code-only rollback; recover through a separately verified backup
 when no retained pre-release checkpoint exists.
+
+## When a checkpoint expires
+
+One thing reads a release checkpoint: `helios rollback --restore-data`. A
+rollback accepts a checkpoint only when a release boundary of the app records
+exactly that snapshot together with the revision to return to, and it restores
+the snapshot only while that boundary is not yet marked restored. Retention
+follows the same test. **A checkpoint is exempt from retention for as long as
+any release boundary of its app records it with a status other than
+restored.** Prepared, started, completed, failed and restoring all keep it.
+
+A checkpoint loses the exemption in exactly two cases:
+
+1. Every boundary that records it is restored. The data was put back to that
+   checkpoint or an earlier one. A rollback that names it again is refused
+   when a later release changed data again or when it was an earlier
+   checkpoint that was restored, and otherwise succeeds without reading the
+   snapshot.
+2. No boundary records it and this machine's backup history shows that this
+   machine took it. That is the checkpoint of an app that was removed:
+   removal deletes the app's boundaries, and a rollback finds a checkpoint
+   only through a boundary.
+
+Everything else stays exempt, and when in doubt a checkpoint is kept:
+
+- The checkpoint of a release that completed long ago stays, because a
+  rollback still accepts it.
+- A checkpoint that a later data-changing release makes a rollback refuse
+  today stays, because the refusal lifts once the later release is restored.
+- A checkpoint this machine has no record of stays, because another machine
+  backing up to the same bucket may hold its boundary.
+- When the boundaries or the backup history cannot be read, every checkpoint
+  stays, and `helios backups` shows retention deferred with that reason.
+
+Losing the exemption deletes nothing by itself. The checkpoint becomes an
+ordinary snapshot: the app's `backup.keep` policy holds it while it is the
+newest of its day, week or month, and forgets it when it is not. Its space
+comes back with the prune that follows.
+
+This rule follows what a rollback accepts today, and a rollback puts no age
+limit on a checkpoint. An app that ships data-changing releases and never
+restores one therefore keeps one checkpoint per release. Limiting that needs
+a decision about rollback first: how old a release may be and still be
+undone by restoring data. Retention can then follow it.

@@ -42,6 +42,7 @@ Available Commands:
   run              Run a one-off command with a workload's image, environment, secrets and volumes.
   secret           Keep an app's secrets sealed on this machine.
   status           How the machine and its apps are doing: health, traffic, resources, backups, alerts.
+  storage          What each backup bucket holds, how fast it grows, and which removed apps' buckets are about to expire.
   target           Configure explicit SSH targets with pinned host-key verification.
   upgrade          Replace helios with a new build and restart the daemon; systemd rolls back if it can't start.
   version          Print the version of this build.
@@ -2018,8 +2019,16 @@ stay unless asked, so it can be restored or deployed again with what it had.
 
 --data removes them too, the secrets included. For an app that is no longer
 on this machine, --data removes whatever it left behind: its sealed secrets,
-volumes, database and networks. Its backups in the storage bucket stay, and
-are the only way back.
+volumes, database and networks.
+
+The app's backups stay in its storage bucket for 30 days, and after --data
+they are the only way back. Then the bucket is deleted with every backup in
+it, provided every snapshot in it is one this machine made. The plan names
+the bucket and says so; helios storage shows the date, helios storage keep
+<app> cancels it, and deploying the app again clears it. A bucket this
+machine never backed the app up to is left alone, and so is the bucket of
+an app that left through a move, unless the app is deployed here and
+removed again.
 Usage:
   helios remove <app> [flags]
 
@@ -2230,6 +2239,114 @@ Usage:
 
 Flags:
       --since duration   the window for traffic and resources (default 24h0m0s)
+
+Global Flags:
+      --json                  print JSON, one object per line
+      --socket string         the daemon's socket; the local kernel is used when nothing answers (default "/run/bedrock/bedrock.sock")
+      --state-dir string      where helios keeps its state (default "~/.bedrock")
+      --target string         operate on this explicitly named SSH target
+      --targets-file string   the local named-target configuration (default "~/.bedrock/targets.json")
+== helios storage (hidden false)
+What each backup bucket holds, how fast it grows, and which removed apps' buckets are about to expire.
+One row for each bucket this machine owns: every app that is backed up, the
+machine's own, and every removed app whose bucket has not expired yet.
+
+The figures are the ones the nightly storage sweep recorded, so the report
+reads no storage and shows the account as of the time it names. helios
+storage sweep measures again now.
+
+  SIZE       every version of every file in the bucket: what is billed
+  SNAPSHOTS  how many snapshots the repository holds
+  NEWEST     when the newest of them was taken
+  7D GROWTH  SIZE now against SIZE seven days ago; in a bucket's first week
+             of samples, against its first sample, and it says so
+  DEAD       SIZE less what "restic stats --mode raw-data" counts: the
+             stored size of every blob a snapshot still uses, read from the
+             repository's index without downloading any data. What is left
+             is data no snapshot uses, waiting for a prune, and it includes
+             the repository's own indexes, a few megabytes.
+
+A removed app's bucket is deleted, with every backup in it, 30 days after
+helios remove. helios storage keep <app> cancels that and helios storage
+purge <app> does it now. Only a bucket this machine removed the app of is
+ever deleted, and only when every snapshot in it is one this machine made:
+a bucket that holds another machine's backups stays, and says so.
+
+The second list is buckets that carry this machine's prefix and belong to
+another machine or to nobody. They are reported and never touched.
+Usage:
+  helios storage [flags]
+  helios storage [command]
+
+Available Commands:
+  keep        Keep a removed app's bucket: cancel its expiry.
+  purge       Delete a removed app's bucket now, with every backup in it.
+  sweep       Measure every bucket now and delete the buckets of apps removed more than 30 days ago.
+
+Global Flags:
+      --json                  print JSON, one object per line
+      --socket string         the daemon's socket; the local kernel is used when nothing answers (default "/run/bedrock/bedrock.sock")
+      --state-dir string      where helios keeps its state (default "~/.bedrock")
+      --target string         operate on this explicitly named SSH target
+      --targets-file string   the local named-target configuration (default "~/.bedrock/targets.json")
+
+Use "helios storage [command] --help" for more information about a command.
+== helios storage keep (hidden false)
+Keep a removed app's bucket: cancel its expiry.
+Keep a removed app's bucket and the backups in it. Nothing deletes it
+afterwards except helios storage purge. Removing the app again, after it
+was deployed again, starts a new 30 days.
+Usage:
+  helios storage keep <app> [flags]
+
+Flags:
+      --digest string   apply only if the plan is still the one with this digest; implies --yes
+      --plan            show the plan and change nothing
+      --yes             apply without asking
+
+Global Flags:
+      --json                  print JSON, one object per line
+      --socket string         the daemon's socket; the local kernel is used when nothing answers (default "/run/bedrock/bedrock.sock")
+      --state-dir string      where helios keeps its state (default "~/.bedrock")
+      --target string         operate on this explicitly named SSH target
+      --targets-file string   the local named-target configuration (default "~/.bedrock/targets.json")
+== helios storage purge (hidden false)
+Delete a removed app's bucket now, with every backup in it.
+Delete a removed app's bucket now, without waiting for its 30 days: every
+version of every file, then the bucket. Nothing brings the backups back.
+
+Only an app helios remove took off this machine can be purged. A bucket is
+refused when it holds a snapshot this machine has no record of making, when
+it holds files but no snapshot, or when it was written to after the app was
+removed: another machine backs up to it. Backups a machine recovery brought
+with it count as the other machine's. A purge that stops part way is run
+again to finish.
+Usage:
+  helios storage purge <app> [flags]
+
+Flags:
+      --digest string   apply only if the plan is still the one with this digest; implies --yes
+      --plan            show the plan and change nothing
+      --yes             apply without asking
+
+Global Flags:
+      --json                  print JSON, one object per line
+      --socket string         the daemon's socket; the local kernel is used when nothing answers (default "/run/bedrock/bedrock.sock")
+      --state-dir string      where helios keeps its state (default "~/.bedrock")
+      --target string         operate on this explicitly named SSH target
+      --targets-file string   the local named-target configuration (default "~/.bedrock/targets.json")
+== helios storage sweep (hidden false)
+Measure every bucket now and delete the buckets of apps removed more than 30 days ago.
+Do now what runs every night: measure each bucket for the report and the
+growth alert, then delete the bucket of every app removed more than 30 days
+ago. The plan names each bucket it would delete.
+Usage:
+  helios storage sweep [flags]
+
+Flags:
+      --digest string   apply only if the plan is still the one with this digest; implies --yes
+      --plan            show the plan and change nothing
+      --yes             apply without asking
 
 Global Flags:
       --json                  print JSON, one object per line
