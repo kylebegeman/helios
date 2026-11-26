@@ -47,10 +47,25 @@ func remove(t *testing.T, r Remove, in RemoveInput) string {
 	return plan.Steps[len(plan.Steps)-1].Change
 }
 
+// backedUp records a finished run of a kind for an app that names a
+// snapshot.
+func backedUp(t *testing.T, store *state.Store, app, kind, snapshot string) {
+	t.Helper()
+	ctx := context.Background()
+	id, err := store.StartBackupRun(ctx, app, kind, time.Now().UTC())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.FinishBackupRun(ctx, id, state.BackupRun{OK: true, FinishedAt: time.Now().UTC(), Snapshot: snapshot}); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestRemovingAnAppStartsItsBucketsThirtyDays(t *testing.T) {
 	r, sec := removeFixture(t)
 	ctx := context.Background()
 	seedManifest(t, r.Store, "blog", dataManifest)
+	backedUp(t, r.Store, "blog", state.BackupRunBackup, strings.Repeat("a", 64))
 	before := time.Now().UTC().Add(-time.Second)
 	change := remove(t, r, RemoveInput{App: "blog"})
 	if want := "; its backups in bucket helios-blog are deleted after 30 days unless helios storage keep blog cancels that"; !strings.HasSuffix(change, want) {
@@ -116,16 +131,29 @@ func TestRemovingAnAppWithNothingBackedUpRecordsNoTombstone(t *testing.T) {
 	t.Run("an app that keeps no data now and was backed up once", func(t *testing.T) {
 		r, _ := removeFixture(t)
 		seedApp(t, r.Store, "hello")
-		id, err := r.Store.StartBackupRun(ctx, "hello", state.BackupRunBackup, time.Now().UTC())
-		if err != nil {
-			t.Fatal(err)
-		}
-		if err := r.Store.FinishBackupRun(ctx, id, state.BackupRun{OK: true, FinishedAt: time.Now().UTC()}); err != nil {
-			t.Fatal(err)
-		}
+		backedUp(t, r.Store, "hello", releaseCheckpointRun, strings.Repeat("a", 64))
 		remove(t, r, RemoveInput{App: "hello"})
 		if got, err := r.Store.StorageTombstone(ctx, "hello"); err != nil || got.Bucket != "helios-hello" {
 			t.Fatalf("tombstone: %+v %v", got, err)
+		}
+	})
+	// Another machine may run a blog of its own against the same account
+	// and prefix. This machine never wrote to that bucket, so removing its
+	// blog must not start a clock on it.
+	t.Run("an app that keeps data and was never backed up here", func(t *testing.T) {
+		r, _ := removeFixture(t)
+		seedManifest(t, r.Store, "blog", dataManifest)
+		// What this machine recorded reading, or failing to make, is not a
+		// snapshot it made.
+		backedUp(t, r.Store, "blog", state.BackupRunDrill, strings.Repeat("b", 64))
+		backedUp(t, r.Store, "blog", state.BackupRunRestore, strings.Repeat("b", 64))
+		backedUp(t, r.Store, "blog", state.BackupRunBackup, "")
+		backedUp(t, r.Store, "shop", state.BackupRunBackup, strings.Repeat("c", 64))
+		if change := remove(t, r, RemoveInput{App: "blog"}); strings.Contains(change, "bucket") {
+			t.Fatalf("plan: %s", change)
+		}
+		if got, _ := r.Store.StorageTombstones(ctx); len(got) != 0 {
+			t.Fatalf("tombstones: %+v", got)
 		}
 	})
 	t.Run("storage is not set", func(t *testing.T) {
@@ -221,6 +249,7 @@ func TestRemovingAnAppThatMovedNeverStartsAnExpiry(t *testing.T) {
 	t.Run("a move recorded after the removal was reviewed", func(t *testing.T) {
 		r, _ := removeFixture(t)
 		seedManifest(t, r.Store, "blog", dataManifest)
+		backedUp(t, r.Store, "blog", state.BackupRunBackup, strings.Repeat("a", 64))
 		raw, _ := json.Marshal(RemoveInput{App: "blog"})
 		plan, err := r.Plan(ctx, raw)
 		if err != nil {

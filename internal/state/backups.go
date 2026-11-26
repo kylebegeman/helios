@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"strings"
 	"time"
 )
 
@@ -86,6 +87,35 @@ func (s *Store) SkipDrill(ctx context.Context, app string, occurrence time.Time,
 		return 0, err
 	}
 	return res.LastInsertId()
+}
+
+// SnapshotsMade returns the id of every snapshot that a successful run of
+// one of the given kinds recorded for an app. Pass the kinds that write a
+// snapshot: a drill or a restore records the snapshot it read, which may be
+// one another machine made. The runs of a removed app are kept, so this
+// still answers after the app is gone.
+func (s *Store) SnapshotsMade(ctx context.Context, app string, kinds ...string) (map[string]bool, error) {
+	out := map[string]bool{}
+	if len(kinds) == 0 {
+		return out, nil
+	}
+	args := []any{app}
+	for _, kind := range kinds {
+		args = append(args, kind)
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT DISTINCT snapshot FROM backup_runs WHERE app = ? AND ok = 1 AND snapshot != '' AND kind IN (?`+strings.Repeat(", ?", len(kinds)-1)+`)`, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		out[id] = true
+	}
+	return out, rows.Err()
 }
 
 const backupRunColumns = `id, app, kind, started_at, finished_at, ok, snapshot, snapshot_at, files, bytes, detail, error`

@@ -103,7 +103,7 @@ func (r Remove) Plan(ctx context.Context, raw json.RawMessage) (*kernel.Plan, er
 	// With its data gone, the secrets that opened it go too: left behind,
 	// they are keys to nothing on this machine that nothing removes.
 	x.secrets = in.Secrets || in.Data
-	if x.fate, err = r.bucketFate(ctx, in.App, revs); err != nil {
+	if x.fate, err = r.bucketFate(ctx, in.App); err != nil {
 		return nil, err
 	}
 	plan := &kernel.Plan{Target: in.App, Recovery: kernel.Resume}

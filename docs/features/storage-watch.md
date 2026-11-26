@@ -114,9 +114,22 @@ clears its tombstone: the bucket is in use.
 
 **Only a bucket this machine tombstoned through `helios remove` is ever
 deleted**, by the sweep or by `purge`. `helios storage keep` and `helios
-storage purge` refuse any other name. On top of that the sweep deletes
-nothing, and raises `host:storage-expiry`, when any of these holds:
+storage purge` refuse any other name.
 
+A tombstone only says this machine gave the app up. Two machines can share
+one account and prefix and each run an app of the same name, and the bucket
+then holds the other machine's backups. So before a bucket is deleted its
+snapshots are read, and **every one of them must be a snapshot this machine
+recorded making**: a backup, the capture a move takes, or a release
+checkpoint. The record of an app's backup runs is kept after the app is
+removed. A drill or a restore does not count, because it reads a snapshot
+that anyone may have made.
+
+Neither the sweep nor `purge` deletes anything, and the sweep raises
+`host:storage-expiry`, when any of these holds:
+
+- the bucket holds a snapshot this machine did not make, its snapshots
+  cannot be read, or this machine has no record of a backup of the app;
 - something was uploaded to the bucket more than an hour after the app was
   removed, so another machine or tool is using it;
 - the app is deployed on this machine again;
@@ -130,12 +143,17 @@ before anything is deleted, and that raises `host:storage-sweep`.
 
 No tombstone is recorded when:
 
-- storage is not set, or the app never had data or a backup;
+- storage is not set, or this machine never recorded a snapshot of the app.
+  That the app keeps data is not enough: a machine that never backed the app
+  up has nothing in the bucket;
 - the removal only clears what an already removed app left behind
   (`helios remove <app> --data` for an app that is no longer on the machine);
 - the app has a move on record. A moved app's bucket is the one its new
   machine backs up to, so it is listed with the buckets this machine does not
-  own and can be neither purged nor expired from here.
+  own and can be neither purged nor expired from here. Deploying the app on
+  this machine again clears that mark like any other tombstone; a later
+  removal then expires the bucket only if every snapshot in it is this
+  machine's, as above.
 
 ## The weekly full prune
 

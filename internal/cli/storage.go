@@ -39,7 +39,8 @@ storage sweep measures again now.
 A removed app's bucket is deleted, with every backup in it, 30 days after
 helios remove. helios storage keep <app> cancels that and helios storage
 purge <app> does it now. Only a bucket this machine removed the app of is
-ever deleted.
+ever deleted, and only when every snapshot in it is one this machine made:
+a bucket that holds another machine's backups stays, and says so.
 
 The second list is buckets that carry this machine's prefix and belong to
 another machine or to nobody. They are reported and never touched.`,
@@ -102,9 +103,10 @@ was deployed again, starts a new 30 days.`,
 		Long: `Delete a removed app's bucket now, without waiting for its 30 days: every
 version of every file, then the bucket. Nothing brings the backups back.
 
-Only an app helios remove took off this machine can be purged. A bucket
-that was written to after the app was removed is still in use by something,
-and is refused.`,
+Only an app helios remove took off this machine can be purged. A bucket is
+refused when it holds a snapshot this machine did not make, when its
+snapshots cannot be read, or when it was written to after the app was
+removed: another machine backs up to it.`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return a.operate(cmd.Context(), apps.StoragePurgeKind, apps.StorageAppInput{App: args[0]}, purgePlan)

@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -16,6 +17,7 @@ import (
 	"github.com/kylebegeman/helios/internal/integration"
 	"github.com/kylebegeman/helios/internal/kernel"
 	"github.com/kylebegeman/helios/internal/objectstore"
+	"github.com/kylebegeman/helios/internal/restic"
 	"github.com/kylebegeman/helios/internal/secrets"
 	"github.com/kylebegeman/helios/internal/state"
 )
@@ -90,6 +92,16 @@ type storageFixture struct {
 	account *fakeAccount
 	now     time.Time
 	watch   StorageWatch
+	// snapshots is what each bucket's repository holds, by snapshot id, and
+	// snapshotsErr what reading one answers instead.
+	snapshots    map[string][]string
+	snapshotsErr map[string]error
+}
+
+// snapshotOf is the id of the one snapshot a fixture machine made of an
+// app: "blog" on "vps" and "blog" on "other" are different snapshots.
+func snapshotOf(machine, app string) string {
+	return fmt.Sprintf("%x", sha256.Sum256([]byte(machine+"/"+app)))
 }
 
 var storageDay = time.Date(2026, 11, 25, 5, 0, 0, 0, time.UTC)
@@ -109,12 +121,37 @@ func newStorageFixture(t *testing.T) *storageFixture {
 	}
 	t.Cleanup(func() { store.Close() })
 	f := &storageFixture{t: t, store: store, secrets: newSecrets(t), now: storageDay,
-		account: &fakeAccount{id: "b2:acct", buckets: map[string]*fakeBucket{}}}
+		account:   &fakeAccount{id: "b2:acct", buckets: map[string]*fakeBucket{}},
+		snapshots: map[string][]string{}, snapshotsErr: map[string]error{}}
 	setStorage(t, f.secrets, "helios", "key-one")
 	f.watch = StorageWatch{Store: store, Secrets: f.secrets, Hostname: func() string { return "vps" },
 		Objects: func(objectstore.Config) (objectstore.Store, error) { return f.account, nil },
-		Now:     func() time.Time { return f.now }}
+		Snapshots: func(_ context.Context, _ *integration.Storage, bucket string) ([]restic.Snapshot, error) {
+			if err := f.snapshotsErr[bucket]; err != nil {
+				return nil, err
+			}
+			var out []restic.Snapshot
+			for _, id := range f.snapshots[bucket] {
+				out = append(out, restic.Snapshot{ID: id, ShortID: id[:8]})
+			}
+			return out, nil
+		},
+		Now: func() time.Time { return f.now }}
 	return f
+}
+
+// ran records a finished run of a kind for an app that names a snapshot,
+// as this machine's state does.
+func (f *storageFixture) ran(app, kind, snapshot string) {
+	f.t.Helper()
+	ctx := context.Background()
+	id, err := f.store.StartBackupRun(ctx, app, kind, storageDay.Add(-24*time.Hour))
+	if err != nil {
+		f.t.Fatal(err)
+	}
+	if err := f.store.FinishBackupRun(ctx, id, state.BackupRun{OK: true, FinishedAt: storageDay.Add(-24 * time.Hour), Snapshot: snapshot}); err != nil {
+		f.t.Fatal(err)
+	}
 }
 
 // bucket puts a bucket in the account, last written at the given time.
@@ -122,9 +159,24 @@ func (f *storageFixture) bucket(name string, bytes int64, lastWrite time.Time) {
 	f.account.buckets[name] = &fakeBucket{bytes: bytes, files: 12, lastWrite: lastWrite}
 }
 
-// removed records what helios remove records: the app's tombstone, with a
-// bucket last written a day before.
+// removed is an app this machine backed up once and then removed: the run
+// that made its snapshot, that snapshot in its bucket, and its tombstone.
 func (f *storageFixture) removed(app string, at time.Time) {
+	f.t.Helper()
+	st, err := integration.LoadStorage(f.secrets)
+	if err != nil {
+		f.t.Fatal(err)
+	}
+	f.ran(app, state.BackupRunBackup, snapshotOf("vps", app))
+	if _, ok := f.snapshots[st.Bucket(app)]; !ok {
+		f.snapshots[st.Bucket(app)] = []string{snapshotOf("vps", app)}
+	}
+	f.tombstoned(app, at)
+}
+
+// tombstoned records only what helios remove records: the app's tombstone,
+// with a bucket last written a day before.
+func (f *storageFixture) tombstoned(app string, at time.Time) {
 	f.t.Helper()
 	st, err := integration.LoadStorage(f.secrets)
 	if err != nil {
@@ -408,6 +460,28 @@ func TestAnyDoubtHoldsTheBucket(t *testing.T) {
 		{"a deletion that fails part way", func(f *storageFixture) {
 			f.account.deleteErr = map[string]error{"helios-blog": errors.New("storage answered HTTP 503")}
 		}, "deleting it did not finish after 2 file(s)"},
+		// Another machine shares the account and the prefix and runs a blog
+		// of its own. Its backups are in this bucket, uploaded before blog
+		// was removed here and none since, so the upload check sees nothing.
+		{"another machine's snapshot beside this machine's", func(f *storageFixture) {
+			f.snapshots["helios-blog"] = append(f.snapshots["helios-blog"], snapshotOf("other", "blog"))
+		}, "1 of its 2 snapshot(s) were not made by this machine (the first is " + snapshotOf("other", "blog")[:8] + ")"},
+		{"only another machine's snapshots", func(f *storageFixture) {
+			f.snapshots["helios-blog"] = []string{snapshotOf("other", "blog")}
+		}, "1 of its 1 snapshot(s) were not made by this machine"},
+		{"a snapshot this machine drilled and restored but did not make", func(f *storageFixture) {
+			theirs := snapshotOf("other", "blog")
+			f.snapshots["helios-blog"] = append(f.snapshots["helios-blog"], theirs)
+			f.ran("blog", state.BackupRunDrill, theirs)
+			f.ran("blog", state.BackupRunRestore, theirs)
+		}, "1 of its 2 snapshot(s) were not made by this machine"},
+		{"another app's snapshot", func(f *storageFixture) {
+			f.ran("shop", state.BackupRunBackup, snapshotOf("vps", "shop"))
+			f.snapshots["helios-blog"] = []string{snapshotOf("vps", "shop")}
+		}, "1 of its 1 snapshot(s) were not made by this machine"},
+		{"snapshots that cannot be read", func(f *storageFixture) {
+			f.snapshotsErr["helios-blog"] = errors.New("Fatal: wrong password or no key found")
+		}, "its snapshots could not be read, so it cannot be told whose backups it holds (Fatal: wrong password or no key found)"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			f := newStorageFixture(t)
@@ -433,6 +507,52 @@ func TestAnyDoubtHoldsTheBucket(t *testing.T) {
 				t.Fatalf("purge deleted in doubt: %v", f.account.deleted)
 			}
 		})
+	}
+}
+
+// A tombstone alone proves nothing about whose backups a bucket holds. A
+// machine that removed an app it never backed up has one only if something
+// went wrong, and it must still not delete the bucket: an app of the same
+// name on another machine may be all that ever wrote to it.
+func TestATombstoneWithoutABackupMadeHereDeletesNothing(t *testing.T) {
+	f := newStorageFixture(t)
+	f.tombstoned("blog", storageDay)
+	f.snapshots["helios-blog"] = []string{snapshotOf("other", "blog")}
+	f.now = storageDay.Add(BucketExpiry + time.Hour)
+	out, err := f.sweep()
+	if err != nil {
+		t.Fatal(err, out)
+	}
+	const want = "this machine has no record of a backup of blog"
+	if got := f.tombstone("blog"); len(f.account.deleted) != 0 || got == nil || !strings.Contains(got.Problem, want) {
+		t.Fatalf("deleted %v, tombstone %+v\n%s", f.account.deleted, got, out)
+	}
+	// An empty repository changes nothing: there is still no proof.
+	f.snapshots["helios-blog"] = nil
+	if _, err := f.run(StoragePurgeKind, StorageAppInput{App: "blog"}); err == nil || !strings.Contains(err.Error(), want) || len(f.account.deleted) != 0 {
+		t.Fatalf("purge without a backup made here: %v, deleted %v", err, f.account.deleted)
+	}
+}
+
+// Purging minutes after a removal is the case the upload check cannot see:
+// everything in the bucket was uploaded before the removal, including what
+// another machine that runs the same app uploaded a moment ago.
+func TestPurgeRightAfterARemovalLeavesAnotherMachinesBackups(t *testing.T) {
+	f := newStorageFixture(t)
+	f.removed("blog", storageDay)
+	f.snapshots["helios-blog"] = append(f.snapshots["helios-blog"], snapshotOf("other", "blog"))
+	f.account.buckets["helios-blog"].lastWrite = storageDay.Add(20 * time.Minute)
+	f.now = storageDay.Add(30 * time.Minute)
+	if _, err := f.run(StoragePurgeKind, StorageAppInput{App: "blog"}); err == nil || !strings.Contains(err.Error(), "were not made by this machine") {
+		t.Fatalf("purge: %v", err)
+	}
+	if len(f.account.deleted) != 0 || f.account.buckets["helios-blog"] == nil {
+		t.Fatalf("purge deleted a bucket another machine backs up to: %v", f.account.deleted)
+	}
+	// Once the other machine's snapshot is gone, the same purge goes through.
+	f.snapshots["helios-blog"] = []string{snapshotOf("vps", "blog")}
+	if out, err := f.run(StoragePurgeKind, StorageAppInput{App: "blog"}); err != nil || f.account.buckets["helios-blog"] != nil {
+		t.Fatalf("purge of this machine's own bucket: %v\n%s", err, out)
 	}
 }
 
