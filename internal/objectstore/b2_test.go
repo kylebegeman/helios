@@ -222,7 +222,7 @@ func TestB2ListsBucketsAndAddsUpEveryVersion(t *testing.T) {
 func TestB2DeletesEveryVersionThenTheBucket(t *testing.T) {
 	ctx := context.Background()
 	fake, store := b2Fixture(t)
-	deleted, err := store.DeleteBucket(ctx, Bucket{Name: "helios-site", ID: "b-site"}, removedAt)
+	deleted, err := store.DeleteBucket(ctx, Bucket{Name: "helios-site", ID: "b-site"}, Check{NotWrittenSince: removedAt})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -243,7 +243,7 @@ func TestB2DeletesNothingFromABucketWrittenSince(t *testing.T) {
 	fake, store := b2Fixture(t)
 	// The write that gives it away is on the last page.
 	fake.files["b-site"] = append(fake.files["b-site"], fakeB2File{id: "f9", name: "snapshots/new", action: "upload", size: 1, at: removedAt.Add(time.Minute)})
-	deleted, err := store.DeleteBucket(ctx, Bucket{Name: "helios-site", ID: "b-site"}, removedAt)
+	deleted, err := store.DeleteBucket(ctx, Bucket{Name: "helios-site", ID: "b-site"}, Check{NotWrittenSince: removedAt})
 	if !errors.Is(err, ErrWrittenSince) {
 		t.Fatalf("error: %v", err)
 	}
@@ -256,7 +256,7 @@ func TestB2StopsAtARefusedDeleteAndCanBeRunAgain(t *testing.T) {
 	ctx := context.Background()
 	fake, store := b2Fixture(t)
 	fake.refuseAt = "f3"
-	deleted, err := store.DeleteBucket(ctx, Bucket{Name: "helios-site", ID: "b-site"}, removedAt)
+	deleted, err := store.DeleteBucket(ctx, Bucket{Name: "helios-site", ID: "b-site"}, Check{NotWrittenSince: removedAt})
 	var refusal *APIError
 	if !errors.As(err, &refusal) || refusal.Code != "access_denied" {
 		t.Fatalf("error: %v", err)
@@ -265,7 +265,7 @@ func TestB2StopsAtARefusedDeleteAndCanBeRunAgain(t *testing.T) {
 		t.Fatal("the bucket went although a file could not be deleted")
 	}
 	fake.refuseAt = ""
-	deleted, err = store.DeleteBucket(ctx, Bucket{Name: "helios-site", ID: "b-site"}, removedAt)
+	deleted, err = store.DeleteBucket(ctx, Bucket{Name: "helios-site", ID: "b-site"}, Check{NotWrittenSince: removedAt})
 	if err != nil || !deleted.Bucket {
 		t.Fatalf("second run: %+v %v", deleted, err)
 	}
@@ -283,5 +283,59 @@ func TestB2WrongKeyIsReported(t *testing.T) {
 	var refusal *APIError
 	if !errors.As(err, &refusal) || refusal.Status != http.StatusUnauthorized {
 		t.Fatalf("error: %v", err)
+	}
+}
+
+// A check on the bucket's contents refuses before anything is deleted,
+// whether it objects to one name or to the bucket as a whole, and is asked
+// again about each page as it goes.
+func TestB2DeletesNothingFromABucketItsCheckRefuses(t *testing.T) {
+	ctx := context.Background()
+	refusal := errors.New("not ours")
+	for name, check := range map[string]Check{
+		"a name": {Key: func(key string) error {
+			if strings.HasPrefix(key, "data/") {
+				return refusal
+			}
+			return nil
+		}},
+		"the whole": {Whole: func() error { return refusal }},
+	} {
+		fake, store := b2Fixture(t)
+		for _, try := range []func() error{
+			func() error { return store.Examine(ctx, Bucket{Name: "helios-site", ID: "b-site"}, check) },
+			func() error {
+				_, err := store.DeleteBucket(ctx, Bucket{Name: "helios-site", ID: "b-site"}, check)
+				return err
+			},
+		} {
+			if err := try(); !errors.Is(err, refusal) {
+				t.Fatalf("%s: error %v", name, err)
+			}
+			if len(fake.deletes) != 0 || len(fake.files["b-site"]) != 5 {
+				t.Fatalf("%s: something was deleted: %v", name, fake.deletes)
+			}
+		}
+	}
+
+	// What passes is read whole, judged once, and then every name is asked
+	// about a second time on its way out.
+	fake, store := b2Fixture(t)
+	seen, judged := map[string]int{}, 0
+	check := Check{Key: func(key string) error { seen[key]++; return nil }, Whole: func() error {
+		judged++
+		if len(fake.deletes) != 0 {
+			t.Fatal("judged after the deletion began")
+		}
+		return nil
+	}}
+	if err := store.Examine(ctx, Bucket{Name: "helios-site", ID: "b-site"}, check); err != nil || len(fake.deletes) != 0 || judged != 1 {
+		t.Fatalf("examine: %v, deletes %v, judged %d", err, fake.deletes, judged)
+	}
+	if _, err := store.DeleteBucket(ctx, Bucket{Name: "helios-site", ID: "b-site"}, check); err != nil || judged != 2 {
+		t.Fatalf("delete: %v, judged %d", err, judged)
+	}
+	if seen["config"] != 3 {
+		t.Fatalf("config was asked about %d times, want once to examine, once to read and once to delete: %v", seen["config"], seen)
 	}
 }

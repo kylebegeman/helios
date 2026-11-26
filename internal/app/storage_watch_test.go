@@ -17,7 +17,6 @@ import (
 	"github.com/kylebegeman/helios/internal/integration"
 	"github.com/kylebegeman/helios/internal/kernel"
 	"github.com/kylebegeman/helios/internal/objectstore"
-	"github.com/kylebegeman/helios/internal/restic"
 	"github.com/kylebegeman/helios/internal/secrets"
 	"github.com/kylebegeman/helios/internal/state"
 )
@@ -38,6 +37,21 @@ type fakeAccount struct {
 type fakeBucket struct {
 	bytes, files int64
 	lastWrite    time.Time
+	// keys are the bucket's files in the order of their names, as a
+	// listing returns them and a deletion takes them.
+	keys []string
+	// arrives is a file that turns up once the bucket was read: someone
+	// wrote to it while it was being deleted.
+	arrives string
+}
+
+// repository is the files of a restic repository with the given snapshots.
+func repository(snapshots ...string) []string {
+	keys := []string{"config", "data/0f/0f11", "index/a1", "keys/k1"}
+	for _, id := range snapshots {
+		keys = append(keys, "snapshots/"+id)
+	}
+	return keys
 }
 
 func (a *fakeAccount) Account(context.Context) (string, error) { return a.id, a.accountErr }
@@ -64,22 +78,66 @@ func (a *fakeAccount) Usage(_ context.Context, b objectstore.Bucket) (objectstor
 	return objectstore.Usage{Bytes: bucket.bytes, Files: bucket.files, LastWrite: bucket.lastWrite}, nil
 }
 
-func (a *fakeAccount) DeleteBucket(_ context.Context, b objectstore.Bucket, notWrittenSince time.Time) (objectstore.Deleted, error) {
+func (a *fakeAccount) examine(b objectstore.Bucket, check objectstore.Check) (*fakeBucket, error) {
 	bucket, ok := a.buckets[b.Name]
 	if !ok || b.ID != "id-"+b.Name {
-		return objectstore.Deleted{}, objectstore.ErrNoBucket
+		return nil, objectstore.ErrNoBucket
 	}
-	if !notWrittenSince.IsZero() && bucket.lastWrite.After(notWrittenSince) {
-		return objectstore.Deleted{}, fmt.Errorf("%w: data/0f on %s", objectstore.ErrWrittenSince, bucket.lastWrite.Format(time.RFC3339))
+	if err := a.usageErr[b.Name]; err != nil {
+		return nil, err
 	}
-	if err := a.deleteErr[b.Name]; err != nil {
-		return objectstore.Deleted{Files: 2}, err
+	if !check.NotWrittenSince.IsZero() && bucket.lastWrite.After(check.NotWrittenSince) {
+		return nil, fmt.Errorf("%w: data/0f on %s", objectstore.ErrWrittenSince, bucket.lastWrite.Format(time.RFC3339))
+	}
+	for _, key := range bucket.keys {
+		if check.Key != nil {
+			if err := check.Key(key); err != nil {
+				return nil, err
+			}
+		}
+	}
+	if check.Whole != nil {
+		if err := check.Whole(); err != nil {
+			return nil, err
+		}
+	}
+	return bucket, nil
+}
+
+func (a *fakeAccount) Examine(_ context.Context, b objectstore.Bucket, check objectstore.Check) error {
+	_, err := a.examine(b, check)
+	return err
+}
+
+// DeleteBucket deletes as the real stores do: the whole bucket is read
+// first, then its files go in the order of their names, each checked again.
+// A deleteErr stops it after two files, which stay deleted.
+func (a *fakeAccount) DeleteBucket(_ context.Context, b objectstore.Bucket, check objectstore.Check) (objectstore.Deleted, error) {
+	bucket, err := a.examine(b, check)
+	if err != nil {
+		return objectstore.Deleted{}, err
+	}
+	if bucket.arrives != "" {
+		bucket.keys, bucket.arrives = append(bucket.keys, bucket.arrives), ""
+	}
+	var done objectstore.Deleted
+	for len(bucket.keys) > 0 {
+		if err := a.deleteErr[b.Name]; err != nil && done.Files == 2 {
+			return done, err
+		}
+		if check.Key != nil {
+			if err := check.Key(bucket.keys[0]); err != nil {
+				return done, err
+			}
+		}
+		bucket.keys = bucket.keys[1:]
+		done.Files++
 	}
 	delete(a.buckets, b.Name)
 	if a.deleted == nil {
 		a.deleted = map[string]time.Time{}
 	}
-	a.deleted[b.Name] = notWrittenSince
+	a.deleted[b.Name] = check.NotWrittenSince
 	return objectstore.Deleted{Files: bucket.files, Bytes: bucket.bytes, Bucket: true}, nil
 }
 
@@ -92,10 +150,6 @@ type storageFixture struct {
 	account *fakeAccount
 	now     time.Time
 	watch   StorageWatch
-	// snapshots is what each bucket's repository holds, by snapshot id, and
-	// snapshotsErr what reading one answers instead.
-	snapshots    map[string][]string
-	snapshotsErr map[string]error
 }
 
 // snapshotOf is the id of the one snapshot a fixture machine made of an
@@ -121,22 +175,11 @@ func newStorageFixture(t *testing.T) *storageFixture {
 	}
 	t.Cleanup(func() { store.Close() })
 	f := &storageFixture{t: t, store: store, secrets: newSecrets(t), now: storageDay,
-		account:   &fakeAccount{id: "b2:acct", buckets: map[string]*fakeBucket{}},
-		snapshots: map[string][]string{}, snapshotsErr: map[string]error{}}
+		account: &fakeAccount{id: "b2:acct", buckets: map[string]*fakeBucket{}}}
 	setStorage(t, f.secrets, "helios", "key-one")
 	f.watch = StorageWatch{Store: store, Secrets: f.secrets, Hostname: func() string { return "vps" },
 		Objects: func(objectstore.Config) (objectstore.Store, error) { return f.account, nil },
-		Snapshots: func(_ context.Context, _ *integration.Storage, bucket string) ([]restic.Snapshot, error) {
-			if err := f.snapshotsErr[bucket]; err != nil {
-				return nil, err
-			}
-			var out []restic.Snapshot
-			for _, id := range f.snapshots[bucket] {
-				out = append(out, restic.Snapshot{ID: id, ShortID: id[:8]})
-			}
-			return out, nil
-		},
-		Now: func() time.Time { return f.now }}
+		Now:     func() time.Time { return f.now }}
 	return f
 }
 
@@ -154,9 +197,20 @@ func (f *storageFixture) ran(app, kind, snapshot string) {
 	}
 }
 
-// bucket puts a bucket in the account, last written at the given time.
+// bucket puts a bucket in the account, last written at the given time. It
+// holds a repository without a snapshot until holds says otherwise.
 func (f *storageFixture) bucket(name string, bytes int64, lastWrite time.Time) {
-	f.account.buckets[name] = &fakeBucket{bytes: bytes, files: 12, lastWrite: lastWrite}
+	f.account.buckets[name] = &fakeBucket{bytes: bytes, files: 12, lastWrite: lastWrite, keys: repository()}
+}
+
+// holds sets the snapshots in a bucket's repository.
+func (f *storageFixture) holds(bucket string, snapshots ...string) {
+	f.t.Helper()
+	b := f.account.buckets[bucket]
+	if b == nil {
+		f.t.Fatalf("no bucket %s", bucket)
+	}
+	b.keys = repository(snapshots...)
 }
 
 // removed is an app this machine backed up once and then removed: the run
@@ -168,10 +222,11 @@ func (f *storageFixture) removed(app string, at time.Time) {
 		f.t.Fatal(err)
 	}
 	f.ran(app, state.BackupRunBackup, snapshotOf("vps", app))
-	if _, ok := f.snapshots[st.Bucket(app)]; !ok {
-		f.snapshots[st.Bucket(app)] = []string{snapshotOf("vps", app)}
-	}
+	_, existed := f.account.buckets[st.Bucket(app)]
 	f.tombstoned(app, at)
+	if !existed {
+		f.holds(st.Bucket(app), snapshotOf("vps", app))
+	}
 }
 
 // tombstoned records only what helios remove records: the app's tombstone,
@@ -464,24 +519,29 @@ func TestAnyDoubtHoldsTheBucket(t *testing.T) {
 		// of its own. Its backups are in this bucket, uploaded before blog
 		// was removed here and none since, so the upload check sees nothing.
 		{"another machine's snapshot beside this machine's", func(f *storageFixture) {
-			f.snapshots["helios-blog"] = append(f.snapshots["helios-blog"], snapshotOf("other", "blog"))
+			f.holds("helios-blog", snapshotOf("vps", "blog"), snapshotOf("other", "blog"))
 		}, "1 of its 2 snapshot(s) were not made by this machine (the first is " + snapshotOf("other", "blog")[:8] + ")"},
 		{"only another machine's snapshots", func(f *storageFixture) {
-			f.snapshots["helios-blog"] = []string{snapshotOf("other", "blog")}
+			f.holds("helios-blog", snapshotOf("other", "blog"))
 		}, "1 of its 1 snapshot(s) were not made by this machine"},
 		{"a snapshot this machine drilled and restored but did not make", func(f *storageFixture) {
 			theirs := snapshotOf("other", "blog")
-			f.snapshots["helios-blog"] = append(f.snapshots["helios-blog"], theirs)
+			f.holds("helios-blog", snapshotOf("vps", "blog"), theirs)
 			f.ran("blog", state.BackupRunDrill, theirs)
 			f.ran("blog", state.BackupRunRestore, theirs)
 		}, "1 of its 2 snapshot(s) were not made by this machine"},
 		{"another app's snapshot", func(f *storageFixture) {
 			f.ran("shop", state.BackupRunBackup, snapshotOf("vps", "shop"))
-			f.snapshots["helios-blog"] = []string{snapshotOf("vps", "shop")}
+			f.holds("helios-blog", snapshotOf("vps", "shop"))
 		}, "1 of its 1 snapshot(s) were not made by this machine"},
-		{"snapshots that cannot be read", func(f *storageFixture) {
-			f.snapshotsErr["helios-blog"] = errors.New("Fatal: wrong password or no key found")
-		}, "its snapshots could not be read, so it cannot be told whose backups it holds (Fatal: wrong password or no key found)"},
+		{"a snapshot file that is not a snapshot id", func(f *storageFixture) {
+			f.account.buckets["helios-blog"].keys = append(repository(snapshotOf("vps", "blog")), "snapshots/tmp-upload")
+		}, "1 of its 2 snapshot(s) were not made by this machine"},
+		// Not a repository this machine could have made a snapshot in and
+		// then deleted from: files, and no snapshot at all.
+		{"files and no snapshot", func(f *storageFixture) {
+			f.holds("helios-blog")
+		}, "it holds files but no snapshot"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			f := newStorageFixture(t)
@@ -517,7 +577,7 @@ func TestAnyDoubtHoldsTheBucket(t *testing.T) {
 func TestATombstoneWithoutABackupMadeHereDeletesNothing(t *testing.T) {
 	f := newStorageFixture(t)
 	f.tombstoned("blog", storageDay)
-	f.snapshots["helios-blog"] = []string{snapshotOf("other", "blog")}
+	f.holds("helios-blog", snapshotOf("other", "blog"))
 	f.now = storageDay.Add(BucketExpiry + time.Hour)
 	out, err := f.sweep()
 	if err != nil {
@@ -528,7 +588,7 @@ func TestATombstoneWithoutABackupMadeHereDeletesNothing(t *testing.T) {
 		t.Fatalf("deleted %v, tombstone %+v\n%s", f.account.deleted, got, out)
 	}
 	// An empty repository changes nothing: there is still no proof.
-	f.snapshots["helios-blog"] = nil
+	f.holds("helios-blog")
 	if _, err := f.run(StoragePurgeKind, StorageAppInput{App: "blog"}); err == nil || !strings.Contains(err.Error(), want) || len(f.account.deleted) != 0 {
 		t.Fatalf("purge without a backup made here: %v, deleted %v", err, f.account.deleted)
 	}
@@ -540,7 +600,7 @@ func TestATombstoneWithoutABackupMadeHereDeletesNothing(t *testing.T) {
 func TestPurgeRightAfterARemovalLeavesAnotherMachinesBackups(t *testing.T) {
 	f := newStorageFixture(t)
 	f.removed("blog", storageDay)
-	f.snapshots["helios-blog"] = append(f.snapshots["helios-blog"], snapshotOf("other", "blog"))
+	f.holds("helios-blog", snapshotOf("vps", "blog"), snapshotOf("other", "blog"))
 	f.account.buckets["helios-blog"].lastWrite = storageDay.Add(20 * time.Minute)
 	f.now = storageDay.Add(30 * time.Minute)
 	if _, err := f.run(StoragePurgeKind, StorageAppInput{App: "blog"}); err == nil || !strings.Contains(err.Error(), "were not made by this machine") {
@@ -550,9 +610,110 @@ func TestPurgeRightAfterARemovalLeavesAnotherMachinesBackups(t *testing.T) {
 		t.Fatalf("purge deleted a bucket another machine backs up to: %v", f.account.deleted)
 	}
 	// Once the other machine's snapshot is gone, the same purge goes through.
-	f.snapshots["helios-blog"] = []string{snapshotOf("vps", "blog")}
+	f.holds("helios-blog", snapshotOf("vps", "blog"))
 	if out, err := f.run(StoragePurgeKind, StorageAppInput{App: "blog"}); err != nil || f.account.buckets["helios-blog"] != nil {
 		t.Fatalf("purge of this machine's own bucket: %v\n%s", err, out)
+	}
+}
+
+// A deletion that stops part way has already deleted the repository's
+// config, so restic could no longer open it. The bucket's own listing still
+// says whose snapshots are left, and the next night finishes the job.
+func TestAnInterruptedDeletionCarriesOn(t *testing.T) {
+	f := newStorageFixture(t)
+	f.removed("blog", storageDay)
+	f.account.deleteErr = map[string]error{"helios-blog": errors.New("storage answered HTTP 503")}
+	f.now = storageDay.Add(BucketExpiry)
+	if out, err := f.sweep(); err != nil || !strings.Contains(f.tombstone("blog").Problem, "the next sweep carries on") {
+		t.Fatal(err, out)
+	}
+	if left := f.account.buckets["helios-blog"].keys; slices.Contains(left, "config") || !slices.Contains(left, "snapshots/"+snapshotOf("vps", "blog")) {
+		t.Fatalf("the fixture did not stop after the config: %v", left)
+	}
+	// While it waits, another machine initialises a repository in what is
+	// left and backs up into it. That stops the deletion for good.
+	theirs := "snapshots/" + snapshotOf("other", "blog")
+	f.account.buckets["helios-blog"].keys = append(f.account.buckets["helios-blog"].keys, theirs)
+	f.account.deleteErr = nil
+	f.now = f.now.Add(24 * time.Hour)
+	if out, err := f.sweep(); err != nil || !strings.Contains(f.tombstone("blog").Problem, "were not made by this machine") {
+		t.Fatal(err, out)
+	}
+	// Without it, the next night finishes.
+	keys := f.account.buckets["helios-blog"].keys
+	f.account.buckets["helios-blog"].keys = keys[:len(keys)-1]
+	f.now = f.now.Add(24 * time.Hour)
+	if out, err := f.sweep(); err != nil || f.tombstone("blog") != nil || f.account.buckets["helios-blog"] != nil {
+		t.Fatalf("the next sweep did not carry on: %v\n%s", err, out)
+	}
+}
+
+// A snapshot that turns up between reading the bucket and deleting it
+// stops the deletion where it is.
+func TestASnapshotThatArrivesDuringTheDeletionStopsIt(t *testing.T) {
+	f := newStorageFixture(t)
+	f.removed("blog", storageDay)
+	f.account.buckets["helios-blog"].arrives = "snapshots/" + snapshotOf("other", "blog")
+	f.now = storageDay.Add(BucketExpiry)
+	out, err := f.sweep()
+	if err != nil {
+		t.Fatal(err, out)
+	}
+	if got := f.tombstone("blog"); got == nil || !strings.Contains(got.Problem, "appeared in it while it was being deleted") || f.account.buckets["helios-blog"] == nil {
+		t.Fatalf("tombstone %+v\n%s", got, out)
+	}
+	if left := f.account.buckets["helios-blog"].keys; len(left) != 1 || !strings.HasSuffix(left[0], snapshotOf("other", "blog")) {
+		t.Fatalf("the other machine's snapshot did not survive: %v", left)
+	}
+}
+
+// For a few weeks in 2026 a backup recorded its snapshot's short id. Such
+// a record still proves the snapshot it begins was made here.
+func TestASnapshotRecordedByItsShortIDIsThisMachines(t *testing.T) {
+	f := newStorageFixture(t)
+	f.ran("blog", state.BackupRunBackup, snapshotOf("vps", "blog")[:8])
+	f.tombstoned("blog", storageDay)
+	f.holds("helios-blog", snapshotOf("vps", "blog"), snapshotOf("other", "blog"))
+	f.now = storageDay.Add(BucketExpiry)
+	if out, err := f.sweep(); err != nil || !strings.Contains(f.tombstone("blog").Problem, "1 of its 2 snapshot(s) were not made by this machine") {
+		t.Fatal(err, out)
+	}
+	f.holds("helios-blog", snapshotOf("vps", "blog"))
+	if out, err := f.sweep(); err != nil || f.tombstone("blog") != nil {
+		t.Fatalf("a bucket with only this machine's snapshot stays: %v\n%s", err, out)
+	}
+}
+
+// A bucket that will not pass on its day says so on the first night, while
+// the report still shows a date for it. A night on which it cannot be read
+// says nothing either way.
+func TestABucketThatWillNotExpireSaysSoBeforeItsDay(t *testing.T) {
+	f := newStorageFixture(t)
+	f.removed("blog", storageDay)
+	f.holds("helios-blog", snapshotOf("vps", "blog"), snapshotOf("other", "blog"))
+	f.now = storageDay.Add(24 * time.Hour)
+	if out, err := f.sweep(); err != nil || !strings.Contains(f.tombstone("blog").Problem, "were not made by this machine") {
+		t.Fatal(err, out)
+	}
+	f.account.usageErr = map[string]error{"helios-blog": errors.New("storage answered HTTP 503")}
+	f.now = f.now.Add(24 * time.Hour)
+	if out, err := f.sweep(); err != nil || f.tombstone("blog").Problem == "" {
+		t.Fatalf("an unread night cleared the hold: %v\n%s", err, out)
+	}
+	// The other machine's snapshot goes, and so does the hold.
+	f.account.usageErr = nil
+	f.holds("helios-blog", snapshotOf("vps", "blog"))
+	f.now = f.now.Add(24 * time.Hour)
+	if out, err := f.sweep(); err != nil || f.tombstone("blog").Problem != "" || len(f.account.deleted) != 0 {
+		t.Fatalf("the hold outlived its cause, or the bucket went early: %v\n%s", err, out)
+	}
+	// A kept bucket is never examined: it is not going anywhere.
+	f.holds("helios-blog", snapshotOf("other", "blog"))
+	if out, err := f.run(StorageKeepKind, StorageAppInput{App: "blog"}); err != nil {
+		t.Fatal(err, out)
+	}
+	if out, err := f.sweep(); err != nil || f.tombstone("blog").Problem != "" {
+		t.Fatalf("a kept bucket raised a hold: %v\n%s", err, out)
 	}
 }
 

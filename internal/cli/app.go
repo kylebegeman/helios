@@ -467,10 +467,12 @@ volumes, database and networks.
 
 The app's backups stay in its storage bucket for 30 days, and after --data
 they are the only way back. Then the bucket is deleted with every backup in
-it. The plan names the bucket and says so; helios storage shows the date,
-helios storage keep <app> cancels it, and deploying the app again clears
-it. The bucket of an app that left through a move is never deleted from
-here.`,
+it, provided every snapshot in it is one this machine made. The plan names
+the bucket and says so; helios storage shows the date, helios storage keep
+<app> cancels it, and deploying the app again clears it. A bucket this
+machine never backed the app up to is left alone, and so is the bucket of
+an app that left through a move, unless the app is deployed here and
+removed again.`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return a.operate(cmd.Context(), apps.RemoveKind, apps.RemoveInput{App: args[0], Data: data, Secrets: forgetSecrets}, planOnly)

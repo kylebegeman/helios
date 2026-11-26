@@ -42,6 +42,48 @@ type Deleted struct {
 // deleted.
 var ErrWrittenSince = errors.New("the bucket was written to after it was given up")
 
+// Check is what a bucket's contents must pass before any of it is deleted.
+// Every part is optional.
+type Check struct {
+	// NotWrittenSince refuses, with ErrWrittenSince, a bucket that holds a
+	// file uploaded after it. Zero skips the check.
+	NotWrittenSince time.Time
+	// Key is called with the name of every file version and unfinished
+	// upload in the bucket while the whole bucket is read, and again with
+	// each page's names before that page is deleted. An error refuses the
+	// bucket and is returned as it is.
+	Key func(key string) error
+	// Whole is called once, after the whole bucket was read and before
+	// anything is deleted. An error refuses the bucket and is returned as
+	// it is.
+	Whole func() error
+}
+
+func (c Check) written(key string, at time.Time) error {
+	if !c.NotWrittenSince.IsZero() && at.After(c.NotWrittenSince) {
+		return fmt.Errorf("%w: %s on %s", ErrWrittenSince, key, at.UTC().Format(time.RFC3339))
+	}
+	return nil
+}
+
+// file checks one file version or unfinished upload.
+func (c Check) file(key string, at time.Time) error {
+	if err := c.written(key, at); err != nil {
+		return err
+	}
+	if c.Key != nil {
+		return c.Key(key)
+	}
+	return nil
+}
+
+func (c Check) whole() error {
+	if c.Whole != nil {
+		return c.Whole()
+	}
+	return nil
+}
+
 // ErrNoBucket means the account holds no bucket of that name.
 var ErrNoBucket = errors.New("no such bucket")
 
@@ -54,12 +96,16 @@ type Store interface {
 	Buckets(ctx context.Context) ([]Bucket, error)
 	// Usage adds up every file version in a bucket.
 	Usage(ctx context.Context, b Bucket) (Usage, error)
+	// Examine reads the whole bucket and reports whether its contents pass
+	// the check, as DeleteBucket would find before deleting. It changes
+	// nothing.
+	Examine(ctx context.Context, b Bucket, check Check) error
 	// DeleteBucket deletes every file version and unfinished upload in a
 	// bucket, then the bucket. It reads the whole bucket first and deletes
-	// nothing, returning ErrWrittenSince, when any file was uploaded after
-	// notWrittenSince; a zero time skips that check. It can be run again
+	// nothing when the contents do not pass the check. It can be run again
 	// after any failure: what is gone stays gone and the rest is deleted.
-	DeleteBucket(ctx context.Context, b Bucket, notWrittenSince time.Time) (Deleted, error)
+	// Files are deleted in the order of their names.
+	DeleteBucket(ctx context.Context, b Bucket, check Check) (Deleted, error)
 }
 
 // Config is how to reach a store, as the storage integration holds it.

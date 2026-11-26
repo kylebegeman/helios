@@ -380,40 +380,49 @@ func (c *s3) uploads(ctx context.Context, bucket string) ([]s3Upload, error) {
 	}
 }
 
-func (c *s3) DeleteBucket(ctx context.Context, b Bucket, notWrittenSince time.Time) (Deleted, error) {
-	var d Deleted
-	written := func(key string, at time.Time) error {
-		if !notWrittenSince.IsZero() && at.After(notWrittenSince) {
-			return fmt.Errorf("%w: %s on %s", ErrWrittenSince, key, at.UTC().Format(time.RFC3339))
-		}
-		return nil
-	}
+// examine reads the whole bucket against the check and returns its
+// unfinished uploads.
+func (c *s3) examine(ctx context.Context, b Bucket, check Check) ([]s3Upload, error) {
 	pending, err := c.uploads(ctx, b.Name)
 	if err != nil {
-		return d, err
+		return nil, err
 	}
 	for _, u := range pending {
-		if err := written(u.Key, u.Initiated); err != nil {
-			return d, err
+		if err := check.file(u.Key, u.Initiated); err != nil {
+			return nil, err
 		}
 	}
-	// Read the whole bucket before deleting any of it, so a bucket someone
-	// still writes to loses nothing. The pages are checked again below for
-	// a write that arrives while the deletion runs.
 	if err := c.objects(ctx, b.Name, func(objects []s3Object) error {
 		for _, o := range objects {
-			if err := written(o.Key, o.LastModified); err != nil {
+			if err := check.file(o.Key, o.LastModified); err != nil {
 				return err
 			}
 		}
 		return nil
 	}); err != nil {
+		return nil, err
+	}
+	return pending, check.whole()
+}
+
+func (c *s3) Examine(ctx context.Context, b Bucket, check Check) error {
+	_, err := c.examine(ctx, b, check)
+	return err
+}
+
+func (c *s3) DeleteBucket(ctx context.Context, b Bucket, check Check) (Deleted, error) {
+	var d Deleted
+	// Read the whole bucket before deleting any of it, so a bucket that
+	// does not pass loses nothing. The pages are checked again below for
+	// what arrives while the deletion runs.
+	pending, err := c.examine(ctx, b, check)
+	if err != nil {
 		return d, err
 	}
 	err = c.objects(ctx, b.Name, func(objects []s3Object) error {
 		// The whole page is checked before any of it is deleted.
 		for _, o := range objects {
-			if err := written(o.Key, o.LastModified); err != nil {
+			if err := check.file(o.Key, o.LastModified); err != nil {
 				return err
 			}
 		}

@@ -278,7 +278,7 @@ func TestS3DeletesEveryVersionThenTheBucket(t *testing.T) {
 	ctx := context.Background()
 	fake, store := s3Fixture(t)
 	fake.uploads["helios-site"] = []s3Upload{{Key: "data/cc/half", UploadID: "u1", Initiated: removedAt.Add(-time.Hour)}}
-	deleted, err := store.DeleteBucket(ctx, Bucket{Name: "helios-site"}, removedAt)
+	deleted, err := store.DeleteBucket(ctx, Bucket{Name: "helios-site"}, Check{NotWrittenSince: removedAt})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -302,7 +302,7 @@ func TestS3DeletesNothingFromABucketWrittenSince(t *testing.T) {
 	fake, store := s3Fixture(t)
 	// The newest write sorts last, on a later page than the first files.
 	fake.buckets["helios-site"] = append(fake.buckets["helios-site"], fakeObject{key: "snapshots/2", version: "v9", size: 1, at: removedAt.Add(time.Minute)})
-	deleted, err := store.DeleteBucket(ctx, Bucket{Name: "helios-site"}, removedAt)
+	deleted, err := store.DeleteBucket(ctx, Bucket{Name: "helios-site"}, Check{NotWrittenSince: removedAt})
 	if !errors.Is(err, ErrWrittenSince) {
 		t.Fatalf("error: %v", err)
 	}
@@ -313,7 +313,7 @@ func TestS3DeletesNothingFromABucketWrittenSince(t *testing.T) {
 	// An unfinished upload started since counts as a write too.
 	fake.buckets["helios-site"] = fake.buckets["helios-site"][:5]
 	fake.uploads["helios-site"] = []s3Upload{{Key: "data/dd/new", UploadID: "u2", Initiated: removedAt.Add(time.Hour)}}
-	if _, err := store.DeleteBucket(ctx, Bucket{Name: "helios-site"}, removedAt); !errors.Is(err, ErrWrittenSince) || len(fake.deletes) != 0 {
+	if _, err := store.DeleteBucket(ctx, Bucket{Name: "helios-site"}, Check{NotWrittenSince: removedAt}); !errors.Is(err, ErrWrittenSince) || len(fake.deletes) != 0 {
 		t.Fatalf("unfinished upload: %v %v", err, fake.deletes)
 	}
 }
@@ -330,7 +330,7 @@ func TestS3WithoutVersionsDeletesItsObjects(t *testing.T) {
 	if err != nil || usage.Files != 5 {
 		t.Fatalf("usage: %+v %v", usage, err)
 	}
-	deleted, err := store.DeleteBucket(ctx, Bucket{Name: "helios-site"}, removedAt)
+	deleted, err := store.DeleteBucket(ctx, Bucket{Name: "helios-site"}, Check{NotWrittenSince: removedAt})
 	if err != nil || !deleted.Bucket || deleted.Files != 5 {
 		t.Fatalf("deleted: %+v %v", deleted, err)
 	}
@@ -345,7 +345,7 @@ func TestS3RefusalIsReportedAndDeletesNothing(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = wrong.DeleteBucket(ctx, Bucket{Name: "helios-site"}, removedAt)
+	_, err = wrong.DeleteBucket(ctx, Bucket{Name: "helios-site"}, Check{NotWrittenSince: removedAt})
 	var refusal *APIError
 	if !errors.As(err, &refusal) || refusal.Code != "SignatureDoesNotMatch" || len(fake.deletes) != 0 {
 		t.Fatalf("error %v, deletes %v", err, fake.deletes)
@@ -355,5 +355,56 @@ func TestS3RefusalIsReportedAndDeletesNothing(t *testing.T) {
 	}
 	if _, err := New(Config{Kind: "s3", Endpoint: server.URL}); err == nil {
 		t.Fatal("missing credentials were accepted")
+	}
+}
+
+// A check on the bucket's contents refuses before anything is deleted,
+// whether it objects to one name or to the bucket as a whole, and is asked
+// again about each page as it goes.
+func TestS3DeletesNothingFromABucketItsCheckRefuses(t *testing.T) {
+	ctx := context.Background()
+	refusal := errors.New("not ours")
+	for name, check := range map[string]Check{
+		"a name": {Key: func(key string) error {
+			if strings.HasPrefix(key, "data/") {
+				return refusal
+			}
+			return nil
+		}},
+		"the whole": {Whole: func() error { return refusal }},
+	} {
+		fake, store := s3Fixture(t)
+		for _, try := range []func() error{
+			func() error { return store.Examine(ctx, Bucket{Name: "helios-site"}, check) },
+			func() error { _, err := store.DeleteBucket(ctx, Bucket{Name: "helios-site"}, check); return err },
+		} {
+			if err := try(); !errors.Is(err, refusal) {
+				t.Fatalf("%s: error %v", name, err)
+			}
+			if len(fake.deletes) != 0 || len(fake.buckets["helios-site"]) != 5 {
+				t.Fatalf("%s: something was deleted: %v", name, fake.deletes)
+			}
+		}
+	}
+
+	// What passes is read whole, judged once, and then every name is asked
+	// about a second time on its way out.
+	fake, store := s3Fixture(t)
+	seen, judged := map[string]int{}, 0
+	check := Check{Key: func(key string) error { seen[key]++; return nil }, Whole: func() error {
+		judged++
+		if len(fake.deletes) != 0 {
+			t.Fatal("judged after the deletion began")
+		}
+		return nil
+	}}
+	if err := store.Examine(ctx, Bucket{Name: "helios-site"}, check); err != nil || len(fake.deletes) != 0 || judged != 1 {
+		t.Fatalf("examine: %v, deletes %v, judged %d", err, fake.deletes, judged)
+	}
+	if _, err := store.DeleteBucket(ctx, Bucket{Name: "helios-site"}, check); err != nil || judged != 2 {
+		t.Fatalf("delete: %v, judged %d", err, judged)
+	}
+	if seen["config"] != 3 {
+		t.Fatalf("config was asked about %d times, want once to examine, once to read and once to delete: %v", seen["config"], seen)
 	}
 }

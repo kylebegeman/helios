@@ -5,6 +5,8 @@ import (
 	"database/sql"
 	"errors"
 	"path/filepath"
+	"sort"
+	"strings"
 	"testing"
 	"time"
 
@@ -310,5 +312,59 @@ func TestAnAppThatMovedAwayNeverGetsAnExpiringTombstone(t *testing.T) {
 	}
 	if _, err := s.StorageTombstone(ctx, "site"); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("a redeploy left the moved row: %v", err)
+	}
+}
+
+// SnapshotsMade answers from runs that succeeded, of the kinds asked for,
+// for the one app, and still does once the app is removed.
+func TestSnapshotsMadeCountsOnlySuccessfulRunsOfTheKindsAsked(t *testing.T) {
+	ctx := context.Background()
+	store, err := Open(filepath.Join(t.TempDir(), "state.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	at := time.Now().UTC()
+	run := func(app, kind, snapshot string, ok bool) {
+		t.Helper()
+		id, err := store.StartBackupRun(ctx, app, kind, at)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := store.FinishBackupRun(ctx, id, BackupRun{OK: ok, FinishedAt: at, Snapshot: snapshot}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	run("blog", BackupRunBackup, "aaaa", true)
+	run("blog", BackupRunBackup, "aaaa", true)
+	run("blog", "release-checkpoint", "bbbb", true)
+	run("blog", BackupRunDrill, "cccc", true)
+	run("blog", BackupRunBackup, "dddd", false)
+	run("blog", BackupRunBackup, "", true)
+	run("shop", BackupRunBackup, "eeee", true)
+	if err := store.RemoveApp(ctx, "blog"); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		kinds []string
+		want  string
+	}{
+		{[]string{BackupRunBackup}, "aaaa"},
+		{[]string{BackupRunBackup, "release-checkpoint"}, "aaaa bbbb"},
+		{[]string{BackupRunDrill}, "cccc"},
+		{nil, ""},
+	} {
+		made, err := store.SnapshotsMade(ctx, "blog", tc.kinds...)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var got []string
+		for id := range made {
+			got = append(got, id)
+		}
+		sort.Strings(got)
+		if strings.Join(got, " ") != tc.want {
+			t.Fatalf("kinds %v: %v, want %s", tc.kinds, got, tc.want)
+		}
 	}
 }

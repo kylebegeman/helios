@@ -446,9 +446,10 @@ with every backup in it once the 30 days are over. Until then the backups are
 the only way back after `--data`. `helios storage` shows the date,
 `helios storage keep <app>` cancels it, `helios storage purge <app>` deletes
 the bucket now, and deploying the app again clears it. A bucket is only ever
-deleted for an app this machine removed itself, never because nothing here
-uses it, and never for an app that left through a move. See
-[storage watch](docs/features/storage-watch.md).
+deleted for an app this machine removed itself and only when every snapshot
+in it is one this machine made, never because nothing here uses it. The
+bucket of an app that left through a move stays, unless the app is deployed
+here and removed again. See [storage watch](docs/features/storage-watch.md).
 
 ## Named machines and portable setup
 

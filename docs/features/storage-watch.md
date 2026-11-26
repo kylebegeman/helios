@@ -118,18 +118,32 @@ storage purge` refuse any other name.
 
 A tombstone only says this machine gave the app up. Two machines can share
 one account and prefix and each run an app of the same name, and the bucket
-then holds the other machine's backups. So before a bucket is deleted its
-snapshots are read, and **every one of them must be a snapshot this machine
+then holds the other machine's backups. So before a bucket is deleted every
+file in it is listed, and **every snapshot in it must be one this machine
 recorded making**: a backup, the capture a move takes, or a release
 checkpoint. The record of an app's backup runs is kept after the app is
 removed. A drill or a restore does not count, because it reads a snapshot
 that anyone may have made.
 
+The snapshots are read from the bucket's own listing, not through restic. A
+repository sits at the root of its bucket and keeps one file for each
+snapshot under `snapshots/`, named by the snapshot's id, so the listing
+cannot leave one out. It also still answers for a bucket whose deletion
+stopped part way: files are deleted in the order of their names, which takes
+the repository's `config` first and its snapshots last, so the next sweep
+finds the same snapshots and carries on. Every file is checked a second time
+as it is deleted, and a snapshot that turns up in between stops the deletion
+there. A backup that recorded its snapshot by a short id, as some releases
+did, owns the snapshot that id begins.
+
+The sweep makes the same check every night while a bucket waits, so one that
+will not pass says so on the first night and not on the thirtieth.
+
 Neither the sweep nor `purge` deletes anything, and the sweep raises
 `host:storage-expiry`, when any of these holds:
 
-- the bucket holds a snapshot this machine did not make, its snapshots
-  cannot be read, or this machine has no record of a backup of the app;
+- the bucket holds a snapshot this machine did not make, it holds files but
+  no snapshot at all, or this machine has no record of a backup of the app;
 - something was uploaded to the bucket more than an hour after the app was
   removed, so another machine or tool is using it;
 - the app is deployed on this machine again;

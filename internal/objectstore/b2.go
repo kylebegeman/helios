@@ -246,24 +246,35 @@ func (c *b2) Usage(ctx context.Context, b Bucket) (Usage, error) {
 	return u, err
 }
 
-func (c *b2) DeleteBucket(ctx context.Context, b Bucket, notWrittenSince time.Time) (Deleted, error) {
-	var d Deleted
-	written := func(files []b2File) error {
+func b2Checked(check Check) func([]b2File) error {
+	return func(files []b2File) error {
 		for _, f := range files {
-			if at := time.UnixMilli(int64(f.Uploaded)); !notWrittenSince.IsZero() && at.After(notWrittenSince) {
-				return fmt.Errorf("%w: %s on %s", ErrWrittenSince, f.Name, at.UTC().Format(time.RFC3339))
+			if err := check.file(f.Name, time.UnixMilli(int64(f.Uploaded))); err != nil {
+				return err
 			}
 		}
 		return nil
 	}
-	// Read the whole bucket before deleting any of it, so a bucket someone
-	// still writes to loses nothing. The pages are checked again below for
-	// a write that arrives while the deletion runs.
-	if err := c.versions(ctx, b, written); err != nil {
+}
+
+func (c *b2) Examine(ctx context.Context, b Bucket, check Check) error {
+	if err := c.versions(ctx, b, b2Checked(check)); err != nil {
+		return err
+	}
+	return check.whole()
+}
+
+func (c *b2) DeleteBucket(ctx context.Context, b Bucket, check Check) (Deleted, error) {
+	var d Deleted
+	// Read the whole bucket before deleting any of it, so a bucket that
+	// does not pass loses nothing. The pages are checked again below for
+	// what arrives while the deletion runs.
+	if err := c.Examine(ctx, b, check); err != nil {
 		return d, err
 	}
+	checked := b2Checked(check)
 	err := c.versions(ctx, b, func(files []b2File) error {
-		if err := written(files); err != nil {
+		if err := checked(files); err != nil {
 			return err
 		}
 		for _, f := range files {

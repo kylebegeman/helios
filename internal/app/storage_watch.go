@@ -40,7 +40,7 @@ import (
 // anything. A bucket is deleted only when this machine holds a tombstone
 // for it, which `helios remove` alone records, only while every check in
 // tombstoneVerdict still holds, and only when every snapshot in it is one
-// this machine recorded making (see strangers). A tombstone says this
+// this machine recorded making (see ownership). A tombstone says this
 // machine gave the app up; the snapshots say whose backups the bucket
 // holds, and only that makes the bucket this machine's to delete. Anything
 // this machine cannot read or does not recognise stays, and says why.
@@ -95,9 +95,6 @@ type StorageWatch struct {
 	Hostname func() string
 	// Objects reaches the object store's own API; nil means objectstore.New.
 	Objects func(objectstore.Config) (objectstore.Store, error)
-	// Snapshots lists every snapshot in a bucket's repository, whoever made
-	// it; nil means restic through Docker.
-	Snapshots func(ctx context.Context, st *integration.Storage, bucket string) ([]restic.Snapshot, error)
 	// Now is the clock; nil means time.Now.
 	Now func() time.Time
 }
@@ -435,10 +432,10 @@ type tombstoneFacts struct {
 //     was removed from: a bucket of the same name there is not this one.
 //  5. The 30 days are not up, or the expiry was cancelled.
 //
-// Two more checks need the bucket's contents and are made on the way to the
-// deletion: every snapshot in it must be one this machine made (strangers),
-// and nothing may have been uploaded after the removal, which the deletion
-// itself refuses.
+// Two more checks need the bucket's contents, and the deletion makes them
+// itself as it reads the bucket: every snapshot in it must be one this
+// machine made (ownership), and nothing may have been uploaded after the
+// removal.
 func tombstoneVerdict(t state.StorageTombstone, f tombstoneFacts) (int, string) {
 	switch {
 	case t.Moved:
@@ -495,6 +492,21 @@ func (s *storageSession) settle(ctx context.Context, t state.StorageTombstone, m
 			return "", err
 		}
 	}
+	check, why, err := s.ownership(ctx, t)
+	if err != nil {
+		return "", err
+	}
+	// refused turns what the bucket's contents said into a reason to hold.
+	refused := func(err error) (string, bool) {
+		var theirs *notThisMachines
+		switch {
+		case errors.As(err, &theirs):
+			return theirs.why, true
+		case errors.Is(err, objectstore.ErrWrittenSince):
+			return fmt.Sprintf("something was uploaded to it after %s was removed, so it is still in use, perhaps by another machine; nothing was deleted (%s)", t.App, firstLine(err.Error())), true
+		}
+		return "", false
+	}
 	switch verdict {
 	case bucketGone:
 		fmt.Fprintf(out, "bucket %s no longer exists; nothing of %s is left to expire\n", t.Bucket, t.App)
@@ -505,84 +517,152 @@ func (s *storageSession) settle(ctx context.Context, t state.StorageTombstone, m
 			return "", nil
 		}
 	default:
+		// Not due yet, or kept. A bucket that will not pass on its day says
+		// so now, while the report still shows a date for it. A listing that
+		// fails tonight is not news: the next night reads it again.
+		if !t.Kept() {
+			if why != "" {
+				return hold(why)
+			}
+			err := s.obj.Examine(ctx, s.listed[t.Bucket], check)
+			if why, held := refused(err); held {
+				return hold(why)
+			}
+			if err != nil {
+				return "", nil // not read tonight; what is recorded stands
+			}
+		}
 		if t.Problem != "" {
 			return "", store.SetStorageTombstoneProblem(ctx, t.App, "")
 		}
 		return "", nil
 	}
-	// The tombstone says this machine gave the app up. It does not say the
-	// bucket's contents are this machine's: another machine may run an app
-	// of the same name against the same account and prefix, and its
-	// backups are then in this very bucket.
-	why, err = s.strangers(ctx, t)
-	if err != nil {
-		return "", err
-	}
 	if why != "" {
 		return hold(why)
 	}
 	fmt.Fprintf(out, "deleting bucket %s, the backups of %s removed on %s\n", t.Bucket, t.App, t.RemovedAt.UTC().Format("2006-01-02"))
-	done, err := s.obj.DeleteBucket(ctx, s.listed[t.Bucket], t.RemovedAt.Add(bucketWriteSlack))
-	switch {
-	case errors.Is(err, objectstore.ErrWrittenSince):
-		return hold(fmt.Sprintf("something was uploaded to it after %s was removed, so it is still in use, perhaps by another machine; nothing was deleted (%s)", t.App, firstLine(err.Error())))
-	case err != nil:
+	done, err := s.obj.DeleteBucket(ctx, s.listed[t.Bucket], check)
+	if why, held := refused(err); held {
+		return hold(why)
+	}
+	if err != nil {
 		return hold(fmt.Sprintf("deleting it did not finish after %d file(s): %s; the next sweep carries on", done.Files, firstLine(err.Error())))
 	}
 	fmt.Fprintf(out, "deleted bucket %s: %d file(s), %s\n", t.Bucket, done.Files, HumanBytes(done.Bytes))
 	return "", s.forget(ctx, t)
 }
 
-// strangers says why a bucket is not this machine's to delete, or "" when
-// every snapshot in it is one this machine recorded making. The runs of a
-// removed app are kept, so the record outlives the app. A repository that
-// cannot be read, and a machine with no record of a snapshot for the app,
-// both hold: the proof has to be there, not merely not contradicted. An
-// error is returned only when this machine's own state could not be read.
-func (s *storageSession) strangers(ctx context.Context, t state.StorageTombstone) (string, error) {
-	made, err := s.w.Store.SnapshotsMade(ctx, t.App, snapshotRunKinds...)
-	if err != nil {
-		return "", err
-	}
-	if len(made) == 0 {
-		return fmt.Sprintf("this machine has no record of a backup of %s, so the backups in it are not this machine's to delete", t.App), nil
-	}
-	list := s.w.Snapshots
-	if list == nil {
-		list = resticSnapshots
-	}
-	snapshots, err := list(ctx, s.st, t.Bucket)
-	if err != nil {
-		return fmt.Sprintf("its snapshots could not be read, so it cannot be told whose backups it holds (%s)", firstLine(err.Error())), nil
-	}
-	var unknown []string
-	for _, snapshot := range snapshots {
-		if !made[snapshot.ID] {
-			unknown = append(unknown, snapshot.ID)
-		}
-	}
-	if len(unknown) == 0 {
-		return "", nil
-	}
-	first := unknown[0]
-	if len(first) > 8 {
-		first = first[:8]
-	}
-	return fmt.Sprintf("%d of its %d snapshot(s) were not made by this machine (the first is %s), so another machine backs up to it or did; it is left for that machine, or for whoever deletes it at the storage provider", len(unknown), len(snapshots), first), nil
+// snapshotKeys is where a restic repository keeps its snapshots: one file
+// each, named by the snapshot's id. Helios puts a repository at the root of
+// its bucket, so the bucket's own listing says which snapshots it holds,
+// with no need to open the repository. That matters twice: a listing cannot
+// leave out a snapshot that fails to load, and it still reads a bucket
+// whose deletion was interrupted after the repository's config was gone.
+const snapshotKeys = "snapshots/"
+
+// notThisMachines is why a bucket's contents are not this machine's to
+// delete.
+type notThisMachines struct{ why string }
+
+func (e *notThisMachines) Error() string { return e.why }
+
+// owned decides from a bucket's file names whether everything in it is this
+// machine's. It is told every name while the bucket is read, then asked for
+// its verdict, then told the names again as they are deleted.
+type owned struct {
+	// made is every snapshot this machine recorded making for the app.
+	made map[string]bool
+	// short holds the ids recorded in their short form, which a few weeks of
+	// 2026 did; such an id matches the snapshot it begins.
+	short []string
+	// read is set once the whole bucket was read.
+	read bool
+	// snapshots, strangers and others count what the bucket holds.
+	snapshots, strangers, others int
+	// first is the first snapshot this machine did not make.
+	first string
 }
 
-// resticSnapshots asks restic for every snapshot in a bucket's repository.
-// It takes no lock, so it reads a repository another machine is writing to.
-func resticSnapshots(ctx context.Context, st *integration.Storage, bucket string) ([]restic.Snapshot, error) {
-	e, err := docker.Connect(ctx)
-	if err != nil {
-		return nil, err
+func (o *owned) mine(id string) bool {
+	if o.made[id] {
+		return true
 	}
-	defer e.Close()
-	// The helper container carries the machine's label, not the removed
-	// app's, so nothing mistakes it for something that app left behind.
-	r := restic.Runner{Engine: e, Owner: manifest.ReservedApp, Repo: restic.Repo{Repository: st.Repository(bucket), Password: st.Password, Env: st.Env()}}
-	return r.AllSnapshots(ctx)
+	for _, prefix := range o.short {
+		if strings.HasPrefix(id, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
+func (o *owned) key(key string) error {
+	id, snapshot := strings.CutPrefix(key, snapshotKeys)
+	switch {
+	case !snapshot:
+		if !o.read {
+			o.others++
+		}
+	case o.mine(id):
+		if !o.read {
+			o.snapshots++
+		}
+	case o.read:
+		// It was not there when the bucket was read: someone backed up into
+		// it while it was being deleted.
+		return &notThisMachines{fmt.Sprintf("a snapshot this machine did not make (%s) appeared in it while it was being deleted, so another machine backs up to it; what was already deleted is gone", shortID(id))}
+	default:
+		o.snapshots++
+		o.strangers++
+		if o.first == "" {
+			o.first = id
+		}
+	}
+	return nil
+}
+
+func (o *owned) whole() error {
+	o.read = true
+	switch {
+	case o.strangers > 0:
+		return &notThisMachines{fmt.Sprintf("%d of its %d snapshot(s) were not made by this machine (the first is %s), so another machine backs up to it or did; it is left for that machine, or for whoever deletes it at the storage provider", o.strangers, o.snapshots, shortID(o.first))}
+	case o.snapshots == 0 && o.others > 0:
+		// A deletion that was interrupted cannot look like this: files go
+		// in the order of their names, and the snapshots are the last.
+		return &notThisMachines{"it holds files but no snapshot, so nothing in it can be told to be this machine's"}
+	}
+	return nil
+}
+
+func shortID(id string) string {
+	if len(id) > 8 {
+		return id[:8]
+	}
+	return id
+}
+
+// ownership returns the check a bucket's contents must pass before this
+// machine deletes it: every snapshot in it is one a backup, a move's capture
+// or a release checkpoint on this machine recorded making. The runs of a
+// removed app are kept, so the record outlives the app. With no such record
+// at all it returns why the bucket is held instead: the proof has to be
+// there, not merely not contradicted. An error means this machine's own
+// state could not be read.
+func (s *storageSession) ownership(ctx context.Context, t state.StorageTombstone) (objectstore.Check, string, error) {
+	made, err := s.w.Store.SnapshotsMade(ctx, t.App, snapshotRunKinds...)
+	if err != nil {
+		return objectstore.Check{}, "", err
+	}
+	if len(made) == 0 {
+		return objectstore.Check{}, fmt.Sprintf("this machine has no record of a backup of %s, so the backups in it are not this machine's to delete", t.App), nil
+	}
+	o := &owned{made: made}
+	for id := range made {
+		// restic's short id is eight characters; nothing shorter is an id.
+		if len(id) >= 8 && len(id) < 64 {
+			o.short = append(o.short, id)
+		}
+	}
+	return objectstore.Check{NotWrittenSince: t.RemovedAt.Add(bucketWriteSlack), Key: o.key, Whole: o.whole}, "", nil
 }
 
 // forget drops what was recorded about a bucket that is gone.
